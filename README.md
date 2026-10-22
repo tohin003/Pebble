@@ -165,51 +165,152 @@ flowchart TB
     Svc <-.->|"paired native host"| Chrome["Pebble for Chrome<br/>(optional)"]
 ```
 
-<details>
-<summary><b>The six memory layers</b></summary>
+## Memory in six layers
 
-| Layer | What it keeps | Who writes it |
-|---|---|---|
-| Working context | Current goal, recent goals, what Pebble observed | Pebble, per conversation |
-| Episodic | Past requests and recorded action outcomes | Pebble records (up to 1,500 automatic episodes) |
-| Semantic | Facts and knowledge you save | You, personal or per project |
-| Procedural | Workflows and procedures you save | You; guidance only, never permission to act |
-| Temporal | Dated information that expires | Pebble or you, always with an expiry |
-| Profile | Your preferences and personal context | You; removable |
+Pebble remembers the way a good colleague does: separately for what you told it, what it learned, how things are done,
+what happened before, what expires, and where the current task stands. Every layer is visible, searchable and yours
+to edit or forget.
 
-</details>
+```mermaid
+flowchart LR
+    subgraph You["You decide"]
+        S["Settings › Memory<br/>see · search · forget"]
+        F["PEBBLE.md<br/>in your own words"]
+        X["One switch<br/>memory off"]
+    end
+    subgraph Layers["Six layers, on your Mac"]
+        P["Profile<br/>your preferences"]
+        K["Semantic<br/>facts and knowledge"]
+        R["Procedural<br/>how things are done here"]
+        E["Episodic<br/>past tasks and outcomes"]
+        T["Temporal<br/>things that expire"]
+        W["Working<br/>the current task"]
+    end
+    You --> Layers
+    Layers --> Q["Recall for this task<br/>labelled as data, with origin and date"]
+    Q --> M(["The model's context<br/>within its token budget"])
+```
 
-<details>
-<summary><b>Everything Pebble does</b></summary>
+| Layer | In Pebble | What it holds | Who writes it |
+|---|---|---|---|
+| **Profile** | Your preferences | How you like to work. "Remember that …" saves one right away. | You; removable |
+| **Semantic** | Facts & knowledge | Facts about your projects and the world | You; personal or per project |
+| **Procedural** | Procedures | How things are done here, such as how a project's tests run | You; guidance only, never permission to act |
+| **Episodic** | Past experiences | What earlier tasks asked for and how they went | Pebble (up to 1,500 automatic episodes) |
+| **Temporal** | Time-sensitive information | Dates and temporary arrangements, each with an expiry | Pebble or you, always with an expiry |
+| **Working** | Working context | Where the current conversation's task stands | Pebble, per conversation |
 
-[The user guide](docs/USER_GUIDE.md) covers each of these in detail.
+Recalled memory reaches the model as **labelled data, never as instructions**: a memory can inform an answer but can
+never grant a permission. Asking Pebble to forget something shows the matching memories, and nothing goes until you
+confirm. Pebble also remembers what you forgot, so it doesn't learn it again from the same place.
 
-- **Chat** with the model you choose, in the full window or from the pebble. Replies show what Pebble did and how long
-  it took; ⌘. stops a task.
-- **Work in a project.** Connect a folder and Pebble can:
-  - read it;
-  - propose edits, each one a card you approve, with Undo;
-  - run its tests in an isolated copy;
-  - run terminal commands under review;
-  - prepare Git changes for you to approve.
-- **Permissions.** Three modes, **Ask for approval** (the default), **Auto in project** and **Full access**, plus a switch
-  for each kind of tool. Approvals happen only in the main window.
-- **The web.**
-  - Searches send your search words to Microsoft Bing (its RSS results feed).
-  - Pages Pebble reads are fetched from their own sites.
-  - Weather comes from Open-Meteo.
-  - Everything read from the web is treated as untrusted data.
-- **Memory.** Six kinds of memory you can see, search, edit in your own words (`~/.pebble/PEBBLE.md`) and forget, with
-  one switch to turn it off.
-- **Views.** Ask for a dashboard, a chart, a quiz or an app demo, and Pebble builds it from data. A view can show and
-  collect things, but it can never approve, run or change anything.
-- **Bigger tasks.** Pebble can split work across agents, track a goal with criteria, and run reviewed schedules while
-  it is open. Type `/` in the message box for its commands.
-- **Skills and connectors.** Add reusable instructions (skills) and MCP connectors in **Settings › Skills & connectors**.
-- **Pebble for Chrome** lets Pebble look at and act in a Chrome tab you share and grant, one site at a time. It is
-  loaded in Chrome's Developer mode for 1.0; see [the user guide](docs/USER_GUIDE.md#pebble-for-chrome).
+---
 
-</details>
+## Orchestration: agents, goals and schedules
+
+Big tasks don't have to be one long chat. Pebble splits work, tracks it and runs it on a schedule, without giving up
+control.
+
+```mermaid
+flowchart TB
+    Root["Your task<br/>the only run that can change things"] -->|"delegates with reserved<br/>steps, time and tokens"| A1["Agent<br/>reads and searches"]
+    Root --> A2["Agent<br/>proposes a patch"]
+    Root --> A3["Agent<br/>asks you a question"]
+    A1 & A2 & A3 -->|"proposals and findings"| Root
+    Root --> Check["Re-checked against the latest files,<br/>then AgentGuard and your approval"]
+    Check --> Proj[("Your project")]
+    Goal["/goal: criteria and blockers"] -.-> Root
+    Sched["Reviewed schedule<br/>same model, permissions and project"] -.-> Root
+```
+
+- **Bounded agents.** A task can hand parts to agents. Each one gets steps, seconds and tokens reserved from the parent
+  task, and a reduced tool set: it can read, search, ask and propose. Agents never write, run commands or call
+  connectors. The main task reviews each proposal, re-checks it against the latest files, and applies it through
+  AgentGuard and your normal approval. You can see every agent's work, send it input or stop it.
+- **Goals with criteria.** `/goal "title"` gives a conversation a checklist: criteria you tick off or tie to finished
+  steps (`/criteria`), and blockers Pebble records (`/blockers`). A goal tracks progress; it is never a permission.
+- **Reviewed schedules.** A conversation can set up a task that runs at set times, with the model, permissions and
+  project you approved. Results arrive as notifications. If the model or permissions change, the schedule waits for
+  your review again.
+- **Recoverable runs.** If Pebble quits mid-task, it marks what was interrupted and asks before anything resumes.
+  **Rewind files** puts back what a task changed, unless the files changed since, and lists what it cannot undo.
+
+---
+
+## Everything else Pebble does
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**📊 Views and exports**<br>
+Ask for a dashboard, chart, plan, diagram, quiz or app demo. Pebble builds it as a live view and keeps its earlier
+versions. Export to PDF, Word, Excel, CSV or HTML. A view can show and collect things, never approve or run them.
+
+</td>
+<td width="33%" valign="top">
+
+**🔎 Research with sources**<br>
+Search the web and read the pages behind the answer. Sources are listed and open in your browser, and everything read
+online is treated as untrusted data.
+
+</td>
+<td width="33%" valign="top">
+
+**💻 Projects and Git**<br>
+Edits arrive as reviewable cards with Undo. Tests run in an isolated copy, and commands run sandboxed without a shell.
+Git commits and branches come to you as a plan to approve.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**🧩 Skills, hooks and connectors**<br>
+Reusable skills in Markdown, hooks that can narrow (never widen) what a task does, and MCP connectors over HTTP with
+OAuth. Each starts off until you review it.
+
+</td>
+<td valign="top">
+
+**🌐 Pebble for Chrome**<br>
+Share a Chrome tab and Pebble can look at it and act in it, one site at a time, with your grant. It is paired with the
+app, and screen control asks first.
+
+</td>
+<td valign="top">
+
+**🔀 Local and cloud, with a handoff**<br>
+Run a GGUF model on your Mac with llama.cpp, or a cloud model. A conversation you had on your Mac reaches a cloud model
+only after you review and release it.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**📎 Documents and images**<br>
+Drop in PDFs, documents and screenshots. Images are cleaned of metadata and scaled before they reach a model.
+
+</td>
+<td valign="top">
+
+**⌨️ Fast to drive**<br>
+A command palette, `/` commands in the message box, and ⌘. to stop a task. ⌘+ and ⌘− set the text size, and
+keyboard shortcuts cover the main actions.
+
+</td>
+<td valign="top">
+
+**🪨 The companion**<br>
+A real-time animated character that shows what Pebble is doing: reading, searching, editing, testing, done. Its eyes
+follow your pointer. Reduced motion is respected.
+
+</td>
+</tr>
+</table>
+
+The [user guide](docs/USER_GUIDE.md) covers each feature in detail.
 
 ---
 
