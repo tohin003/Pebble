@@ -1,0 +1,51 @@
+{
+  "name": "FrogNano-4B-2609-Q4_K_M",
+  "status": "provisional_default_local_smoke_validated",
+  "upstream": "microsoft/FrogNano-4B-2609",
+  "upstream_url": "https://huggingface.co/microsoft/FrogNano-4B-2609",
+  "quantization": "Q4_K_M",
+  "repository": "bartowski/FrogNano-4B-2609-GGUF",
+  "revision": "dfbb801e04ddf045ffd245b9f1a546ed0c7d960f",
+  "filename": "FrogNano-4B-2609-Q4_K_M.gguf",
+  "size_bytes": 2797526816,
+  "sha256": "01fba00c57e2976399ae4947f0b4fdde4623d3e410a435bf2ae39ddf164e9b0a",
+  "runtime": {
+    "project": "ggml-org/llama.cpp",
+    "release": "b11499",
+    "asset": "llama-b11499-bin-macos-arm64.tar.gz",
+    "size_bytes": 12041541,
+    "sha256": "5ef4ce6b4b42298f19d1f82e9d53b419bfaaf1fddfbb10adc02a9369e2312997"
+  },
+  "serving": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "context_tokens": 4096,
+    "parallel_requests": 1,
+    "threads": 4,
+    "batch_size": 256,
+    "micro_batch_size": 128
+  },
+  "sampling": {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "repeat_penalty": 1.0
+  },
+  "profiles": {
+    "fast": {
+      "enable_thinking": false,
+      "max_tokens": 512
+    },
+    "deliberate": {
+      "enable_thinking": true,
+      "max_tokens": 1024,
+      "thinking_budget_tokens": 512
+    }
+  },
+  "evaluation": {
+    "initial_report": "reports/model-smoke.json",
+    "followup_report": "reports/model-followup.json",
+    "hardware": "Apple M2, 8 GiB unified memory",
+    "note": "Synthetic smoke validation; not a broad model ranking or security certification."
+  }
+}

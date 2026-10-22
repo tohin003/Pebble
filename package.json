@@ -1,0 +1,30 @@
+{
+  "name": "pebble-desktop",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "tauri": "tauri",
+    "test": "py=\"${PEBBLE_PYTHON:-.runtime/agent-env/bin/python}\"; command -v \"$py\" >/dev/null || py=python3; \"$py\" -m pytest backend/tests -q",
+    "test:ui": "node --test --test-concurrency=1 src/*.test.mjs src/components/*.test.mjs browser-extension/*.test.mjs"
+  },
+  "dependencies": {
+    "@phosphor-icons/vue": "^2.2.1",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "dompurify": "^3.2.7",
+    "marked": "^16.3.0",
+    "sucrase": "3.35.0",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "vue-tsc": "^3.1.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "caption": "Readings north",
+  "columns": [
+    {"id": "site", "label": "Site"},
+    {"id": "value", "label": "Value"},
+    {"id": "note", "label": "=Total"}
+  ],
+  "rows": [
+    {"site": "=1+2", "value": 3, "note": "+SUM(A1:A2)"},
+    {"site": "-2+3", "value": -4.25, "note": "@SUM(A1:A2)"},
+    {"site": "＝full width", "value": 12, "note": "-5"},
+    {"site": "مرحبا", "value": true, "note": "你好世界"},
+    {"site": "plain text", "value": 0.1, "note": "north site"}
+  ]
+}

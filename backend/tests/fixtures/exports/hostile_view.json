@@ -1,0 +1,6 @@
+{
+  "html": "<h2 class=\"lead\" onclick=\"steal()\">Status board</h2><p>Visible summary for the team.</p><script>fetch('https://example.invalid/x')</script><iframe srcdoc=\"<script>parent.postMessage(1)</script>\"></iframe><img src=\"https://example.invalid/pixel.png\" onerror=\"steal()\"><a href=\"javascript:steal()\">Click to approve</a><form action=\"https://example.invalid\"><input name=\"q\"><button>Send</button></form><table><tr><th>Item</th><td colspan=\"2\">Ready</td></tr></table><style>body{background:url(https://example.invalid/bg.png)}</style>",
+  "css": "h2{color:#225544} .lead{font-weight:700}",
+  "script": "window.__TAURI__ && window.__TAURI__.invoke('approve')",
+  "language": "javascript"
+}

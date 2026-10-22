@@ -1,0 +1,112 @@
+{
+  "project": "AgentGuard",
+  "licence": "Apache-2.0 (AGENTGUARD-LICENSE)",
+  "upstream_url": null,
+  "upstream_note": "The person's own AgentGuard repository; no public URL is recorded here (parent check, V1-143).",
+  "source_head": "df1fb07787f7c09e84f35d10e0205e6cb8a88e2e",
+  "note": "Vendored working-tree snapshot of source_head. 'files' holds the upstream SHA-256 of every vendored file; the files Pebble modified carry a 'Modified for Pebble' header and are listed in 'modified_files' with their current SHA-256 (Apache-2.0 section 4(b)). The upstream repository is unchanged.",
+  "modified_files": {
+    "core/config.py": {
+      "upstream_sha256": "511f6385961c3af8e16cb03e79a9c74231696985a1533f827dd1c8101b907814",
+      "pebble_sha256": "1fd35b77eb338c2e26084df5e9aed8a053f6b4a4c49db0e7cc247161056f2153",
+      "change": "IndexSettings.scoped_only (Phase 12) and IndexSettings.session_start_wait (Phase 24)"
+    },
+    "core/engine.py": {
+      "upstream_sha256": "9588da7df90360d00067618ac44b6a38532714d789d9a316ce4c00b7ab66b75c",
+      "pebble_sha256": "4558e322b3e38a61176c2a8599a40a10dbefa4d54080e98ec29b23cb7b065591",
+      "change": "scoped_only workspace roots (Phase 12); the SessionStart index wait from settings and Guard.evict (Phase 24)"
+    },
+    "core/events.py": {
+      "upstream_sha256": "52d8e0c0723cf163bf75bdbe052318610c6d710e074ad71c1318e07bdff7ae77",
+      "pebble_sha256": "2d9e7f2a872ed7a85e3dbfb0ee775c572b723632651a97c72237e27a3c668d37",
+      "change": "AgentEvent.is_read_only honours raw['host_read_only'] (Phase 24)"
+    },
+    "core/store.py": {
+      "upstream_sha256": "7a9a421dd7b90e2ba48176d2839fe1c5ecfebfb306d948906a7d5289b4e06fee",
+      "pebble_sha256": "3815790f990582dc412b338a37163c002c26d5f810293cdb85e86d472a8cd96f",
+      "change": "scoped_only project identity without a Git remote (Phase 12); PRAGMA secure_delete and Database.forget_sessions (Phase 24)"
+    },
+    "intent/models.py": {
+      "upstream_sha256": "712c4d0b2c68766cd9b502edea68c2f236b70afc0ca4527e7ff8515fa4577aeb",
+      "pebble_sha256": "410a806b057521f3940dcbea2f22a86d0312db6fe4a8101feb3b086f225ca7f4",
+      "change": "TaskSpec.tests_waiver: the embedding host decides the test waiver (Phase 24)"
+    },
+    "repo/index.py": {
+      "upstream_sha256": "6d69cb4e11eca3724032fa1ae28a969412700cf08e394b7af8e07b3acbe050a3",
+      "pebble_sha256": "85cf1f4f17a0bec0b1da333c7ffc49be46ac6f0756cb1568cb7b4b961e1de7e2",
+      "change": "scoped_only reports no Git state (Phase 12)"
+    },
+    "repo/scanner.py": {
+      "upstream_sha256": "eade833b1a5c6a03b8ca2b5dc29bc25f2f7b624bf8eeaf08ac75cf3ad05489b7",
+      "pebble_sha256": "d2a1da5ed58351882c4cadac56dd3d5f5282ccb2d1ba4bf1471e961442b5fe4e",
+      "change": "scoped_only skips git ls-files (Phase 12)"
+    }
+  },
+  "files": {
+    "__init__.py": "7c629aee385238c2082fb99053682fbfae202a3eb5ff9bbb132fb5dbfed896e4",
+    "adapters/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "adapters/claude_code/__init__.py": "1e0c0248faa424fad497271eef2e47cdf8ec5fb484ddf16f98f3aa5cba5c44bf",
+    "adapters/claude_code/install.py": "e6f9e45bb99dddd650af7db5f6fbd7c22fff6eaceb9d03042743d1a6de272e46",
+    "adapters/claude_code/shim.py": "bdf2da5342dea60c627821c2ed8b05a9eefe06141f3253562d2c8901daa4b63c",
+    "adapters/claude_code/translate.py": "63653a69d5f9cf0146efd52c1504892e8739b07abcd13b060f7a718b80f0ee57",
+    "bench/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bench/mutation.py": "aaeb9a313ac2e85bd593f36907bc8f373854602ef7b10e48e01b7b5217ddf5b0",
+    "bench/runner.py": "3570f83f44c57d7456ba93d57c9dd2a897aa2d7e3c6483ed96c3e84e82b1ff51",
+    "bench/tasks.py": "b9eb9cdd7089dbf72a8c72a8aeb41bc8b6b71662fa36215045826dda0bfa7dae",
+    "census/__init__.py": "8bc1a6e600f27bf3a85ab5b5a6b00a17717ea46af60f9702a1cc13364ada77f9",
+    "census/report.py": "ec734076ba2eb07220e91657c9c975e5cd185e83491ea6278bb35f2ff4a69a02",
+    "census/taxonomy.py": "ad214e0bdde7f748b814a501a2c1e178a17c6cf81ecd00bbf3ee38af403387e4",
+    "challenge/__init__.py": "8898514c220b409b58d58cc55036c7d10d4d4775def2158c12ebe8c525566bfe",
+    "challenge/ledger.py": "4db4ced5a557d35379d09ece4a8a5369b0114cf4e40f761d4b9818a6465a0a5c",
+    "challenge/renderer.py": "b4cb31434222be25f60f117c52609404de889e713f8249c3a7dac8e667c24b9e",
+    "cli/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "cli/main.py": "5bb52f8c6f7ab0ed744d48b95698a1bccd164854120a4ff99fab65daf9c1d0d2",
+    "complexity/__init__.py": "deb270b6a097624b116ce5bafbb101265a5f8942840b26e3cede78eee5ffc9de",
+    "complexity/engine.py": "288cc5bd7f8b12b0d866bd843f6410f5420339d8195cf9be8d1aebba0e5d4081",
+    "complexity/rules.py": "339a6771d8657927d02d1a654c47e6b2d1503ed38b65f7ddbbd0d1a62d621eb5",
+    "complexity/signals.py": "ad14fbf72a8fe994d97894a49ce76d95afcf22c67ddaa88e8d73a7d1e3f14212",
+    "core/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "core/config.py": "511f6385961c3af8e16cb03e79a9c74231696985a1533f827dd1c8101b907814",
+    "core/engine.py": "9588da7df90360d00067618ac44b6a38532714d789d9a316ce4c00b7ab66b75c",
+    "core/enums.py": "b88586e572e65d93e7999711ca74ec1aa7f37ab4587621ebd16582a7b622a970",
+    "core/events.py": "52d8e0c0723cf163bf75bdbe052318610c6d710e074ad71c1318e07bdff7ae77",
+    "core/metrics.py": "8db8fd650072b2eb05db6117efacd1683217a6b945ee50568324f6e1cd016ccb",
+    "core/models.py": "8fba4bafb8692ed0cf58d219dced0962c6458cc654f0bf1c88601e954f31b4eb",
+    "core/observe.py": "b368146964152374574b59d8d3a45782467389ffef4b7b9e3162675bfd9ea813",
+    "core/store.py": "7a9a421dd7b90e2ba48176d2839fe1c5ecfebfb306d948906a7d5289b4e06fee",
+    "core/taskstate.py": "c581d082368d69d32bb2d317981886c9a6f7c847cb177471932c5f4305bd037d",
+    "daemon/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "daemon/__main__.py": "73c757590aaa6d4e7f639842f7cded97f644bbb875a10bcbdbfc0fb2d5059acb",
+    "daemon/app.py": "623b503c770aa5def59eba7e5ea2b5d59e78400a651efeb969fd4596440a84a3",
+    "daemon/lifecycle.py": "a9f935ddf1d51bc1021cc41ed9b18b403c854c3145b2eb04ad3aaf99c8911efa",
+    "evidence/__init__.py": "be293a62fd65c59dcae00d45ca404b776ff5bdf3e2fec9dab5b84659da0e52c2",
+    "evidence/engine.py": "ba70b8c7deffacb2a400c0dfa2aa7203a5fddf64e465330e6b0b7536e5bcc266",
+    "evidence/extractors.py": "fc23d1077bb33c38c283d4b98e7ff05436f919fa1cec3c05197482fd1b1c2aa8",
+    "evidence/models.py": "d7e17d4dbdbb28628d3a96c2b63eb1f2463e134c31ca34716fad928fc1aaf828",
+    "evidence/pyanalysis.py": "c26f144cc9f7b03f50391a28df76a8a20d9893150f3561d3d4ecebd8c759001d",
+    "evidence/resolvers.py": "30431175135f83fbb3e62bbbfe5dc1f7125d6fbab0d96b481e0b046eaa0e211b",
+    "intent/__init__.py": "2588a0abb7a0c45175206b5502294f255cc2ec5a9981e276d229c55ea6a420ce",
+    "intent/extractor.py": "3e9ca7dd1b5c7e66ac33b9655edb69341f826cc098c0f550151c8565cf6dfd1b",
+    "intent/lexicon.py": "d489635589fb4d15251e5a168b40de8f3d04d7e948e92961633da6547dc0040f",
+    "intent/models.py": "712c4d0b2c68766cd9b502edea68c2f236b70afc0ca4527e7ff8515fa4577aeb",
+    "planning/__init__.py": "1ca19b7e49533fac549e7b5732eb912da0909d3d45e9783c0598683d5509d6ea",
+    "planning/governor.py": "8f72ff090e14395ac37c391d666f05aeb0c933500e83f4733a316f0cb9bf63fe",
+    "repo/__init__.py": "35342ad1f7e0ae4f755919272b9899fa0db61cd21a2caebb7d9446216ced7ff5",
+    "repo/gitinfo.py": "ddf6df5117f6862b81875746dc6f538b020d297d3feef2adfe8e6999f0921531",
+    "repo/index.py": "6d69cb4e11eca3724032fa1ae28a969412700cf08e394b7af8e07b3acbe050a3",
+    "repo/manifests.py": "c5c5f460e4ebb06859e791f4d611bacba69589a3e7782187fe3bdea042a28fb3",
+    "repo/models.py": "12a5ca3a57403f2a15148ae631bea472030b4aec64bb248335358f558d8c3a0b",
+    "repo/paths.py": "704fbfaf7ffad684fc25099bd213e45f751d17431c165154f5fb702f1b1ded33",
+    "repo/scanner.py": "eade833b1a5c6a03b8ca2b5dc29bc25f2f7b624bf8eeaf08ac75cf3ad05489b7",
+    "repo/symbols_python.py": "28577b13b8f3bd8d209f7abdd53750612a556476c764e62b98fb20efc60afced",
+    "repo/symbols_ts.py": "fe913577b82b3ba0106ea1b659d1b70409468bab1594b4c6939c79003e024fa9",
+    "validate/__init__.py": "a6f4d72ea61b28b8fe2005346fa78e5aaa18ff2849ebc7d70f3093798411a65e",
+    "validate/checks.py": "31c19090af484c9d7cfbce8a87792a3479fed786f03b9f2cf5249816c9cd8e21",
+    "validate/modify.py": "8cfccc315743b408963ed650e41618f7762907cfe0cd46cdd88c308220c257da",
+    "validate/validator.py": "5c3942d2c23ede1c15a778ec080bd3f87d7426cd516bc10ce0eee3ff9f991423",
+    "verify/__init__.py": "557fa522a66587e72beb8c3a331d681fa8361ea2b91140576da8af9bacce55d2",
+    "verify/completion_gate.py": "baaa0b26906c1fa6af95a17276f11ee380b2d15ce8c0820d5b8277aff6469893",
+    "verify/runners.py": "e00752b11b1d3bd587fa39f04a3d15cba0509d468d43a23278c7e65597f164c5",
+    "verify/static.py": "a381df7f5bdcf04fdf3b30f1dd10c41c5b4c4680cd4383d97bbf0242426833e1"
+  }
+}

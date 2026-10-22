@@ -1,0 +1,84 @@
+# Pebble's frozen backend: every Python distribution, pinned (V1-076). Generated from backend/requirements.txt and
+# its installed dependency metadata (Python 3.14, macOS arm64), with the D15 updates: certifi 2026.10.19,
+# Pillow 13.0.0 and PyJWT 2.15.0; pillow-heif removed (developer only, backend/requirements-dev.txt).
+#
+# Hashes: `scripts/package_backend.py lock-hashes --write` (network) adds this Mac's wheel SHA-256 to every pin.
+# `scripts/package_backend.py build-env` then installs exactly these wheels with --require-hashes --no-deps into
+# .runtime/build-env, and scripts/build_candidate_app.py refuses a lock with an unhashed pin or a build environment
+# that differs from it. Audit this file (pip-audit -r, osv-scanner --lockfile); triage: docs/HARNESS_RELEASE_GATES.md.
+
+# [runtime] shipped in the app
+annotated-types==0.8.0 \
+    --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
+attrs==26.1.0 \
+    --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+certifi==2026.10.19 \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
+cffi==2.1.1 \
+    --hash=sha256:661c298b4821edebead0c91edd2b00374d67ad7c5a1f7a91d4442633b79d6a72
+charset-normalizer==3.5.2 \
+    --hash=sha256:fcff63213e8e6e47770541a4607175404f47cbb3ebea7b6058cc82d524a0e424
+cryptography==50.0.2 \
+    --hash=sha256:fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb
+idna==3.20 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+jsonschema==4.26.0 \
+    --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
+jsonschema-specifications==2025.9.1 \
+    --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
+Pillow==13.0.0 \
+    --hash=sha256:d9b0a2bee3f3e03e9f29057aedb807dbf1e1d96ee1b9d0f422d9db6c8583271d
+pycparser==3.1 \
+    --hash=sha256:f09d358c840bd147b79e55f2bc494f18ea869dc897f5852a8f5766b74f787882
+pydantic==2.13.5 \
+    --hash=sha256:346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73
+pydantic-core==2.46.5 \
+    --hash=sha256:1a353f84de772f423b5ffb11d7ae352fbbef0f446f3c0b0af0f8236d7233606e
+PyJWT==2.15.0 \
+    --hash=sha256:7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8
+pypdf==6.21.2 \
+    --hash=sha256:1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084
+PyYAML==6.0.3 \
+    --hash=sha256:34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310
+referencing==0.37.0 \
+    --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
+regex==2026.9.29 \
+    --hash=sha256:0166844493626c5015c6088ee15c9ca2fd060ca15b7641d1657da6a58432ae33
+requests==2.34.2 \
+    --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+rpds-py==2026.9.1 \
+    --hash=sha256:3f0e9ac28fc067d4d34b88ae43c48e9489455c97fee9633d851f7eeed5a05d35
+tiktoken==0.14.0 \
+    --hash=sha256:f2af4a336ea56d6c14f27741a0e1d8294a35dd0b038bcf990d232ebb54eb994b
+tree-sitter==0.26.0 \
+    --hash=sha256:5fc2f41bf246ff2f70a9cc3690be35ec7580a4923151873d898c8bcb1a4503d3
+tree-sitter-c-sharp==0.23.5 \
+    --hash=sha256:a75994a11f6fed3f5b8c36ad6a00e5dc43205bd912c43af3a2a54fdf649664eb
+tree-sitter-embedded-template==0.25.0 \
+    --hash=sha256:fc7aacbc2985a5d7e7fe7334f44dffe24c38fb0a8295c4188a04cf21a3d64a73
+tree-sitter-language-pack==0.13.0 \
+    --hash=sha256:0e7eae812b40a2dc8a12eb2f5c55e130eb892706a0bee06215dd76affeb00d07
+tree-sitter-yaml==0.7.2 \
+    --hash=sha256:0807b7966e23ddf7dddc4545216e28b5a58cdadedcecca86b8d8c74271a07870
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+typing-inspection==0.4.4 \
+    --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
+tzdata==2026.5 \
+    --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+
+# [build] PyInstaller and its dependencies: build tools, not shipped
+altgraph==0.17.5 \
+    --hash=sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597
+macholib==1.16.4 \
+    --hash=sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+pyinstaller==6.22.3 \
+    --hash=sha256:052f4a1cd4f81092ccb7a18fe8ebc9ecf832a5917317e39fb3775af4e959b253
+pyinstaller-hooks-contrib==2026.8 \
+    --hash=sha256:6d21d65323ea4467753afc21f52d7d0e69416ae8101dd88269bf273ad48db084
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670

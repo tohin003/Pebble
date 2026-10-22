@@ -1,0 +1,22 @@
+{
+  "viewport": "phone",
+  "start": "home",
+  "theme": {"accent": "teal", "density": "cozy", "radius": 8},
+  "screens": [
+    {"id": "home", "title": "Home", "components": [
+      {"type": "heading", "text": "Welcome back"},
+      {"type": "button", "label": "Sign in", "goto": "login"},
+      {"type": "card", "title": "Today", "body": "Three tasks are due."},
+      {"type": "nav", "items": [{"label": "Home", "goto": "home"}, {"label": "Settings", "goto": "settings"}]}
+    ]},
+    {"id": "login", "title": "Sign in", "components": [
+      {"type": "input", "label": "Email", "placeholder": "you@example.invalid"},
+      {"type": "toggle", "label": "Remember me"},
+      {"type": "button", "label": "Approve", "goto": "home"}
+    ]},
+    {"id": "settings", "title": "Settings", "components": [
+      {"type": "list", "items": ["Notifications", "Privacy"]},
+      {"type": "image_placeholder", "label": "Avatar", "aspect": "1:1"}
+    ]}
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "format": "pebble-p16-fake-ax/1",
+  "case": "U3",
+  "gate": "G12",
+  "owner": ["T3"],
+  "title": "Elements that move, swap, age or are duplicated after an observation",
+  "clock": 1791800000.0,
+  "thresholds": {"max_age_seconds": 5, "frame_tolerance_px": 8, "note": "Design-study proposals (section 10); T3 tunes them."},
+  "processes": [
+    {"pid": 4101, "bundle_id": "com.example.mail", "team_id": "AAAAAAAAAA", "start_time": 1791799000.0, "name": "Example Mail"}
+  ],
+  "grant": {"target": {"kind": "app", "bundle_id": "com.example.mail", "team_id": "AAAAAAAAAA",
+                       "window": {"title": "Inbox — Example Mail", "ax_identifier": "inbox"}},
+            "actions": ["observe", "local", "input", "commit"], "ttl_seconds": 600},
+  "trees": {
+    "base": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 140], "children": [
+        {"AXRole": "AXButton", "_ref": "undo", "AXTitle": "Undo", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "_ref": "archive", "AXTitle": "Archive", "AXFrame": [400, 340, 80, 24]},
+        {"AXRole": "AXButton", "_ref": "delete", "AXTitle": "Delete", "AXFrame": [400, 380, 80, 24]}]},
+      {"AXRole": "AXButton", "_ref": "send", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]},
+    "undo_dismissed": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 100], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Archive", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Delete", "AXFrame": [400, 340, 80, 24]}]},
+      {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]},
+    "archive_moved_6": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 140], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Undo", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Archive", "AXFrame": [400, 346, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Delete", "AXFrame": [400, 380, 80, 24]}]},
+      {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]},
+    "archive_moved_9": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 140], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Undo", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Archive", "AXFrame": [400, 349, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Delete", "AXFrame": [400, 380, 80, 24]}]},
+      {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]},
+    "labels_swapped": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 140], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Undo", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Delete", "AXFrame": [400, 340, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Archive", "AXFrame": [400, 380, 80, 24]}]},
+      {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]},
+    "send_overlay": {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Inbox — Example Mail", "AXIdentifier": "inbox", "AXMain": true,
+             "AXFocused": true, "AXFrame": [100, 100, 900, 700], "children": [
+      {"AXRole": "AXGroup", "AXTitle": "Message actions", "AXFrame": [380, 290, 120, 140], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Undo", "AXFrame": [400, 300, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Archive", "AXFrame": [400, 340, 80, 24]},
+        {"AXRole": "AXButton", "AXTitle": "Delete", "AXFrame": [400, 380, 80, 24]}]},
+      {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]},
+      {"AXRole": "AXGroup", "AXTitle": "", "AXFrame": [780, 720, 120, 60], "children": [
+        {"AXRole": "AXButton", "AXTitle": "Send", "AXFrame": [800, 740, 80, 28]}]}]}
+  },
+  "scenarios": [
+    {"id": "undo_dismissed_shift", "observe": "base", "live": "undo_dismissed", "act": {"_ref": "archive", "action": "press", "at": 1.0},
+     "expect": {"refused": "stale_ui", "dispatched": false, "why": "path and frame changed; Delete now sits at Archive's observed frame"}},
+    {"id": "moved_within_tolerance", "observe": "base", "live": "archive_moved_6", "act": {"_ref": "archive", "action": "press", "at": 1.0},
+     "expect": {"refused": null, "why": "6 px is inside the 8 px tolerance; the press then follows its class (archive's class is T3's verb list)"},
+     "open_item": "O6"},
+    {"id": "moved_past_tolerance", "observe": "base", "live": "archive_moved_9", "act": {"_ref": "archive", "action": "press", "at": 1.0},
+     "expect": {"refused": "stale_ui", "dispatched": false}},
+    {"id": "labels_swapped_in_place", "observe": "base", "live": "labels_swapped", "act": {"_ref": "archive", "action": "press", "at": 1.0},
+     "expect": {"refused": "stale_ui", "dispatched": false, "why": "same path and frame, different label hash"}},
+    {"id": "observation_too_old", "observe": "base", "live": "base", "act": {"_ref": "archive", "action": "press", "at": 5.5},
+     "expect": {"refused": "stale_ui", "dispatched": false}},
+    {"id": "overlay_duplicate", "observe": "base", "live": "send_overlay", "act": {"_ref": "send", "action": "press", "at": 1.0},
+     "expect": {"refused": "ambiguous_target", "dispatched": false, "why": "two live elements match role, label and frame"}},
+    {"id": "observation_from_another_session", "observe": "base", "live": "base", "act": {"_ref": "archive", "action": "press", "at": 1.0, "session": "other"},
+     "expect": {"refused": "unknown_observation", "dispatched": false, "why": "an observation belongs to one session (T3's code; the first proposal said stale_ui)"}}
+  ],
+  "required": "Before every act the host re-checks the observation's age and session, the window identity and focus, and the element's role, label hash, path and frame. Any mismatch refuses stale_ui and several matches refuse ambiguous_target, before dispatch. Coordinates alone never select an element; a refused commit never reaches native review.",
+  "open_items": ["O6", "O8"]
+}

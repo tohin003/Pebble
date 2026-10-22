@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE rss [
+<!ENTITY a "P16P16P16P16P16P16P16P16">
+<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+<!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+]>
+<rss version="2.0"><channel><title>Bing: entity expansion</title>
+<item><title>&c;</title><link>https://ok.example/</link><description>P16-RSS-DOCTYPE</description></item>
+</channel></rss>

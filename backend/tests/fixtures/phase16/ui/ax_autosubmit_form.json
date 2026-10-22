@@ -1,0 +1,51 @@
+{
+  "format": "pebble-p16-fake-ax/1",
+  "case": "U5",
+  "gate": "G14",
+  "owner": ["T3", "T4"],
+  "title": "An input or focus act that submits a form by itself",
+  "clock": 1791800000.0,
+  "page": "ui/autosubmit_form.html",
+  "browser_variant": {
+    "session": {"kind": "browser", "profile": "pebble", "tab_id": "T1", "origins": ["https://shop.example"]},
+    "frame": {"id": "F1", "loaderId": "L1", "url": "https://shop.example/checkout"},
+    "dom": [
+      {"tag": "input", "_ref": "amount", "attrs": {"name": "amount", "oninput": "this.form.submit()"}, "form": "pay"},
+      {"tag": "input", "_ref": "note", "attrs": {"name": "note", "onfocus": "this.form.requestSubmit()"}, "form": "pay"},
+      {"tag": "input", "_ref": "coupon", "attrs": {"name": "coupon"}, "form": "pay"}
+    ],
+    "acts": [
+      {"_ref": "amount", "action": "type", "text": "500",
+       "cdp_after_dispatch": [
+         {"method": "Fetch.requestPaused", "params": {"requestId": "R1", "resourceType": "Document", "frameId": "F1",
+                                                      "request": {"url": "https://pay.example/charge", "method": "POST"}}},
+         {"method": "Page.frameRequestedNavigation", "params": {"frameId": "F1", "reason": "formSubmissionPost", "url": "https://pay.example/charge"}}],
+       "expect": {"class": "input", "host_reply": {"method": "Fetch.failRequest", "params": {"requestId": "R1", "errorReason": "BlockedByClient"}},
+                  "outcome": "unexpected_commit_blocked", "next_act": "stale_ui", "retried": false}},
+      {"_ref": "note", "action": "focus",
+       "cdp_after_dispatch": [
+         {"method": "Fetch.requestPaused", "params": {"requestId": "R2", "resourceType": "Document", "frameId": "F1",
+                                                      "request": {"url": "https://pay.example/charge", "method": "POST"}}}],
+       "expect": {"class": "local", "host_reply": {"method": "Fetch.failRequest", "params": {"requestId": "R2", "errorReason": "BlockedByClient"}},
+                  "outcome": "unexpected_commit_blocked", "retried": false}},
+      {"_ref": "coupon", "action": "key", "key": "Enter", "expect": {"class": "commit", "native_review": true, "why": "Enter in a form"}}
+    ]
+  },
+  "native_variant": {
+    "processes": [{"pid": 4501, "bundle_id": "com.example.shop", "team_id": "BBBBBBBBBB", "start_time": 1791799000.0, "name": "Example Shop"}],
+    "observe": {"at": 0.0, "frontmost_pid": 4501, "windows": [
+      {"pid": 4501, "AXRole": "AXWindow", "AXTitle": "Checkout", "AXIdentifier": "checkout", "AXMain": true, "AXFocused": true,
+       "AXFrame": [100, 100, 800, 600], "children": [
+        {"AXRole": "AXWebArea", "AXFrame": [100, 140, 800, 560], "children": [
+          {"AXRole": "AXTextField", "_ref": "amount", "AXTitle": "Amount", "AXValue": "", "AXFrame": [140, 200, 200, 24]}]}]}]},
+    "after_act": {"at": 0.8, "frontmost_pid": 4501, "windows": [
+      {"pid": 4501, "AXRole": "AXWindow", "AXTitle": "Payment confirmed", "AXIdentifier": "checkout", "AXMain": true, "AXFocused": true,
+       "AXFrame": [100, 100, 800, 600], "children": [
+        {"AXRole": "AXStaticText", "AXValue": "Thank you. 500 charged.", "AXFrame": [140, 200, 400, 24]}]}]},
+    "act": {"_ref": "amount", "action": "type", "text": "500"},
+    "expect": {"class": "input", "outcome": "unknown", "run_state": "needs_reconciliation", "retried": false,
+               "why": "the post-act observation shows a change the act did not declare; native AX cannot hold the request"}
+  },
+  "required": "An input or local act never silently becomes a commit. In the browser, a navigation or form request during a non-commit act is held and failed before it leaves; natively, an undeclared change after the act makes the outcome unknown and the run needs reconciliation. Nothing is retried.",
+  "open_items": ["O6", "O8", "O12"]
+}

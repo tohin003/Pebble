@@ -1,0 +1,29 @@
+{
+  "format": "pebble-p16-fixture/1",
+  "case": "W5",
+  "gate": "G5",
+  "owner": ["T1"],
+  "title": "PDF bombs and malformed PDFs, built in memory by kit.pdf (pypdf, already a backend dependency)",
+  "kinds": [
+    {"id": "flate_whitespace", "generator": "flate_page", "params": {"expanded_bytes": 16000000}, "max_file_bytes": 100000,
+     "url": "https://bomb.example/flate.pdf", "content_type": "application/pdf",
+     "expect": {"kind": "pdf", "text": "", "flags": ["pdf_no_text"]},
+     "residual": "pypdf's 8 MB zlib output cap did not stop this 16 MB expansion (T1 observation); the confined worker's CPU and wall limits bound it, but its memory is not hard-limited."},
+    {"id": "page_count", "generator": "many_pages", "params": {"pages": 240, "text": "P16-PDF-PAGE"}, "max_file_bytes": 100000,
+     "url": "https://bomb.example/pages.pdf", "content_type": "application/pdf",
+     "expect": {"kind": "pdf", "flags_include": ["pdf_pages_truncated"], "truncated": true, "contains": ["Page 200\nP16-PDF-PAGE"], "absent": ["Page 201"]}},
+    {"id": "octet_stream_signature", "generator": "many_pages", "params": {"pages": 1, "text": "P16-PDF-SNIFFED"}, "max_file_bytes": 100000,
+     "url": "https://bomb.example/raw", "content_type": "application/octet-stream",
+     "expect": {"kind": "pdf", "contains": ["P16-PDF-SNIFFED"]}},
+    {"id": "mislabelled", "body": "<html><body>P16 not a pdf</body></html>",
+     "url": "https://bomb.example/fake.pdf", "content_type": "application/pdf",
+     "expect": {"error": "labelled as a PDF but is not one"}},
+    {"id": "over_cap", "generator": "many_pages", "params": {"pages": 3, "text": "P16-PDF-CAP"}, "max_file_bytes": 100000, "max_bytes": 300,
+     "url": "https://bomb.example/cut.pdf", "content_type": "application/pdf",
+     "expect": {"error": "Only complete PDFs can be read."}},
+    {"id": "encrypted", "generator": "encrypted", "params": {"pages": 1, "text": "P16-PDF-LOCKED", "user_password": "p16", "algorithm": "RC4-128"},
+     "max_file_bytes": 100000, "url": "https://bomb.example/locked.pdf", "content_type": "application/pdf",
+     "expect": {"error": "encrypted"}}
+  ],
+  "required": "PDFs are parsed only by the confined document worker, only when complete, with the 2 MB input cap, the worker's CPU and wall limits and the character and page caps reported as flags; a type or signature mismatch is refused."
+}

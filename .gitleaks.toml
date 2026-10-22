@@ -1,0 +1,185 @@
+# gitleaks configuration for Pebble's public tree (Phase 24: V1-022, V1-152). Needs gitleaks 8.25 or later
+# ([[allowlists]] and [[rules.allowlists]]). scripts/publish_tree.py runs:
+#   gitleaks dir <tree> --config <tree>/.gitleaks.toml --report-format json --report-path <file> --redact
+#
+# It keeps every default rule and adds three of Pebble's own: an absolute macOS home path, an e-mail address and a
+# Claude account folder. Each allowlist below is narrow: one file and the exact line or value that was reviewed, so
+# the same text anywhere else is still reported. The reviewed lists match publish/manifest.json "scan" (a test keeps
+# them equal). Strings no public file may name (addresses, private folder and account names) are checked by
+# scripts/publish_tree.py against the maintainer's private markers file instead.
+
+title = "Pebble publication scan"
+
+[extend]
+useDefault = true
+
+# ---- Pebble's own rules ----------------------------------------------------------------------------------------
+
+[[rules]]
+id = "pebble-user-home-path"
+description = "An absolute macOS home folder path (/Users/<name>), outside the synthetic names tests and docs use"
+regex = '''/Users/([A-Za-z0-9._-]+)'''
+secretGroup = 1
+keywords = ["/users/"]
+
+  [[rules.allowlists]]
+  description = "Synthetic user names in tests (publish/manifest.json scan.synthetic_user_names)"
+  regexTarget = "secret"
+  regexes = ['''^(p|sam|x|test|someone|someone-else|me|dev|person|Shared|alice|builder)$''']
+
+[[rules]]
+id = "pebble-email-address"
+description = "An e-mail address outside the reserved example domains"
+regex = '''[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})'''
+secretGroup = 1
+keywords = ["@"]
+
+  [[rules.allowlists]]
+  description = "Reserved example domains (RFC 2606 and RFC 6761)"
+  regexTarget = "secret"
+  regexes = ['''(?i)^(?:[A-Za-z0-9-]+\.)*(?:example|example\.com|example\.net|example\.org|test|invalid|localhost)$''']
+
+  [[rules.allowlists]]
+  description = "Third-party licence texts, reproduced verbatim"
+  paths = ['''(^|/)src-tauri/resources/licenses/''']
+
+  [[rules.allowlists]]
+  description = "An npm package's own deprecation message, copied verbatim into package-lock.json"
+  condition = "AND"
+  paths = ['''(^|/)(package-lock|publish/manifest)\.json$''']
+  regexTarget = "match"
+  regexes = ['''^i@izs\.me$''']
+
+  [[rules.allowlists]]
+  description = "An icon file name, not an address"
+  condition = "AND"
+  paths = ['''(^|/)(src-tauri/tauri\.conf|publish/manifest)\.json$''']
+  regexTarget = "match"
+  regexes = ['''^128x128@2x\.png$''']
+
+  [[rules.allowlists]]
+  description = "Python code in a test fixture, not an address"
+  condition = "AND"
+  paths = ['''(^|/)(backend/tests/test_evaluation\.py|publish/manifest\.json)$''']
+  regexTarget = "match"
+  regexes = ['''^n@functools\.reduce$''']
+
+  [[rules.allowlists]]
+  description = "A synthetic URL with a password, which the test expects to be refused"
+  condition = "AND"
+  paths = ['''(^|/)(backend/tests/test_phase18_security\.py|publish/manifest\.json)$''']
+  regexTarget = "match"
+  regexes = ['''^pw@www\.elleryharbour\.gov$''']
+
+  [[rules.allowlists]]
+  description = "A synthetic Git remote and a synthetic credential-bearing registry URL in a test"
+  condition = "AND"
+  paths = ['''(^|/)(backend/tests/test_environments\.py|publish/manifest\.json)$''']
+  regexTarget = "match"
+  regexes = ['''^(git@github\.com|secret@registry\.npmjs\.org)$''']
+
+  [[rules.allowlists]]
+  description = "In the Phase 24 validator's list of addresses that are no person: a no-reply co-author address"
+  condition = "AND"
+  paths = ['''(^|/)(scripts/validate_phase24\.py|publish/manifest\.json)$''']
+  regexTarget = "match"
+  regexes = ['''^noreply@anthropic\.com$''']
+
+[[rules]]
+id = "pebble-account-folder"
+description = "A Claude account folder, whatever its name, with its session paths (decision D11)"
+regex = '''(?:^|[^A-Za-z0-9_])\.claude-[A-Za-z0-9]'''
+keywords = [".claude-"]
+
+# ---- The ten triaged findings of the Phase 24 scan (i2-08, V1-152): 0 real secrets --------------------------------
+# Each is pinned to its one file and to the shape of its line (the constant's name and the value's format), never to
+# a line number, so a moved line stays allowed and the same text in any other file is still reported. The values are
+# never repeated here: this file is scanned too, and must hold nothing a rule would flag.
+
+[[allowlists]]
+description = "1-2 of 10: tiktoken's public cache name (the SHA-1 of the vocabulary's address) and the vocabulary's published SHA-256"
+condition = "AND"
+paths = ['''(^|/)backend/pebble/token_budget\.py$''']
+regexTarget = "line"
+regexes = ['''^TOKENIZER_FILE = '[0-9a-f]{40}'$''', '''^TOKENIZER_SHA256 = '[0-9a-f]{64}'$''']
+
+[[allowlists]]
+description = "3 of 10: Pebble for Chrome's public RSA-2048 SubjectPublicKeyInfo, public by design; no private key exists"
+condition = "AND"
+paths = ['''(^|/)browser-extension/manifest\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA[A-Za-z0-9+/]{300,}={0,2}",$''']
+
+[[allowlists]]
+description = "4 of 10: the scrubber test's synthetic secret shapes"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_data_mirror_22\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*text = scrub\('key sk-[A-Z]{24} ghp_[A-Z]{24} AKIA[A-Z]{16} '$''']
+
+[[allowlists]]
+description = "5 of 10: a credential-shaped memory the export must refuse"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_memory_portable\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*for ident, text in \(\('cred-1', 'Deploy with api_key: [A-Za-z0-9]{18}'\), \('cred-2', 'Token ghp_' \+ 'a' \* 36\)\):$''']
+
+[[allowlists]]
+description = "6 of 10: synthetic route canaries"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_phase15_security\.py$''']
+regexTarget = "line"
+regexes = ['''^(DEVICE|CLOUD|LEGACY)_SECRET = 'zephyr-(device|cloud|legacy)-[0-9a-f]{4}'$''']
+
+[[allowlists]]
+description = "7 of 10: a synthetic value the stream test must never echo"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_responses_stream\.py$''']
+regexTarget = "line"
+regexes = ['''^SECRET = 'sk-fixture-secret-[0-9]{4}'$''']
+
+[[allowlists]]
+description = "8 of 10: a synthetic vault value"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_vault_consolidated_22\.py$''']
+regexTarget = "line"
+regexes = ['''^SECRET = 'sk-live-[0-9a-f]{16}-SECRET'$''']
+
+[[allowlists]]
+description = "9 of 10: a synthetic canary built from a random per-run value"
+condition = "AND"
+paths = ['''(^|/)scripts/validate_phase18\.py$''']
+regexTarget = "line"
+regexes = ['''^CANARY_SECRET = 'sk-live-phase[0-9]+' \+ TOKEN \* 4$''']
+
+[[allowlists]]
+description = "Phase 25 publish probe, 1-2 of 9: a synthetic confirmation token and synthetic vault values in the merge test"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_merge_24b\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*token = '[0-9a-f]{16}'$''', '''^\s*secret, token = 'sk-live-[0-9a-f]{16}-SECRET', 'oauth-refresh-[0-9]{10}'$''']
+
+[[allowlists]]
+description = "Phase 25 publish probe, 3-5 of 9: Base64 of 'foobarbazqux123456' and 'CheckThisTokenValue', shapes the scrubber test must redact"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_data_boundary_24\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*'json access[_]token': \('[{]"access[_]token": "[A-Za-z0-9]{24}"[}]', '[A-Za-z0-9]{24}'\),$''', '''^\s*'id[_]token=': \('callback id[_]token=[A-Za-z0-9]{26} done', '[A-Za-z0-9]{26}'\),$''']
+
+[[allowlists]]
+description = "Phase 25 publish probe, 6 of 9: a synthetic vault value"
+condition = "AND"
+paths = ['''(^|/)backend/tests/test_vault_fallback_24\.py$''']
+regexTarget = "line"
+regexes = ['''^SECRET = 'sk-live-[0-9a-f]{16}-SECRET'$''']
+
+[[allowlists]]
+description = "Phase 25 publish probe, 7-9 of 9: the Phase 24 validator's copy of the scrubber shapes (3-5 above)"
+condition = "AND"
+paths = ['''(^|/)scripts/validate_phase24\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*'json access[_]token': \('[{]"access[_]token": "[A-Za-z0-9]{24}"[}]', '[A-Za-z0-9]{24}'\),$''', '''^\s*'id[_]token=': \('callback id[_]token=[A-Za-z0-9]{26} done', '[A-Za-z0-9]{26}'\),$''']
+
+[[allowlists]]
+description = "10 of 10: a low-entropy match inside the 0.4.0 DMG's compressed bytes. The DMG is never published (publish/manifest.json never), so this only matters for a scan of a private checkout."
+paths = ['''(^|/)release/Pebble_0\.4\.0_arm64\.dmg$''']

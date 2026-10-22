@@ -1,0 +1,60 @@
+{
+  "format": "pebble-p16-fake-ax/1",
+  "case": "U2",
+  "gate": "G11",
+  "owner": ["T3", "T4"],
+  "title": "Secure fields with innocent labels, and plain fields with credential labels",
+  "clock": 1791800000.0,
+  "processes": [
+    {"pid": 4101, "bundle_id": "com.example.mail", "team_id": "AAAAAAAAAA", "start_time": 1791799000.0, "name": "Example Mail"}
+  ],
+  "grant": {"target": {"kind": "app", "bundle_id": "com.example.mail", "team_id": "AAAAAAAAAA",
+                       "window": {"title": "Sign in — Example Mail", "ax_identifier": "signin"}},
+            "actions": ["observe", "local", "input"], "ttl_seconds": 600},
+  "sentinel": "P16-SECRET-VALUE",
+  "observe": {
+    "at": 0.0, "frontmost_pid": 4101,
+    "windows": [
+      {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Sign in — Example Mail", "AXIdentifier": "signin",
+       "AXMain": true, "AXFocused": true, "AXFrame": [100, 100, 600, 400],
+       "children": [
+         {"AXRole": "AXTextField", "AXSubrole": "AXSecureTextField", "_ref": "secure_as_search", "AXTitle": "Search",
+          "AXValue": "P16-SECRET-VALUE", "AXFrame": [120, 140, 300, 24]},
+         {"AXRole": "AXTextField", "_ref": "plain_password_label", "AXTitle": "Password", "AXPlaceholderValue": "Enter password",
+          "AXValue": "", "AXFrame": [120, 180, 300, 24]},
+         {"AXRole": "AXTextField", "_ref": "otp_label", "AXTitle": "Verification code", "AXValue": "", "AXFrame": [120, 220, 300, 24]},
+         {"AXRole": "AXTextField", "_ref": "notes", "AXTitle": "Notes", "AXValue": "Bring the agenda", "AXFrame": [120, 260, 300, 24]}
+       ]}
+    ]
+  },
+  "acts": [
+    {"_ref": "secure_as_search", "action": "type", "text": "hunter2",
+     "expect": {"refused": "secure_field", "handoff": true, "value_in_observation": "redacted"}},
+    {"_ref": "plain_password_label", "action": "type", "text": "hunter2",
+     "expect": {"refused": "secure_field", "handoff": true, "why": "a credential label raises; it never lowers"}, "open_item": "O7"},
+    {"_ref": "otp_label", "action": "type", "text": "123456",
+     "expect": {"refused": "secure_field", "handoff": true, "why": "2FA"}, "open_item": "O7"},
+    {"_ref": "notes", "action": "type", "text": "and the slides", "expect": {"class": "input", "refused": null}}
+  ],
+  "browser_variant": {
+    "url": "https://mail.example/login",
+    "origins": ["https://mail.example"],
+    "dom": [
+      {"tag": "input", "_ref": "password_as_username", "attrs": {"type": "password", "aria-label": "Username"}, "value": "P16-SECRET-VALUE"},
+      {"tag": "input", "_ref": "otp_as_coupon", "attrs": {"type": "text", "autocomplete": "one-time-code", "aria-label": "Coupon"}},
+      {"tag": "input", "_ref": "card_as_promo", "attrs": {"type": "text", "autocomplete": "cc-number", "name": "promo"}},
+      {"tag": "input", "_ref": "search", "attrs": {"type": "search", "name": "q"}}
+    ],
+    "acts": [
+      {"_ref": "password_as_username", "action": "type", "text": "alice", "expect": {"refused": "secure_field", "handoff": true}},
+      {"_ref": "otp_as_coupon", "action": "type", "text": "123456", "expect": {"refused": "secure_field", "handoff": true}},
+      {"_ref": "card_as_promo", "action": "type", "text": "4111111111111111", "expect": {"refused": "secure_field", "handoff": true}},
+      {"_ref": "search", "action": "type", "text": "northfield", "expect": {"class": "input", "refused": null}}
+    ]
+  },
+  "must_not_contain": {"where": ["observation", "observation digest input", "action receipt", "run_tools", "events", "logs"],
+                       "values": ["P16-SECRET-VALUE"],
+                       "note": "The model's own typed text is journaled with its call before any refusal (runner behaviour); only the app-held field value is required absent."},
+  "required": "Secure fields are found by role, subrole, input type or autocomplete, never by label: their values are redacted in every observation and model input is refused with a handoff. Credential-like labels can only raise a field to handoff.",
+  "open_items": ["O6", "O7", "O8"]
+}

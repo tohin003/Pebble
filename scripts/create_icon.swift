@@ -1,0 +1,20 @@
+import AppKit
+let size=1024
+let rep=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:size,pixelsHigh:size,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!
+NSGraphicsContext.saveGraphicsState()
+NSGraphicsContext.current=NSGraphicsContext(bitmapImageRep:rep)
+NSColor(calibratedRed:0.945,green:0.96,blue:0.92,alpha:1).setFill()
+NSBezierPath(roundedRect:NSRect(x:40,y:40,width:944,height:944),xRadius:218,yRadius:218).fill()
+let pebble=NSBezierPath()
+pebble.move(to:NSPoint(x:212,y:466))
+pebble.curve(to:NSPoint(x:444,y:770),controlPoint1:NSPoint(x:191,y:640),controlPoint2:NSPoint(x:291,y:791))
+pebble.curve(to:NSPoint(x:786,y:594),controlPoint1:NSPoint(x:611,y:758),controlPoint2:NSPoint(x:802,y:746))
+pebble.curve(to:NSPoint(x:606,y:249),controlPoint1:NSPoint(x:779,y:430),controlPoint2:NSPoint(x:759,y:264))
+pebble.curve(to:NSPoint(x:212,y:466),controlPoint1:NSPoint(x:428,y:234),controlPoint2:NSPoint(x:228,y:279))
+pebble.close()
+NSColor(calibratedRed:0.32,green:0.42,blue:0.33,alpha:1).setFill();pebble.fill()
+NSColor.white.setFill()
+NSBezierPath(roundedRect:NSRect(x:407,y:470,width:42,height:124),xRadius:21,yRadius:21).fill()
+NSBezierPath(roundedRect:NSRect(x:564,y:470,width:42,height:124),xRadius:21,yRadius:21).fill()
+NSGraphicsContext.restoreGraphicsState()
+try! rep.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:CommandLine.arguments[1]))

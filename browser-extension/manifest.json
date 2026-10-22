@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Pebble for Chrome",
+  "short_name": "Pebble",
+  "version": "0.1.0",
+  "description": "Lets Pebble, your companion on this Mac, see and act in the Chrome tabs you share with it.",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5o2cfZj5veP4z8uZB/ikXw430obBX8vXinFfRzMoFhDyQOH/iKIB07IqcV32FTg1b4tPUxPCu30MbYm9YZE/7xm280YimyIZyp7/PCMZls2mAZSpQSjPVLcInVWthduRlhzdfTX5RXlBx5lqiZQiZrwKY6DGVqbOhz7Af5G8X/q8tBxQXKnfRHh4zh8pHn0ZJ8rFJI/pZooYR/0l7UQQgLuhO1T8aVGa1BtGEYnY0ht3Xv0TOfYvI6zK51FJg4MxVejyGnuhTyus8vKfOhbVgRdHTSOCPgJKORVSG6cSnm2wocLuUhE0GLrHWX0tlScnj+pPr7aaGLCHpeYKgGc6wQIDAQAB",
+  "permissions": [
+    "debugger",
+    "nativeMessaging",
+    "storage",
+    "activeTab",
+    "tabGroups"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Pebble for Chrome",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/pebble-16.png",
+      "32": "icons/pebble-32.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Open Pebble for Chrome"
+    }
+  },
+  "externally_connectable": {
+    "ids": []
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "icons": {
+    "16": "icons/pebble-16.png",
+    "32": "icons/pebble-32.png",
+    "48": "icons/pebble-48.png",
+    "128": "icons/pebble-128.png"
+  }
+}

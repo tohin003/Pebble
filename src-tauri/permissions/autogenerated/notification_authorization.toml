@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-notification-authorization"
+description = "Enables the notification_authorization command without any pre-configured scope."
+commands.allow = ["notification_authorization"]
+
+[[permission]]
+identifier = "deny-notification-authorization"
+description = "Denies the notification_authorization command without any pre-configured scope."
+commands.deny = ["notification_authorization"]

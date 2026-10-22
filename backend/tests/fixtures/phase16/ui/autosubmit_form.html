@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Checkout</title></head>
+<body>
+<p>P16-AUTOSUBMIT Typing an amount pays immediately.</p>
+<form id="pay" action="https://pay.example/charge" method="post">
+<label>Amount <input name="amount" oninput="this.form.submit()"></label>
+<label>Note <input name="note" onfocus="this.form.requestSubmit()"></label>
+<label>Coupon <input name="coupon"></label>
+</form>
+</body>
+</html>

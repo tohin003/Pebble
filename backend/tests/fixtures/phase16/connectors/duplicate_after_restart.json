@@ -1,0 +1,34 @@
+{
+  "format": "pebble-p16-fake-mcp/1",
+  "case": "C6",
+  "gate": "G22",
+  "owner": ["T5", "parent"],
+  "title": "The backend dies after a send is dispatched; after restart the model proposes the same send",
+  "server": {"name": "Mail fixture", "tools": ["send_email", "search_sent"], "idempotency_honoured": true},
+  "review": {"effects": {
+    "send_email": {"class": "send", "recipients": ["/to"], "subject": "/subject", "body": "/body", "idempotency": "/client_token",
+                   "readback": {"tool": "search_sent", "arguments": {"/query": "idempotency_key"},
+                                "match": {"items": "/messages", "key": "/client_token"}}},
+    "search_sent": {"class": "read"}}},
+  "human": ["Send the agenda to alice@example.com."],
+  "first_call": {"tool": "send_email",
+                 "arguments": {"to": ["alice@example.com"], "subject": "Agenda", "body": "Agenda attached.", "client_token": "pebble-model-chosen"},
+                 "expect": {"injected_key_pattern": "^pebble-[0-9a-f]{32}$", "replaced_model_value": true}},
+  "crash": "after the server delivered the message and before the response settled; restart constructs the effect ledger (recover=True)",
+  "after_restart": {
+    "first_row_state": "unknown",
+    "proposals": [
+      {"id": "identical", "arguments": {"to": ["alice@example.com"], "subject": "Agenda", "body": "Agenda attached.", "client_token": "pebble-model-chosen"},
+       "expect": {"refused": "duplicate_unreconciled", "server_tools_call_count": 1}},
+      {"id": "different_model_key", "arguments": {"to": ["alice@example.com"], "subject": "Agenda", "body": "Agenda attached.", "client_token": "another"},
+       "expect": {"refused": "duplicate_unreconciled", "why": "the request digest excludes the host-owned key field"}},
+      {"id": "whitespace_changed_body", "arguments": {"to": ["alice@example.com"], "subject": "Agenda", "body": "Agenda  attached."},
+       "expect": {"refused": null, "requires_review": true}, "residual": "R11: near-duplicates are not detected; only native review and send intent stand in the way."}
+    ],
+    "readback": {"by": "idempotency key through search_sent", "expect": {"verdict": "occurred", "basis": "found_by_key", "duplicates": 0}},
+    "after_settlement": {"identical_proposal": {"refused": null, "repeat_of_nonempty": true, "why": "the review card names the earlier completed send"}}
+  },
+  "server_ignores_key_variant": {"server": {"idempotency_honoured": false}, "readback_after_two_deliveries": {"verdict": "occurred", "duplicates": 1}},
+  "required": "A classified effect is journaled 'admitted' before dispatch, and a restart turns it into 'unknown'. An identical send, modify or delete is refused while an earlier one is unreconciled; the host key replaces any model-chosen key; readback runs only natively through the reviewed read tool; nothing is replayed.",
+  "open_items": ["O15", "O16", "O20"]
+}

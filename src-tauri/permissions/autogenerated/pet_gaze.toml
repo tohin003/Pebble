@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pet-gaze"
+description = "Enables the pet_gaze command without any pre-configured scope."
+commands.allow = ["pet_gaze"]
+
+[[permission]]
+identifier = "deny-pet-gaze"
+description = "Denies the pet_gaze command without any pre-configured scope."
+commands.deny = ["pet_gaze"]

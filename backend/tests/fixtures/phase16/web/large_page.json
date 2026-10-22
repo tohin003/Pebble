@@ -1,0 +1,38 @@
+{
+  "format": "pebble-p16-fixture/1",
+  "case": "W4",
+  "gate": "G4",
+  "owner": ["T1", "parent"],
+  "title": "A page just over the 2 MB fetch cap, built in memory by kit.large_page (never stored)",
+  "generator": "large_page",
+  "params": {
+    "cap_bytes": 2000000,
+    "target_bytes": 2100000,
+    "pad_window": 200,
+    "head": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Grid maintenance archive</title></head><body>\n",
+    "paragraph": "<p>Filler paragraph {i:06d} about routine grid maintenance windows.</p>\n",
+    "markers": {"0": "P16-EARLY-MARKER", "2000": "P16-QUERY-A xylophone fault report", "21000": "P16-QUERY-B xylophone fault report"},
+    "straddle": "é",
+    "late": "<p>P16-LATE-MARKER beyond the fetch cap.</p>\n",
+    "tail": "</body></html>\n"
+  },
+  "sha256": "1d3645de1c8f141fdcc46b9bccdb04549af3838fc21b4c30b8cbea0380dabb2d",
+  "content_type": "text/html; charset=utf-8",
+  "urls": ["https://archive.example/maintenance-1", "https://archive.example/maintenance-2", "https://archive.example/maintenance-3"],
+  "read": {"window_chars": 1500, "query_terms": ["xylophone fault"]},
+  "expect": {
+    "bytes": 2000000,
+    "characters": 200000,
+    "truncated_at_fetch": true,
+    "flags_include": ["fetch_bytes_cap", "source_chars_cap"],
+    "window_contains": ["P16-QUERY-A"],
+    "window_max_escaped_chars": 1687,
+    "ledger_text_contains": ["P16-EARLY-MARKER", "P16-QUERY-A"],
+    "ledger_text_absent": ["P16-QUERY-B", "P16-LATE-MARKER"],
+    "absent_keys": ["next_offset"],
+    "second_read_bytes": 2000000,
+    "third_read_error": "already fetched 4 MB",
+    "extract_uncapped": {"contains": ["P16-QUERY-B"], "absent": ["P16-LATE-MARKER", "�"], "flags_absent": ["replacement_characters"]}
+  },
+  "required": "A fetch keeps at most 2 MB as a flagged prefix and a source at most 200,000 characters; ReadURL shows one bounded, ranked window with explicit omitted_characters and truncated_at_fetch and never next_offset; a run fetches at most 4 MB and 32 sources; nothing past the cap is claimed as read."
+}

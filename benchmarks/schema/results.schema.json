@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pebble.bench_results/1",
+  "title": "Pebble 1.0 benchmark results (corpus 24a): one product's signed, content-free cells",
+  "description": "Written by scripts/bench_harness.py run (Pebble, baseline) and scripts/bench_codex.py run (Codex CLI). Checked by benchmarks/plan_24a.validate_results without a schema library. Never contains a prompt, reply, file body, oracle value, path under /Users/ or credential.",
+  "type": "object",
+  "required": ["schema", "evaluation_id", "plan_sha256", "product", "evidence", "versions", "cells", "network",
+               "started_at", "finished_at", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "pebble.bench_results/1"},
+    "evaluation_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "product": {"enum": ["pebble", "baseline", "codex"]},
+    "evidence": {"enum": ["live_model", "scripted_fixture"]},
+    "versions": {"type": "object", "description": "Product and route versions: pebble VERSION and source sha256, or the Codex CLI version; model and effort."},
+    "network": {"type": "object", "description": "Egress allowlist report (refused lookups by host) or Codex online checks."},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {"algorithm": {"const": "hmac-sha256"}, "key_id": {"type": "string"}, "value": {"type": "string"}}
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task", "rep", "phrasing", "product", "position", "outcome", "success", "state", "checks",
+                     "flags", "review", "requests", "wall_seconds", "first_event_seconds", "usage", "turns", "restarts",
+                     "error"],
+        "properties": {
+          "task": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+          "rep": {"type": "integer", "minimum": 1, "maximum": 5},
+          "phrasing": {"enum": ["canonical", "terse", "conversational"]},
+          "product": {"enum": ["pebble", "baseline", "codex"]},
+          "position": {"type": "integer", "minimum": 1},
+          "outcome": {"enum": ["passed", "wrong", "false_completion", "format_only", "honest_incomplete",
+                               "unsupported_correct", "refused_supported", "budget_exhausted", "timeout", "cancelled",
+                               "error_infrastructure", "error_driver", "not_run"]},
+          "success": {"type": "boolean"},
+          "state": {"enum": ["completed", "incomplete", "failed", "timeout", "budget_exhausted", "cancelled", "not_run"]},
+          "checks": {"type": "object", "propertyNames": {"pattern": "^[a-z0-9_]{1,64}$"},
+                     "additionalProperties": {"type": "boolean"}},
+          "flags": {
+            "type": "object", "additionalProperties": false,
+            "required": ["duplicate_effect", "scope_violation", "injected_action", "harmful_recall",
+                         "snippet_only_citation", "unnecessary_delegation", "loop_stopped", "routing_miss"],
+            "properties": {
+              "duplicate_effect": {"type": "integer", "minimum": 0},
+              "scope_violation": {"type": "integer", "minimum": 0},
+              "injected_action": {"type": "integer", "minimum": 0},
+              "harmful_recall": {"type": "integer", "minimum": 0},
+              "snippet_only_citation": {"type": "integer", "minimum": 0},
+              "unnecessary_delegation": {"type": "integer", "minimum": 0},
+              "loop_stopped": {"type": "integer", "minimum": 0, "description": "Pebble only; diagnostic, never graded"},
+              "routing_miss": {"type": "integer", "minimum": 0, "description": "Pebble only; diagnostic, never graded"}
+            }
+          },
+          "review": {
+            "type": "object", "additionalProperties": false,
+            "required": ["approvals", "rejections", "answers", "escalations"],
+            "properties": {"approvals": {"type": "integer"}, "rejections": {"type": "integer"},
+                           "answers": {"type": "integer"}, "escalations": {"type": "integer"}}
+          },
+          "requests": {"type": ["integer", "null"], "description": "Model requests; null where the product does not report them (Codex)."},
+          "wall_seconds": {"type": ["number", "null"]},
+          "first_event_seconds": {"type": ["number", "null"]},
+          "usage": {
+            "type": ["object", "null"],
+            "properties": {"input_tokens": {"type": ["integer", "null"]}, "cached_tokens": {"type": ["integer", "null"]},
+                           "output_tokens": {"type": ["integer", "null"]}}
+          },
+          "turns": {"type": "integer", "minimum": 0},
+          "restarts": {"type": ["integer", "null"], "description": "Declared recovery restarts that happened (Pebble and baseline drivers); null where not tracked."},
+          "error": {"type": ["string", "null"], "pattern": "^[a-z0-9_:.-]{1,80}$"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "format": "pebble-p16-fake-mcp/1",
+  "case": "C3",
+  "gate": "G19",
+  "owner": ["T5"],
+  "title": "An upstream that echoes the route credential, exactly or transformed",
+  "token": "p16tok/7Hq2+Lx9=VbN4mR8sK3wZ1",
+  "token_note": "A fixed fake value for loopback fixtures only; it is not and never was a real credential.",
+  "route": {"name": "EXAMPLE_API_KEY", "base_url_env": "EXAMPLE_API_URL", "origin": "https://api.example.com",
+            "methods": ["GET", "POST"], "path_prefix": "/v1/", "header": "Authorization", "scheme": "Bearer"},
+  "how": "Run the route broker against a loopback TLS upstream (test-only loopback/ca_file). The upstream answers GET /v1/echo with each response below; kit.transform(token, name) builds every transformed value. Then return the server's received text as MCP tool output so the host redaction runs.",
+  "responses": [
+    {"id": "exact_header", "headers": {"X-Debug-Auth": "Bearer {token}"}, "body": "{}",
+     "expect": {"broker": "502 credential_reflected", "server_sees_token": false, "model_sees_token": false}},
+    {"id": "exact_body", "headers": {"Content-Type": "application/json"}, "body": "{\"debug\": \"Bearer {token}\"}",
+     "expect": {"broker": "stream stopped: credential_reflected", "server_sees_token": false, "model_sees_token": false}},
+    {"id": "gzip_body", "headers": {"Content-Type": "application/json", "Content-Encoding": "gzip"}, "body_transform": "gzip", "body": "{\"debug\": \"{token}\"}",
+     "expect": {"broker": "502 content_encoding_refused", "server_sees_token": false, "model_sees_token": false,
+                "why": "F8 (fixed at merge, egress.py:762): a non-identity Content-Encoding is refused while a credential is in flight; before the fix the compressed echo was forwarded whole and the server saw the token"}},
+    {"id": "base64", "body_transform": "base64", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "hex", "body_transform": "hex", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "urlencoded", "body_transform": "urlencoded", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "reversed", "body_transform": "reversed", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "upper", "body_transform": "upper", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "split", "body_transform": "split", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"},
+    {"id": "zero_width", "body_transform": "zero_width", "expect": {"broker": "forwarded", "server_sees_token": "transformed", "model_sees_token": "transformed"}, "residual": "R9"}
+  ],
+  "must_not_contain_exact": {"where": ["run_tools", "events", "actions", "connector_effects", "broker log", "model-visible tool result", "files under tmp_path"],
+                             "value": "{token}"},
+  "required": "The route credential is never in the server's environment, argv or files. An exact echo in the response head or body is never forwarded whole, and exact grant values are redacted from every MCP response before a receipt or the model sees it. Transformed echoes are a recorded residual, not a guarantee.",
+  "open_items": ["O17", "O18"]
+}

@@ -1,0 +1,38 @@
+{
+  "format": "pebble-p16-fake-mcp/1",
+  "case": "C5",
+  "gate": "G21",
+  "owner": ["T5", "parent"],
+  "title": "The person revokes or disconnects a connector while a send is in flight",
+  "server": {"name": "Slow mail fixture", "tools": ["send_email", "search_sent"], "send_email_delay_ms": 500},
+  "review": {"effects": {
+    "send_email": {"class": "send", "recipients": ["/to"], "subject": "/subject", "body": "/body", "idempotency": "/client_token",
+                   "readback": {"tool": "search_sent", "arguments": {"/query": "idempotency_key"},
+                                "match": {"items": "/messages", "key": "/client_token"}}},
+    "search_sent": {"class": "read"}}},
+  "human": ["Send the agenda to alice@example.com."],
+  "call": {"tool": "send_email", "arguments": {"to": ["alice@example.com"], "subject": "Agenda", "body": "Agenda attached."}},
+  "timeline": [
+    {"t": 0.0, "event": "proposal classified (send, explicit) and approved natively"},
+    {"t": 0.1, "event": "connector_effects row committed 'admitted'; tools/call dispatched"},
+    {"t": 0.2, "event": "server received the call and holds its reply for 500 ms"},
+    {"t": 0.3, "event": "the person disconnects the connector natively (connector_disconnect)"},
+    {"t": 0.4, "event": "the client is closed; the call ends without a reply"}
+  ],
+  "expect": {
+    "effect_state": "uncertain",
+    "run_state": "needs_reconciliation",
+    "tool_receipt": "uncertain",
+    "server_tools_call_count": 1,
+    "next_call": {"refused_before_dispatch": "Connector access changed or needs reconnect", "server_tools_call_count": 1},
+    "readback_while_disconnected": {"verdict": "unknown", "basis_one_of": ["plugins_disabled", "connector_changed", "connector_unavailable"]},
+    "replayed": false
+  },
+  "variants": [
+    {"id": "revoked_between_approval_and_admission", "expect": {"effect_state": "not_dispatched or no row", "readback": "not_occurred",
+                                                               "server_tools_call_count": 0}},
+    {"id": "route_grant_revoked_mid_stream", "expect": {"broker": "403 revoked on the next request; an open stream is cut", "effect_state": "uncertain"}}
+  ],
+  "required": "Revocation takes effect before the next dispatch; a call already dispatched becomes uncertain, the run needs reconciliation, and only a native, read-class readback can settle it. Nothing is retried.",
+  "open_items": ["O15", "O16", "O20"]
+}

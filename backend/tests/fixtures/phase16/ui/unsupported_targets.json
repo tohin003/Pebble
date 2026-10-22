@@ -1,0 +1,36 @@
+{
+  "format": "pebble-p16-fake-ax/1",
+  "case": "U7",
+  "gate": "G16",
+  "owner": ["T3", "T4", "parent"],
+  "title": "Grants for targets outside the supported class, and launch receipts offered as proof of operation",
+  "clock": 1791800000.0,
+  "grants": [
+    {"id": "keychain", "target": {"kind": "app", "bundle_id": "com.apple.keychainaccess", "team_id": null, "window": {"title": "Keychain Access", "ax_identifier": null}},
+     "expect": {"refused": "unsupported_target"}},
+    {"id": "terminal", "target": {"kind": "app", "bundle_id": "com.apple.Terminal", "team_id": null, "window": {"title": "zsh", "ax_identifier": null}},
+     "expect": {"refused": "unsupported_target"}},
+    {"id": "system_settings", "target": {"kind": "app", "bundle_id": "com.apple.systempreferences", "team_id": null, "window": {"title": "Privacy & Security", "ax_identifier": null}},
+     "expect": {"refused": "unsupported_target"}},
+    {"id": "pebble_itself", "target": {"kind": "app", "bundle_id": "com.pebble.local", "team_id": null, "window": {"title": "Pebble", "ax_identifier": null}},
+     "expect": {"refused": "unsupported_target", "why": "Pebble never operates its own approval surface (bundle ID from src-tauri/tauri.conf.json)"}},
+    {"id": "password_manager", "target": {"kind": "app", "bundle_id": "com.1password.1password", "team_id": "CCCCCCCCCC", "window": {"title": "Vault", "ax_identifier": null}},
+     "expect": {"refused": "unsupported_target"}},
+    {"id": "users_own_browser_profile", "target": {"kind": "browser", "profile": "default", "tab_id": "T9", "origins": ["https://mail.example"]},
+     "expect": {"refused": "invalid", "why": "only Pebble's own 0700 profile: validate_target refuses any profile but 'pebble' (T3's code)"}},
+    {"id": "ttl_too_long", "target": {"kind": "app", "bundle_id": "com.example.notes", "team_id": "AAAAAAAAAA", "window": {"title": "Notes", "ax_identifier": "doc-1"}},
+     "ttl_seconds": 3600, "expect": {"refused": "invalid", "why": "ttl <= 1800 (T3's code)"}},
+    {"id": "granted_by_model", "actor": "model", "target": {"kind": "app", "bundle_id": "com.example.notes", "team_id": "AAAAAAAAAA", "window": {"title": "Notes", "ax_identifier": "doc-1"}},
+     "expect": {"refused": "native_only"}}
+  ],
+  "launch": {
+    "inventory_entry": {"id": "/Applications/Example Notes.app", "name": "Example Notes", "bundle_id": "com.example.notes", "version": "3.1", "team_id": "AAAAAAAAAA"},
+    "on_disk_now": {"bundle_id": "com.example.notes", "version": "3.1", "team_id": "ZZZZZZZZZZ"},
+    "expect": {"launch": "refused: the pinned identity changed after review", "open_called": false},
+    "receipt_after_a_good_launch": {"requested": true, "bundle_id": "com.example.notes", "launch_observed": null},
+    "expect_receipt": {"summary_excludes": ["Opened Example Notes on this device."],
+                       "completion": "an OpenApp receipt never counts as operating the app or finishing the task"}
+  },
+  "required": "Sessions cover one supported window or tab class; sensitive apps, Pebble itself, the person's own browser profile and model-originated grants are refused. Launch re-checks the pinned bundle and team IDs, reports launch_observed honestly, and never stands in for operating the app.",
+  "open_items": ["O6", "O11", "O14"]
+}

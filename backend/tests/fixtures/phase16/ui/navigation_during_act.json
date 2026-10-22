@@ -1,0 +1,53 @@
+{
+  "format": "pebble-p16-fake-ax/1",
+  "case": "U6",
+  "gate": "G15",
+  "owner": ["T3", "T4", "parent"],
+  "title": "Navigation, window loss, revocation or restart while an act is in flight",
+  "clock": 1791800000.0,
+  "browser": {
+    "session": {"kind": "browser", "profile": "pebble", "tab_id": "T1", "origins": ["https://shop.example"]},
+    "observe": {"frame": {"id": "F1", "loaderId": "L1", "url": "https://shop.example/cart"},
+                "dom": [{"tag": "button", "_ref": "place_order", "text": "Place order", "attrs": {"type": "submit", "form": "cart"}}]},
+    "scenarios": [
+      {"id": "navigates_mid_press", "act": {"_ref": "place_order", "action": "press", "approved_natively": true, "postcondition": {"url_matches": "^https://shop\\.example/order/"}},
+       "cdp_between_press_and_release": [
+         {"method": "Page.frameStartedLoading", "params": {"frameId": "F1"}},
+         {"method": "Page.frameNavigated", "params": {"frame": {"id": "F1", "loaderId": "L2", "url": "https://shop.example/interstitial"}}}],
+       "expect": {"journal": ["admitted", "unknown"], "outcome": "unknown", "run_state": "needs_reconciliation", "dispatch_count": 1,
+                  "readback": "screen kind re-observes only; it never presses again"}},
+      {"id": "navigated_before_act", "cdp_after_observe": [
+         {"method": "Page.frameNavigated", "params": {"frame": {"id": "F1", "loaderId": "L2", "url": "https://shop.example/cart"}}}],
+       "act": {"_ref": "place_order", "action": "press"},
+       "expect": {"refused": "stale_ui", "dispatch_count": 0, "why": "same URL, new loaderId"}},
+      {"id": "spontaneous_cross_origin", "cdp_after_observe": [
+         {"method": "Page.frameNavigated", "params": {"frame": {"id": "F1", "loaderId": "L3", "url": "https://evil.example/cart"}}}],
+       "act": {"_ref": "place_order", "action": "press"},
+       "expect": {"refused": "stale_ui", "dispatch_count": 0, "next_observe": "refused until a new native grant covers the origin"}},
+      {"id": "revoked_mid_act", "act": {"_ref": "place_order", "action": "press", "approved_natively": true},
+       "native_during_dispatch": {"route": "screen_session_revoke"},
+       "expect": {"outcome": "unknown", "run_state": "needs_reconciliation", "dispatch_count": 1, "next_act": "refused: session revoked"}},
+      {"id": "restart_while_admitted", "journal_before_restart": "admitted",
+       "expect": {"after_restart": "unknown", "run_state": "needs_reconciliation", "dispatch_count_after_restart": 0}}
+    ]
+  },
+  "native": {
+    "processes": [{"pid": 4101, "bundle_id": "com.example.mail", "team_id": "AAAAAAAAAA", "start_time": 1791799000.0, "name": "Example Mail"}],
+    "observe": {"at": 0.0, "frontmost_pid": 4101, "windows": [
+      {"pid": 4101, "AXRole": "AXWindow", "AXTitle": "Reply — Example Mail", "AXIdentifier": "compose-1", "AXMain": true,
+       "AXFocused": true, "AXFrame": [100, 100, 800, 600], "children": [
+        {"AXRole": "AXButton", "_ref": "send", "AXTitle": "Send", "AXIdentifier": "send", "AXFrame": [780, 660, 80, 28]}]}]},
+    "scenarios": [
+      {"id": "window_destroyed_mid_act", "act": {"_ref": "send", "action": "press", "approved_natively": true},
+       "ax_notifications_during_dispatch": [{"notification": "AXUIElementDestroyed", "element": "window:compose-1"}],
+       "expect": {"outcome": "occurred", "basis": "window_closed", "dispatch_count": 1,
+                  "why": "T3/T4 decision: a window that closes while its app keeps running reads back window_closed under the default target_changed postcondition (as a browser-reported tab close); residual R16. The first proposal said unknown."}},
+      {"id": "app_crashed_mid_act", "act": {"_ref": "send", "action": "press", "approved_natively": true},
+       "process_during_dispatch": "the granted instance exits or restarts (new start time)",
+       "expect": {"outcome": "unknown", "run_state": "needs_reconciliation", "dispatch_count": 1,
+                  "finding": "F12: today the AppAdapter reports a vanished or restarted instance as target_gone, which reads back as occurred (window_closed)"}}
+    ]
+  },
+  "required": "Every commit is journaled 'admitted' before dispatch and declares a postcondition. Navigation, window loss, revocation, a crash or a restart during the act makes the outcome unknown and the run needs reconciliation. A commit is never retried; reconciliation only re-observes.",
+  "open_items": ["O6", "O8", "O12", "O13"]
+}

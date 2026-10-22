@@ -1,0 +1,16 @@
+{
+  "caption": "Readings [north]: draft",
+  "columns": [
+    {"id": "site", "label": "Site"},
+    {"id": "value", "label": "Value"},
+    {"id": "note", "label": "=HYPERLINK(\"https://example.invalid\")"}
+  ],
+  "rows": [
+    {"site": "=1+2", "value": 3, "note": "+cmd|' /C calc'!A0"},
+    {"site": "-2+3", "value": -4.25, "note": "@SUM(A1:A2)"},
+    {"site": "\tTabbed", "value": 9007199254740993, "note": "＝full width"},
+    {"site": "مرحبا", "value": true, "note": "你好世界"},
+    {"site": "<script>alert(1)</script>", "value": null, "note": "javascript:alert(1)"},
+    {"site": "-5", "value": 0.1, "note": "plain text"}
+  ]
+}

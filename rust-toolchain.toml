@@ -1,0 +1,6 @@
+# The Rust toolchain the shell is built and tested with (V1-048). scripts/build_candidate_app.py checks that its
+# TOOLCHAIN constant names this channel.
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+targets = ["aarch64-apple-darwin"]

@@ -1,0 +1,43 @@
+# Pebble. Build output, local environments and anything private stay out of Git.
+# scripts/publish_tree.py checks that no published file is ignored; keep to plain patterns (no "!" negation).
+
+# Private working folder: build environments, toolchains, candidates, evidence and scratch.
+/.runtime/
+# Evidence reports and release binaries written by the validators and packaging tools.
+/reports/
+/release/
+# Model weights (scripts/bootstrap_model.py).
+/models/
+*.gguf
+*.safetensors
+
+# Frontend
+/node_modules/
+/dist/
+*.tsbuildinfo
+
+# Shell build output and the inputs each build stages or fetches.
+/src-tauri/target/
+/src-tauri/resources/backend/
+/src-tauri/resources/llama/
+/src-tauri/resources/helpers/
+/src-tauri/resources/tokenizer/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Packages and logs
+*.dmg
+*.log
+
+# Secrets never belong in the tree.
+.env
+*.pem
+*.p12
+*.keychain-db
+
+# macOS
+.DS_Store

@@ -1,0 +1,80 @@
+:root {
+  --bg: #f8f9f6;
+  --side: #f1f3ee;
+  --panel: #fff;
+  --text: #252c28;
+  /* Phase 24 (V1-039): secondary and muted text reach 4.5:1 on every surface in both themes (tokens.test.mjs). */
+  --secondary: #5d665e;
+  --muted: #636b63;
+  --line: #e5e9e1;
+  --line-strong: #dbe1d6;
+  --accent: #506e54;
+  --accent-soft: #b0c2ae;
+  --surface: var(--panel);
+  --border: var(--line);
+  --danger-bg: var(--bg);
+  --avatar-body: var(--accent);
+  --on-accent: #fff;
+  --soft: #f0f5ed;
+  --selected: #e5ebe0;
+  --hover: #e9eee5;
+  --disabled: #c7cec3;
+  /* V1-041: an off switch's track is a visible control (3:1 on the panels). */
+  --control-off: #7d877e;
+  --code: #f3f5f0;
+  --user-bubble: #eaf0e5;
+  --avatar: #536b54;
+  --avatar-eye: #fff;
+  --selection: #d4e5c8;
+  --danger: #a45141;
+  --danger-line: #ebd3ca;
+  --shadow: 0 16px 50px #13251b18;
+  /* Phase 22 rhythm: a 4 px spacing scale, three radii (tighter inside, softer outside), one type
+     scale and the focus colour, shared by the new chrome. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --focus: var(--accent);
+  --shadow-soft: 0 1px 2px #13251b0a, 0 6px 20px #13251b0f;
+}
+:root[data-theme="dark"] {
+  --bg: #191e1b;
+  --side: #151a17;
+  --panel: #212822;
+  --text: #e0e7de;
+  --secondary: #adb9ab;
+  --muted: #94a192;
+  --line: #2b342c;
+  --line-strong: #39443a;
+  --accent: #a6c795;
+  --accent-soft: #52684b;
+  --surface: var(--panel);
+  --border: var(--line);
+  --danger-bg: var(--bg);
+  --avatar-body: var(--accent);
+  --on-accent: #1b281a;
+  --soft: #273425;
+  --selected: #293628;
+  --hover: #263026;
+  --disabled: #445142;
+  --control-off: #6f7c6d;
+  --code: #161d17;
+  --user-bubble: #2c3928;
+  --avatar: #b4cda6;
+  --avatar-eye: #23351f;
+  --selection: #425d35;
+  --danger: #e3a38f;
+  --danger-line: #66483d;
+  --shadow: 0 16px 50px #0005;
+  --shadow-soft: 0 1px 2px #0003, 0 6px 20px #0004;
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pet-expand"
+description = "Enables the pet_expand command without any pre-configured scope."
+commands.allow = ["pet_expand"]
+
+[[permission]]
+identifier = "deny-pet-expand"
+description = "Denies the pet_expand command without any pre-configured scope."
+commands.deny = ["pet_expand"]

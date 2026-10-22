@@ -1,0 +1,17 @@
+{
+  "duration_minutes": 10,
+  "questions": [
+    {
+      "question": "Which gas do plants absorb during photosynthesis?",
+      "choices": ["Oxygen", "Carbon dioxide", "Nitrogen"],
+      "answer": 1,
+      "explanation": "Plants take in carbon dioxide and release oxygen as a by-product."
+    },
+    {
+      "question": "What is the boiling point of water at sea level?",
+      "choices": ["90 degrees Celsius", "100 degrees Celsius"],
+      "answer": 1,
+      "explanation": "Pure water boils at one hundred degrees Celsius at standard pressure."
+    }
+  ]
+}
