@@ -19,3 +19,4 @@ number and conversation in them is fictional. Each image has a light twin (`-lig
 | `04b-memory-forget` | The in-chat Forget card after one Forget |
 | `05-views` | A generated dashboard in the canvas |
 | `06-pebble-gaze.gif` | The pebble's eyes following a pointer that circles it |
+| `07-stealth-veil.gif` | Stealth Lockdown's Veil (1.1.0): the cast, one shimmer, the release. Rendered frame by frame from `src/components/Avatar.vue` on a fake clock (`scripts/render_veil_media.mjs`, `scripts/render_veil_gif.py`), since a protected window can't be screen-recorded |
