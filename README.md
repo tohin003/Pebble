@@ -367,8 +367,9 @@ Pebble is built to the standard of software that people trust with their project
 
 **Pebble against Claude Code CLI, both on Claude Opus 5.5: no difference shown.** On the same 45 tasks, three
 repetitions each, Pebble 1.0.2 passed 79.3 % and Claude Code 82.2 %. The paired difference is −3.3 points, with a 95 %
-interval of −9.2 to +2.5. Pebble was ahead on multi-turn and clarification tasks, and behind on coding fixes and
-research.
+interval of −9.2 to +2.5. Pebble was ahead on multi-turn tasks, and behind on coding fixes and research. Its lead on
+clarification tasks is overstated: the harness missed two clarifying questions Claude Code asked, so their follow-ups
+were never sent ([correction](docs/PEBBLE_V1_BENCHMARKS.md#corrections-after-publication)).
 
 <p align="center">
 <img src="docs/benchmarks/claude-opus-5-5/success.svg" width="760" alt="Task success: Pebble 79 percent, Claude Code CLI 82 percent, with overlapping 95 percent intervals">

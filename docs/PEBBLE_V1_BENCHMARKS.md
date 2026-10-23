@@ -128,7 +128,8 @@ By family (success, paired Δ with 95 % CI): one row per family, filled by `benc
 **The result: no difference shown.** On the same 45 tasks, three repetitions each (135 per product), on Claude Opus
 5.5 at medium effort, Pebble 1.0.2 passed 79.3 % and Claude Code CLI 2.1.309 passed 82.2 %. The paired difference is
 −3.3 points, with a 95 % interval of −9.2 to +2.5 points, so neither product is better on this corpus. Pebble did best
-on multi-turn and clarification tasks, and worst on coding fixes and research.
+on multi-turn tasks, and worst on coding fixes and research. Its clarification result is overstated; see
+[Corrections after publication](#corrections-after-publication).
 
 ![Task success, same tasks and same model](benchmarks/claude-opus-5-5/success.svg)
 
@@ -169,7 +170,7 @@ any scope.
 | Research | 0.0 % | 20.0 % | −20.0 (−46.7 to 0.0) |
 | Documents and data | 93.3 % | 93.3 % | 0.0 |
 | Multi-turn | 100.0 % | 100.0 % | 0.0 |
-| Clarification and honesty | 53.3 % | 33.3 % | +20.0 (0.0 to +46.7) |
+| Clarification and honesty | 53.3 % | 33.3 % (understated: see the correction) | +20.0 (0.0 to +46.7) |
 | Everyday companion | 93.3 % | 100.0 % | −6.7 (−20.0 to 0.0) |
 | Delegation (descriptive) | 100.0 % | 100.0 % | — |
 
@@ -198,6 +199,25 @@ The full analysis is in [`benchmarks/claude-opus-5-5/analysis.json`](benchmarks/
     claim. So it counts as a false completion, not as asking.
   - Pebble asks through its question form, which this rule does not read.
 - **Wall time** is a secondary measure: both products ran in parallel on one Mac.
+
+### Corrections after publication
+
+- **The harness missed two of Claude Code's clarifying questions (found 2026-10-23, after 1.0.4 was published).**
+  - **Where:** on one clarification task (choose which report to copy), Claude Code asked in repetitions 2 and 3:
+    "Which should I copy into `summary.md`? I can also include both." and "…Once you tell me, I'll make the copy…".
+  - **Why it was missed:** the question detector for text replies (`benchmarks/drivers/codex_cell.py`
+    `asks_question`) only counted a question mark at the end of one of the last three lines, or a short list of
+    request phrases. So neither reply counted as a question, the scripted follow-up was never sent, and both cells
+    were scored as failures.
+  - **Which product it affects:** Pebble asks through its question form, which the detector does not read, so the
+    error fell only on Claude Code.
+  - **The effect:**
+    - The figures above are kept as measured and not re-graded, because the follow-ups were never run.
+    - At most it moves Claude Code's clarification result from 33.3 % to 46.7 %, and its overall result from
+      82.2 % to 83.7 %.
+    - The overall verdict, no difference shown, stands either way. Pebble's clarification lead does not.
+  - **The fix:** the detector is corrected, with a test, before the next benchmark. The GPT runs that used the same
+    detector report the effect on their clarification cells.
 
 ### What the pilot found before this run
 
