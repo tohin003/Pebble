@@ -65,11 +65,11 @@ def environment(codex_home, fake_home, tmpdir):
             'LANG': 'en_US.UTF-8', 'USER': os.environ.get('USER', 'bench'), 'LOGNAME': os.environ.get('USER', 'bench')}
 
 
-def command(binary, workspace, last_message, prompt, session_id=None):
+def command(binary, workspace, last_message, prompt, session_id=None, model=MODEL):
     """argv for one turn: a new session for the first turn, `exec resume <session>` for a follow-up."""
     head = [str(binary), 'exec'] + (['resume', session_id] if session_id else [])
     return head + ['--json', '--skip-git-repo-check', '--cd', str(workspace), '--sandbox', 'workspace-write',
-                   '--model', MODEL, '--config', 'model_reasoning_effort="%s"' % EFFORT,
+                   '--model', model, '--config', 'model_reasoning_effort="%s"' % EFFORT,
                    '--config', 'approval_policy="never"', '--config', 'sandbox_workspace_write.network_access=false',
                    '--output-last-message', str(last_message), '--', prompt]
 
@@ -79,12 +79,29 @@ def public_command(argv):
     return argv[:-1] + ['<prompt sha256:%s chars:%d>' % (_sha(argv[-1]), len(argv[-1]))]
 
 
+FINAL_LINE = re.compile(r'^[\s>*_`#-]*FINAL\s*:(.*)$', re.I | re.M)
+# An explicit request for the missing details, as a person would read it. Offers ("let me know if you want changes")
+# are not requests.
+REQUEST = re.compile(r"\b(?:please\s+(?:send|provide|share|tell\s+me|give\s+me|confirm|specify)"
+                     r"|(?:could|can|would)\s+you\s+(?:please\s+)?(?:send|provide|share|tell\s+me|give\s+me|confirm|"
+                     r"specify|let\s+me\s+know)|i\s+need\s+(?:the|your|to\s+know))\b", re.I)
+
+
 def asks_question(reply):
-    """A reply that asks for missing details: no FINAL line and a question mark in its last two lines."""
-    if not isinstance(reply, str) or re.search(r'^[\s>*_`#-]*FINAL\s*:', reply, re.I | re.M):
+    """A reply that asks for missing details: it does not report the task done (no `FINAL: done` line) and it asks, with
+    a question mark in its last lines or an explicit request for the details.
+
+    Phase 27 (the Claude pilot, plan db9ede15): the first rule ("no FINAL line and a question mark in its last two
+    lines") missed a reply that asked with "Please send: 1. Room …" and, as the task's own instruction says to, ended
+    with a FINAL line ("FINAL: waiting on room, date, time and number of people"). Its scripted follow-up was never
+    sent. Pebble's question form is counted without this rule, so the miss fell only on the text-only products."""
+    if not isinstance(reply, str):
         return False
-    lines = [line.strip() for line in reply.strip().splitlines() if line.strip()]
-    return any(line.endswith('?') for line in lines[-2:])
+    finals = [value.strip(' `*_').lower() for value in FINAL_LINE.findall(reply)]
+    if any(value.startswith('done') for value in finals):
+        return False
+    lines = [line.strip() for line in FINAL_LINE.sub('', reply).strip().splitlines() if line.strip()]
+    return any(line.endswith('?') for line in lines[-3:]) or bool(REQUEST.search(reply))
 
 
 def parse_events(lines):
@@ -137,7 +154,7 @@ def prepare_cell(task, planned, root):
     return folder, workspace, fake_home, tmp
 
 
-def dry_run_cell(task, planned, root, binary, codex_home):
+def dry_run_cell(task, planned, root, binary, codex_home, model=MODEL):
     """Folders and commands only: nothing is started."""
     from ..corpus_24a import prompt_for
     folder, workspace, fake_home, tmp = prepare_cell(task, planned, root)
@@ -145,7 +162,7 @@ def dry_run_cell(task, planned, root, binary, codex_home):
     turns = []
     for index, prompt in enumerate(prompts):
         argv = command(binary, workspace, folder / ('last-message-%d.txt' % (index + 1)), prompt,
-                       session_id='<session from turn 1>' if index else None)
+                       session_id='<session from turn 1>' if index else None, model=model)
         turns.append({'turn': index + 1, 'argv': public_command(argv),
                       'if_asked': bool(index and task.turns[index - 1].if_asked)})
     return {'position': planned['position'], 'task': task.id, 'rep': planned['rep'], 'phrasing': planned['phrasing'],
@@ -191,7 +208,7 @@ class Process:
                 self.child.wait()
 
 
-def run_cell(task, planned, root, binary, codex_home, *, wall=900, spawn=Process):
+def run_cell(task, planned, root, binary, codex_home, *, wall=900, spawn=Process, model=MODEL):
     """One live cell (all its turns). Returns (Output, metrics) for the graders and the results cell."""
     from ..corpus_24a import prompt_for
     folder, workspace, fake_home, tmp = prepare_cell(task, planned, root)
@@ -211,7 +228,7 @@ def run_cell(task, planned, root, binary, codex_home, *, wall=900, spawn=Process
         if turn is not None and turn.new_chat:
             session = None
         last = folder / ('last-message-%d.txt' % (index + 1))
-        process = spawn(command(binary, workspace, last, prompt, session_id=session), workspace, env)
+        process = spawn(command(binary, workspace, last, prompt, session_id=session, model=model), workspace, env)
         lines, first_line = process.lines(deadline)
         timed_out = process.child.poll() is None
         process.stop()

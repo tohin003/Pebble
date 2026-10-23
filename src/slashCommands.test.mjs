@@ -46,7 +46,7 @@ eq(S.validHost({ help: "x" }), []);
 const JARGON = /\b(inference|receipts?|host|runtime|capacity|E-B1|native|confined|scoped worker)\b/i;
 for (const c of [...S.LOCAL_COMMANDS, ...host]) ok(!JARGON.test(c.description), "/" + c.name + " is described in plain words: " + c.description);
 eq(S.LOCAL_COMMANDS.filter((c) => ["schedule", "windows", "browser"].includes(c.name)).map((c) => c.description), [
-  "Schedules for this conversation (Details › Tools)", "App windows and browser tabs you shared (Details › Tools)", "Open the Browser panel (Pebble for Chrome)"]);
+  "Schedules for this conversation (Details › Tools)", "Chrome tabs you shared with Pebble (Details › Tools)", "Open the Browser panel (Pebble for Chrome)"]);
 ok(!/Windows Pebble can use|Pebble's browser|Activity & review/.test(source), "no place that does not exist");
 eq(host.find((c) => c.name === "skill").description, "Start a new task with complete pinned instructions from one enabled skill.", "test_phase17_security pins /skill");
 const dispatcher = backend.slice(backend.indexOf("def command(app, cid, text):"));
@@ -87,6 +87,21 @@ eq(S.filterSlash(items, "co").slice(0, 3).map((i) => i.name), ["compact", "conte
 eq(S.filterSlash(items, "xyz"), [], "no match: the menu says so and Enter sends nothing");
 eq(S.filterSlash(items, "follow-up").map((i) => i.name), ["steer"], "then descriptions");
 
+// Phase 30 (D42): Enter runs only a command the person named. /stop with no task running ran /resume ("…paused or
+// stopped task"), and /agent and /export ran /agents and /exports.
+eq(S.filterSlash(items, "agent").slice(0, 2).map((i) => i.name), ["agent", "agents"], "the exact name first");
+eq(S.filterSlash(items, "export").slice(0, 2).map((i) => i.name), ["export", "exports"], "the exact name first");
+const idleStop = S.filterSlash(items, "stop");
+ok(idleStop.length && !idleStop.some((i) => i.name === "stop") && idleStop.some((i) => i.name === "resume"), "idle: /stop matches descriptions only");
+eq(S.defaultSlashIndex(idleStop, "stop"), -1, "idle: Enter after /stop runs nothing");
+eq(S.filterSlash(busy, "stop")[0].id, "action:stop");
+eq(S.defaultSlashIndex(S.filterSlash(busy, "stop"), "stop"), 0, "while a task runs, Enter after /stop stops it");
+eq(S.defaultSlashIndex(S.filterSlash(bare, "schedule"), "schedule"), -1, "no conversation: /schedule never runs /jobs");
+eq(S.defaultSlashIndex(S.filterSlash(items, "co"), "co"), 0, "a name match is still chosen");
+eq(S.defaultSlashIndex(S.filterSlash(items, "follow-up"), "follow-up"), -1, "a description match waits for the person");
+eq(S.defaultSlashIndex(items, ""), 0);
+eq(S.defaultSlashIndex([], "x"), -1);
+
 // Parsing the argument being typed.
 eq(S.parseSlash("/compact "), { name: "compact", args: [], partial: "", stage: "argument" });
 eq(S.parseSlash("/export v1 p"), { name: "export", args: ["v1"], partial: "p", stage: "argument" });
@@ -112,14 +127,14 @@ eq([opts("/criteria check ").options, opts("/criteria check ").source], [[], "cr
 eq(opts("/criteria check ", { ...data, criteria: [{ id: "c1", text: "Tests pass" }] }).options.map((o) => [o.value, o.description]), [["c1", "Tests pass"]]);
 eq(opts("/agent ").source, "agents");
 eq(opts("/export ").options.map((o) => o.value), ["view-1"]);
-eq(opts("/export view-1 ").options.map((o) => o.value), ["pdf", "docx", "xlsx", "csv", "html"]);
+eq(opts("/export view-1 ").options.map((o) => o.value), ["docx", "xlsx", "csv", "html"], "no PDF (Phase 30)");
 eq(opts("/skill ").source, "skills");
 const skills = { ...data, skills: [{ id: "sk-1", name: "Deep research" }, { id: "sk-2", name: 'Odd "quoted" name' }] };
 eq(opts("/skill ", skills).options.map((o) => o.value), ['"Deep research"', '"Odd quoted name"']);
 eq(opts('/skill "dee', skills).options.map((o) => o.value), ['"Deep research"'], "matching ignores the opening quote");
 eq(opts("/steer ").options, [], "free text has no options");
 eq(opts("/status ").options, []);
-eq(S.completeArgument(S.parseSlash("/export view-1 pd"), { name: "pdf", value: "pdf" }), "/export view-1 pdf ");
+eq(S.completeArgument(S.parseSlash("/export view-1 ht"), { name: "html", value: "html" }), "/export view-1 html ");
 eq(S.completeArgument(S.parseSlash("/skill "), { name: "Deep research", value: '"Deep research"' }), '/skill "Deep research" ');
 
 // Choosing: actions run; host commands send when nothing must be typed, else complete; dimmed ones say why.

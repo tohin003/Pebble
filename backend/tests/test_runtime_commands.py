@@ -19,7 +19,7 @@ SAMPLES = {
     'questions': '/questions', 'context': '/context', 'handoff': '/handoff', 'compact': '/compact',
     'memory': '/memory', 'skills': '/skills', 'skill': '/skill', 'plugins': '/plugins', 'hooks': '/hooks',
     'goal': '/goal', 'criteria': '/criteria', 'blockers': '/blockers', 'exports': '/exports',
-    'export': '/export missing pdf'}
+    'export': '/export missing html'}
 ROUTING = re.compile('Unknown command|does not accept those arguments')
 # A command mention in UI or reply text: "/name" after a space, quote, backtick, bracket or tag.
 MENTION = re.compile(r'''(?:^|(?<=[\s"'`(>]))/([a-z][a-z-]{1,15})(?![\w/.:-])''', re.M)
@@ -213,7 +213,7 @@ def test_export_previews_only_and_exports_lists(app):
     # Without App.exports both commands fail closed (the state before the parent wired it).
     wired, app.exports = app.exports, None
     assert say(app, cid, '/exports') == 'Exports are not available in this build.'
-    assert 'Nothing was written' in say(app, cid, f"/export {view['id']} pdf")
+    assert 'Nothing was written' in say(app, cid, f"/export {view['id']} html")
     # Phase 17 merge: the real service previews only; nothing is rendered, saved or listed.
     app.exports = wired
     assert say(app, cid, '/exports') == 'This conversation has no exports.'
@@ -222,12 +222,14 @@ def test_export_previews_only_and_exports_lists(app):
     folder = Path(app.home) / 'exports' / cid
     assert wired.list(cid) == [] and (not folder.exists() or not any(p.is_file() for p in folder.rglob('*')))
     app.exports = FakeExports()
-    reply = say(app, cid, f"/export {view['id']} PDF")
-    assert app.exports.calls == [(cid, {'kind': 'artifact', 'id': view['id']}, 'pdf', {})]
+    reply = say(app, cid, f"/export {view['id']} DOCX")
+    assert app.exports.calls == [(cid, {'kind': 'artifact', 'id': view['id']}, 'docx', {})]
     assert 'Export preview `plan-1`' in reply and 'digest `d1g3st`' in reply and 'about 2 pages' in reply
     assert 'preview only. Nothing was written, saved or published' in reply and 'native Save dialog' in reply
+    # Phase 30 (D42): PDF is refused with the way to get one, before the view is looked up; nothing is planned.
     for text, error in ((f"/export {view['id']} pptx", 'Use /export'), (f"/export {view['id']}", 'Use /export'),
-                        ('/export ../../etc pdf', 'Use /export'), ('/export missing csv', 'not found')):
+                        ('/export ../../etc pdf', 'Use /export'), ('/export missing csv', 'not found'),
+                        (f"/export {view['id']} pdf", "PDF export isn't available yet"), ('/export missing PDF', 'print it to PDF')):
         with pytest.raises(ValueError, match=error):
             app.send(cid, text)
     with pytest.raises(ValueError, match='not found'):

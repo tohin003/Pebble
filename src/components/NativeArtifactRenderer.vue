@@ -10,6 +10,8 @@ const props = defineProps<{
   artifact: NativeArtifact;
   historical?: boolean;
   disabled?: boolean;
+  // What a disabled form says instead of the default (Phase 30: the pet points to the workspace).
+  disabledNote?: string;
   busy?: boolean;
   error?: string;
   // A dashboard panel: the panel header carries the title, and a form is never shown.
@@ -418,7 +420,7 @@ const chartGeometry = computed(() => {
           This form is {{ artifact.status }}.
         </p>
         <p v-else-if="disabled" class="native-note">
-          Open the desktop app to submit answers.
+          {{ disabledNote || "Open the desktop app to submit answers." }}
         </p>
         <p v-else-if="questionStatus === 'unavailable'" class="native-note">
           This form has no active input request.

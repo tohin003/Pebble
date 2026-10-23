@@ -4,6 +4,80 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.0.4]
+
+An audit of every command, shortcut and feature claim against the code. Its fixes are below, and so is every claim
+that said more than Pebble does. 1.0.2 and 1.0.3 were not published on their own: this release also carries 1.0.2's
+fixes (multi-step tasks on Claude no longer fail, requests to Anthropic's API are marked for prompt caching, and two
+display fixes; see 1.0.2 in CHANGELOG.md), and 1.0.3 was this release before the full-screen fix.
+
+### Fixed
+
+- **The full workspace is a real full screen, without the Dock in the way.** The pebble's **Open full workspace** opens
+  the main window in macOS full screen. There, the Dock stays hidden instead of sliding up over the message box, and
+  the red, yellow and green buttons show (macOS greys out yellow in full screen). **Floating companion**, the red
+  button and ⌘W leave full screen and go back to the pebble. Before, the full-screen window hid its buttons, and the
+  Dock covered the message box whenever the pointer reached the bottom.
+- **⌘+ and ⌘− change the text size.** They did nothing: the window lacked the permission its zoom keys need.
+- **`/stop` never resumes a task.** With no task running, `/stop` and Enter sent `/resume`, which restarted the latest
+  paused or stopped task. Enter now runs a command only when you typed its name or picked it in the menu.
+- **A command's exact name wins.** `/agent` ran `/agents`, and `/export` ran `/exports`.
+- **Esc closes the open panel.** It now closes the details panel or the canvas wherever focus is, as the shortcut list
+  says.
+- **The pebble's Views no longer show buttons it can't use.** In the pebble, stopping a view, answering a form,
+  opening a static preview and connector media now point to the workspace instead of failing.
+- **Pebble's benchmark runs never use the installed app's identity.** The harness refuses a backend inside the release
+  app, which shares your Keychain item, and runs the candidate's test app instead.
+
+### Removed
+
+- **PDF export.** It was the export panel's first choice, but a release build could never make the file, because
+  Pebble's native PDF view isn't built yet. Export HTML and print it to PDF from your browser. PDF returns when it
+  works.
+
+### Corrections
+
+These claims, in the README, the user guide and the app, said more than Pebble does. They now say what it does.
+
+- **⌘+ and ⌘−** were listed in 1.0.0's What's new but did nothing until this release.
+- **`/stop`** could resume a task instead of stopping one (see Fixed).
+- **PDF export** never worked in a release build (see Removed).
+- **App windows.** Pebble can't see or operate other apps' windows yet; it can open an app when you approve. The
+  switch is now **Screen control: Chrome tabs you share**, and `/windows` describes the Chrome tabs you shared.
+- **Pebble for Chrome** works in one Chrome tab that you share and then grant, on that tab's site, for up to 30
+  minutes. It can't open, close, list or switch tabs, or go to another site. Every press, and Enter, asks; looking,
+  typing and choosing run under your grant. It has been tested against a simulated Chrome, not yet end to end in a real
+  one. **Stop Pebble in Chrome** in the Browser panel ends every Chrome session; a task's Stop ends the task.
+- **Memory.** No memory can be edited: you can add, view and forget memories, and write `PEBBLE.md`. Pebble also
+  learns facts and procedures from evidence. "Remember that …" saves a preference when it is about you, and a fact
+  otherwise. Pebble follows `PEBBLE.md` as your standing instructions; other memories are data. A memory you forget is
+  not learnt again from the same place, but **Forget all** starts over.
+- **Models.** The model you choose applies to every conversation, not to one.
+- **Schedules.** Results appear in Details › Tools; macOS notifications are off until you turn them on.
+- **AgentGuard** holds changed code only when tests cover it, and its invented-API challenge reads Python code only.
+- **Agents** never change your project, run commands or call connectors themselves; a worktree agent writes in its own
+  copy.
+- **Permissions.** A switch can't change while a task runs: stop the task first.
+- **Attachments.** Word, Excel and PowerPoint mean .docx, .xlsx and .pptx files, and only ZIP archives are listed.
+- **Exports.** A Word file turns tables into paragraphs and is labelled unverified. `/export` shows a plan; the view's
+  Export… writes the file.
+- **Local MCP servers** need the Terminal and Files switches on, and a Python file needs a Python from python.org.
+
+## [1.0.2]
+
+### Fixed
+
+- **Tasks with several steps no longer fail on Claude.** On Claude models, a task's third request could fail with
+  "Invalid `signature` in `thinking` block". Anthropic now refuses a request whose earlier conversation changed after
+  Claude's reasoning was written, and Pebble refreshes its task notes near the start of the conversation at each step.
+  Pebble now asks Anthropic's API to set the outdated reasoning aside instead, so the task carries on.
+- **Prompt caching on Anthropic's API.** Pebble now marks every request to `api.anthropic.com` for caching.
+  Savings stay small for now, because the task notes Pebble refreshes each step sit near the start of the
+  conversation, where they end the cached part early. Moving them to the end is planned. Anthropic-compatible gateways
+  are unchanged.
+- **Your messages no longer start with a space.** The chat bubble drew a space before (and after) what you typed.
+- **Settings › Models names a local model's window once.** A model on this Mac showed "4,096-token window" twice.
+
 ## [1.0.1]
 
 The first public release: everything listed under 1.0.0 in

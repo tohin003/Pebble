@@ -73,7 +73,8 @@ def dry_run(plan, *, parent=ws.TMP, binary='codex', codex_home=None, positions=N
     plan = _codex_plan(plan)
     home = cx.check_codex_home(codex_home) if codex_home else Path('<scratch CODEX_HOME>')
     root = ws.plan_root(plan['plan_sha256'], parent)
-    cells = [cx.dry_run_cell(corpus.BY_ID[c['task']], c, root, binary, home) for c in _cells(plan, positions)]
+    cells = [cx.dry_run_cell(corpus.BY_ID[c['task']], c, root, binary, home, model=plan['route']['model'])
+             for c in _cells(plan, positions)]
     return {'schema': DRY_RUN_SCHEMA, 'plan_sha256': plan['plan_sha256'], 'performs_requests': False,
             'root': str(root), 'codex_home': str(home), 'model': cx.MODEL, 'effort': cx.EFFORT, 'cells': cells}
 
@@ -106,7 +107,7 @@ def run(plan, *, ledger, binary, codex_home, parent=ws.TMP, positions=None, prob
         task = corpus.BY_ID[planned['task']]
         try:
             out, metrics = cx.run_cell(task, planned, root, binary, home, wall=plan['limits']['cell_wall_seconds'],
-                                       spawn=spawn)
+                                       spawn=spawn, model=plan['route']['model'])
             verdict = gr.grade(task, out) if out.state in ('completed', 'failed') else None
             outcome = gr.classify(task, out, verdict)
         except Exception as exc:  # a crash counts as a retained cell, never a retry
@@ -120,7 +121,7 @@ def run(plan, *, ledger, binary, codex_home, parent=ws.TMP, positions=None, prob
             progress(planned, outcome)
     network['online_at_end'] = _online()
     report = bp.sign_results(ledger, plan, 'codex', rows, evaluation_id=evaluation_id, evidence='live_model',
-                             versions={'codex': checked['version'], 'model': cx.MODEL, 'effort': cx.EFFORT},
+                             versions={'codex': checked['version'], 'model': plan['route']['model'], 'effort': cx.EFFORT},
                              started_at=started_at, network=network)
     bp.end(ledger, report)
     return report

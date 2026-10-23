@@ -1,6 +1,6 @@
 [package]
 name = "pebble"
-version = "1.0.1"
+version = "1.0.4"
 description = "Your local engineering companion"
 edition = "2021"
 

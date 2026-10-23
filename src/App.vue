@@ -55,7 +55,7 @@ import { coalesce } from './statusWords';
 import { MODES, modeName } from "./permissionModes";
 import { createScrollStick } from "./scrollStick";
 import {
-  argumentOptions, availableCommands, chooseSlash, clearRecent, completeArgument, filterSlash, moveSlash, parseSlash,
+  argumentOptions, availableCommands, chooseSlash, clearRecent, completeArgument, defaultSlashIndex, filterSlash, moveSlash, parseSlash,
   readRecent, recordUse, validHost, type HostCommand, type SlashAction, type SlashData, type SlashItem,
 } from './slashCommands';
 // Phase 22 bundle split (design study §11): panels that are not on screen when the window opens load
@@ -845,13 +845,13 @@ const slashOpen = computed(() => {
   if (!typed || !composerFocused.value || booting.value || slashDismissed.value === input.value) return false;
   return typed.stage === "name" || slashItems.value.length > 0;
 });
-// Commands: the first is chosen. Arguments: nothing is chosen until the person moves or types, so
-// Enter after "/goal " sends "/goal" as typed.
+// Commands: the first is chosen when its name matches what was typed (defaultSlashIndex). Arguments: nothing is chosen
+// until the person moves or types, so Enter after "/goal " sends "/goal" as typed.
 watch(
   () => [input.value, slashItems.value.length] as const,
   () => {
     const typed = slashInput.value;
-    slashIndex.value = typed?.stage === "name" || (typed?.partial && slashItems.value.length) ? 0 : -1;
+    slashIndex.value = typed?.stage === "name" ? defaultSlashIndex(slashItems.value, typed.name) : typed?.partial && slashItems.value.length ? 0 : -1;
   },
 );
 watch(slashInput, (typed) => {
@@ -1367,10 +1367,14 @@ function key(e: KeyboardEvent) {
   if (shortcut && shortcut !== "close") e.preventDefault();
   if (shortcut === "close") {
     if (palette.value) palette.value = false;
-    else {
+    else if (modal.value || showAttach.value) {
       modal.value = null;
       showAttach.value = false;
     }
+    // Phase 30 (D42): "Close the open panel or dialog" also closes the canvas or the details panel, wherever focus is,
+    // unless something inside already handled this Esc.
+    else if (!e.defaultPrevented && canvas.value) closeCanvas();
+    else if (!e.defaultPrevented && drawerOpen.value) closeDrawer();
   } else if (shortcut === "palette") palette.value = !palette.value && !modal.value;
   else if (shortcut) runShortcut(shortcut);
 }
@@ -2037,7 +2041,7 @@ onUnmounted(() => {
                         <figcaption>{{ a.name }}</figcaption>
                       </figure>
                     </div>
-                    {{ message.content }}
+                    <span class="user-text">{{ message.content }}</span>
                   </div>
                   <p v-if="markers.get(message.id)" class="message-marker">{{ markers.get(message.id) }}</p>
                   <MessageActions

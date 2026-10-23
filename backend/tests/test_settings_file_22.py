@@ -220,7 +220,15 @@ def test_an_edit_made_while_pebble_was_closed_is_read_at_the_next_start(pebble, 
     app.close()
     edit(path, theme='dark', permissions={'mode': 'auto', 'tools': dict(DEFAULT['tools'])})
     data = fake_home / '.pebble' / 'data'
-    again = App(data, fake_home / 'resources', lambda *event: None)
+    # Phase 30 (parent): as in the fixture, this App's own background passes stay off and the test drives its pass.
+    # With them on, the App's first background pass could apply the file before the assertion below (the pre-trial
+    # full suite failed here once, and 8 of 25 isolated runs did); the product keeps one writer.
+    original = DataServices.start
+    DataServices.start = lambda self: None
+    try:
+        again = App(data, fake_home / 'resources', lambda *event: None)
+    finally:
+        DataServices.start = original
     try:
         assert again.store.setting('theme') is None, 'Store never applies the file during an upgrade startup'
         services = DataServices(again)

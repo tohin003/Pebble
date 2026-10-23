@@ -58,9 +58,15 @@ SUITES = {
     'phase24': 'validate_phase24.py',
     'phase25': 'validate_phase25.py',  # the 1.0 release build carries no machine path; the guard grounds every task (Phase 25)
     'phase26': 'validate_phase26.py',  # the 1.0.1 release ships no component without its notice (Phase 26)
+    'phase27': 'validate_phase27.py',  # 1.0.2 caches Claude requests; the Claude Code benchmark arm stays isolated (Phase 27)
+    'phase28': 'validate_phase28.py',  # multi-step Claude tasks survive the thinking binding; the harness fixes (Phase 28)
+    'phase29': 'validate_phase29.py',  # the benchmark's Claude Code CLI is pinned; an absent CLI is never an answer (Phase 29)
+    'phase30': 'validate_phase30.py',  # 1.0.3 claims only what it does; evaluation never runs the app's identity (Phase 30)
+    'phase31': 'validate_phase31.py',  # 1.0.4's full workspace: full screen, no Dock in the way, back to the pebble (Phase 31)
 }
 PHASES = ('phase10', 'phase11', 'phase12', 'phase13', 'phase14', 'phase15', 'phase16', 'phase17', 'phase18', 'phase19',
-          'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26')
+          'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29',
+          'phase30', 'phase31')
 # Historical suites that can no longer pass, kept unchanged as historical evidence, with the phase from
 # which they leave the default campaign and the reason. Each stays runnable with --suite.
 RETIRED = {
@@ -100,8 +106,9 @@ def sources():
     names = set()
     # scripts/fixtures data (Phase 17): validators read and report these inputs, so the snapshot binds them too.
     # Phase 22: Pebble for Chrome (shipped in the bundle by build_candidate_app.py) and the vault helper's C source.
+    # Phase 27: the benchmark harness (benchmarks/), whose Claude Code driver validate_phase27 reads.
     for directory, suffixes in [('backend', {'.py'}), ('src', {'.vue', '.ts', '.mts', '.mjs', '.css'}), ('scripts', {'.py'}),
-                                ('scripts/fixtures', {'.json', '.md'}),
+                                ('scripts/fixtures', {'.json', '.md'}), ('benchmarks', {'.py'}),
                                 ('browser-extension', {'.js', '.mjs', '.json', '.html', '.css', '.svg', '.png'}),
                                 ('src-tauri/helpers', {'.c', '.h'})]:
         names.update(path.relative_to(ROOT).as_posix() for path in (ROOT / directory).rglob('*')
@@ -130,7 +137,9 @@ def sources():
                                  'publish/manifest.json',
                                  # Phase 24 (parent, trial 2): validate_phase24's data-folder checks read it too;
                                  # unbound, the campaign refused its report as stale source.
-                                 'docs/DATA_FOLDERS.md')
+                                 'docs/DATA_FOLDERS.md',
+                                 # Phase 30: validate_phase30 reads the public text and the zoom permission's schema.
+                                 'README.md', 'docs/USER_GUIDE.md', 'CHANGELOG.md', 'src-tauri/gen/schemas/desktop-schema.json')
                  if (ROOT / rel).is_file())
     return {name: sha(ROOT / name) for name in sorted(names)}
 

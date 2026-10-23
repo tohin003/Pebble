@@ -181,6 +181,26 @@ def test_codex_events_are_parsed_without_content_reaching_the_results():
     assert parsed['usage'] == {'input_tokens': 1000, 'cached_tokens': 300, 'output_tokens': 50}
     assert cx.failure_kind('error: 401 Unauthorized') == 'auth' and cx.failure_kind('HTTP 429') == 'provider'
     assert cx.asks_question('Which room and time?') and not cx.asks_question('Done?\nFINAL: done')
+
+
+# Phase 27 (the Claude pilot): a reply asks for missing details unless it reports the task done, with a question mark
+# near its end or an explicit request; a FINAL line that is not "done" no longer hides the question.
+@pytest.mark.parametrize('reply, asks', [
+    ('Which room, date, time and how many people?', True),
+    ("I haven't written booking.json: the details are missing and I won't make them up. Please send:\n\n1. **Room**\n"
+     "2. **Date** (YYYY-MM-DD)\n3. **Time** (HH:MM)\n4. **People**\n\nFINAL: waiting on room, date, time and people", True),
+    ('Could you tell me which report you mean, the March one or the April one?\nFINAL: needs your answer', True),
+    ('I need the room name before I can book it.', True),
+    ('Done?\nFINAL: done', False),
+    ('Booked Birch for 6 on 2026-11-05 at 14:00.\nLet me know if you want changes.\nFINAL: done', False),
+    ('Booked Birch for 6 on 2026-11-05 at 14:00. Let me know if you want changes.', False),
+    ('Anything else?\n**FINAL: `done`**', False),
+    ('FINAL: Done.\nWant me to add a calendar invite?', False),
+    ('The booking is in booking.json.', False),
+    (None, False),
+])
+def test_a_reply_asks_for_details_unless_it_reports_done(reply, asks):
+    assert cx.asks_question(reply) is asks
     seen = []
 
     def run(argv, **kwargs):

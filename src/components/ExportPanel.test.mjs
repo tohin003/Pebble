@@ -131,24 +131,26 @@ app.mount(root);
 await settle();
 assert.equal(calls.length + invokes.length, 0, 'nothing is read or written until the person asks');
 assert.ok(textOf(root).includes('Nothing is shared, uploaded or sent.'));
-assert.equal(all(root).filter(element => element.props.type === 'radio').length, 5);
+// Phase 30 (D42): four formats and no PDF; HTML is the first choice.
+assert.deepEqual(all(root).filter(element => element.props.type === 'radio').map(element => element.props.value), ['html', 'docx', 'xlsx', 'csv']);
+assert.ok(!/pdf|paper/i.test(textOf(root)), 'no PDF or paper choice');
 assert.equal(all(root).find(element => element.props.type === 'checkbox'), undefined, 'answers are offered only for quizzes');
 assert.equal(status(), '');
 noPublication();
 
-// PDF preview, then an honest "unavailable" receipt with no save control.
+// The default (HTML) preview, then an honest "unavailable" receipt with no save control.
 await click('Preview export');
-assert.deepEqual(paramsFor('export_preview'), { chat_id: 'c'.repeat(32), source: { kind: 'artifact', id: 'view1', revision: 3 }, format: 'pdf', options: { paper: 'a4' } });
+assert.deepEqual(paramsFor('export_preview'), { chat_id: 'c'.repeat(32), source: { kind: 'artifact', id: 'view1', revision: 3 }, format: 'html', options: {} });
 let preview = textOf(region('Export preview'));
-assert.ok(preview.includes('Readings ' + hostile) && preview.includes('PDF · revision 3 · about 2 page(s)'), preview);
+assert.ok(preview.includes('Readings ' + hostile) && preview.includes('HTML · revision 3 · about 2 page(s)'), preview);
 assert.equal(status(), 'Preview ready. Nothing is written until you choose Create file.');
 assert.equal(count('export_render'), 0, 'previewing writes nothing');
-answers.render.push(receipt('unavailable', { format: 'pdf', file: null, readback: null, checks: [], failed_checks: [],
-  reason: "PDF needs Pebble's native export view, which is not available in this build. Nothing was written." }));
+answers.render.push(receipt('unavailable', { format: 'html', file: null, readback: null, checks: [], failed_checks: [],
+  reason: 'The source changed after the preview. Nothing was written.' }));
 await click('Create file');
 assert.deepEqual(paramsFor('export_render'), { chat_id: 'c'.repeat(32), plan_id: 'plan-1' });
 let result = textOf(region('Export result'));
-assert.ok(result.includes('Unavailable · PDF') && result.includes('native export view'), result);
+assert.ok(result.includes('Unavailable · HTML') && result.includes('source changed'), result);
 assert.equal(status(), 'Unavailable: nothing was written.');
 assert.equal(region('Export preview'), undefined, 'a plan is used once');
 assert.equal(findButton('Save to…'), undefined);
@@ -156,7 +158,7 @@ assert.equal(findButton('Save unverified file to…'), undefined);
 
 // XLSX: an unverified receipt lists its failed check literally and can still be saved, labelled.
 await choose('xlsx');
-assert.equal(all(root).find(element => element.type === 'select'), undefined, 'paper is a PDF option');
+assert.equal(all(root).find(element => element.type === 'select'), undefined, 'no paper choice');
 await click('Preview export');
 assert.deepEqual(paramsFor('export_preview').options, {});
 assert.equal(paramsFor('export_preview').format, 'xlsx');
@@ -258,15 +260,6 @@ assert.equal(region('Export preview'), undefined);
 assert.equal(status(), 'Options changed. Preview the export again.');
 await click('Preview export');
 assert.deepEqual(paramsFor('export_preview').options, { include_answers: true });
-
-// PDF paper choice reaches the plan.
-await choose('pdf');
-const select = all(root).find(element => element.type === 'select');
-select.options.forEach(option => { option.selected = option._value === 'letter'; });
-select.listeners.change({});
-await settle();
-await click('Preview export');
-assert.deepEqual(paramsFor('export_preview').options, { include_answers: true, paper: 'letter' });
 
 // Errors are surfaced, never turned into a receipt.
 failures.set('export_preview', 'Documents hold up to 2,000 table rows. Export large tables as XLSX or CSV.');

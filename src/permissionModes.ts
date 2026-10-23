@@ -33,13 +33,13 @@ export const MODES: Readonly<Record<PermissionMode, ModeCopy>> = Object.freeze({
     "full",
     "Full access",
     "Everything Auto runs, plus app launches and Git changes that neither delete work nor publish it.",
-    "Other terminal commands (including grep and builds), connector calls, installs, browser and app-window actions, network or dangerous commands, and Git changes that delete work or publish it.",
+    "Other terminal commands (including grep and builds), connector calls, installs, presses in a Chrome tab, network or dangerous commands, and Git changes that delete work or publish it.",
   ),
 });
 export const MODE_IDS: readonly PermissionMode[] = Object.freeze(["ask", "auto", "full"] as PermissionMode[]);
 // True in every mode; shown once under the choices.
 export const EVERY_MODE =
-  "In every mode, reading project files, searching and reading the web, and creating views run without asking while their switches below are on. Browser and app-window actions, connector calls and installs always ask. Protected credentials stay blocked.";
+  "In every mode, reading project files, searching and reading the web, and creating views run without asking while their switches below are on. Connector calls, installs and every press in a Chrome tab you granted always ask; looking, typing and choosing in that tab run under your grant. Protected credentials stay blocked.";
 
 /** The mode's one name, or "Ask for approval" for anything unknown (the host's default). */
 export function modeName(value: unknown): string {

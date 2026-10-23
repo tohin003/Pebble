@@ -140,16 +140,90 @@ fn reveal(app:&tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn show_pet(app:tauri::AppHandle) {
+fn show_pet(app:tauri::AppHandle) { to_pet(&app); }
+
+// Phase 31 (1.0.3, D43): the full workspace. The pebble's "Open full workspace" opens the workspace in macOS full
+// screen, with the Dock hidden and the standard title bar (so its red, yellow and green buttons show); "Floating
+// companion", the red button and ⌘W leave full screen first and then go back to the floating pebble. Hiding a window
+// that is still in its own full-screen Space would leave that Space empty.
+#[cfg(target_os="macos")]
+fn appkit_fullscreen(ns:tauri::Result<*mut std::ffi::c_void>) -> bool {
+    use objc2::{msg_send, runtime::AnyObject};
+    const FULL_SCREEN: usize = 1 << 14; // NSWindowStyleMaskFullScreen: set until the exit transition has ended
+    match ns {
+        Ok(ns) if !ns.is_null() => { let mask: usize = unsafe { msg_send![ns as *mut AnyObject, styleMask] }; mask & FULL_SCREEN != 0 }
+        _ => false,
+    }
+}
+#[cfg(target_os="macos")]
+fn main_fullscreen(app:&tauri::AppHandle) -> bool { app.get_webview_window("main").map(|w| appkit_fullscreen(w.ns_window())).unwrap_or(false) }
+#[cfg(not(target_os="macos"))]
+fn main_fullscreen(app:&tauri::AppHandle) -> bool { app.get_webview_window("main").and_then(|w| w.is_fullscreen().ok()).unwrap_or(false) }
+
+fn to_pet(app:&tauri::AppHandle) {
+    if !main_fullscreen(app) { return pet_now(app); }
+    if let Some(main)=app.get_webview_window("main") { let _=main.set_fullscreen(false); }
+    let handle=app.clone();
+    let _=std::thread::Builder::new().name("pebble-leave-fullscreen".into()).spawn(move || {
+        let deadline=Instant::now()+Duration::from_secs(5);
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            let (tx, rx) = mpsc::channel();
+            let probe=handle.clone();
+            let _=handle.run_on_main_thread(move || { let _=tx.send(main_fullscreen(&probe)); });
+            if !rx.recv_timeout(Duration::from_secs(1)).unwrap_or(true) || Instant::now()>deadline { break; }
+        }
+        std::thread::sleep(Duration::from_millis(400)); // the desktop's slide-in after the transition
+        let shown=handle.clone();
+        let _=handle.run_on_main_thread(move || pet_now(&shown));
+    });
+}
+
+fn pet_now(app:&tauri::AppHandle) {
     if let Some(w)=app.get_webview_window("pet") { let _=w.show(); }
     if let Some(w)=app.get_webview_window("main") { let _=w.hide(); }
     #[cfg(target_os="macos")]
     let _=app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 }
 
+/// The main window's title bar follows full screen: the standard (opaque) bar in full screen, where macOS keeps an
+/// overlay bar's strip hidden and its buttons with it, and the overlay bar otherwise.
+fn sync_title_bar(window:&tauri::Window) {
+    #[cfg(target_os="macos")]
+    if window.label()=="main" {
+        let full=appkit_fullscreen(window.ns_window());
+        if MAIN_FULLSCREEN.swap(full, Ordering::SeqCst)!=full {
+            let _=window.set_title_bar_style(if full {tauri::TitleBarStyle::Visible} else {tauri::TitleBarStyle::Overlay});
+        }
+    }
+}
+static MAIN_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+
+/// While the workspace is in full screen the Dock is hidden instead of sliding up over the message box. tao's window
+/// delegate (TaoWindowDelegate, tao 0.37) answers window:willUseFullScreenPresentationOptions: with the proposed
+/// options outside its exclusive mode; this keeps them and swaps AutoHideDock for HideDock. The menu bar keeps the
+/// person's own setting.
+#[cfg(target_os="macos")]
+fn hide_dock_in_fullscreen() -> bool {
+    use objc2::{ffi, runtime::{AnyClass, AnyObject, Imp, Sel}, sel};
+    extern "C-unwind" fn options(_this: *mut AnyObject, _sel: Sel, _window: *mut AnyObject, proposed: usize) -> usize {
+        const AUTO_HIDE_DOCK: usize = 1 << 0;
+        const HIDE_DOCK: usize = 1 << 1;
+        (proposed & !AUTO_HIDE_DOCK) | HIDE_DOCK
+    }
+    let Some(class)=AnyClass::get(c"TaoWindowDelegate") else { return false };
+    let imp: Imp = unsafe { std::mem::transmute(options as extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, usize) -> usize) };
+    unsafe { ffi::class_replaceMethod(class as *const AnyClass as *mut AnyClass, sel!(window:willUseFullScreenPresentationOptions:), imp, c"Q@:@Q".as_ptr()) };
+    true
+}
+
 #[tauri::command]
 fn open_workspace(app:tauri::AppHandle, chat_id:Option<String>) -> Result<(),String> {
     reveal(&app);
+    if let Some(main)=app.get_webview_window("main") {
+        let _=main.set_always_on_top(false); // the floating companion size is always on top; full screen is not
+        if !main.is_fullscreen().unwrap_or(false) { let _=main.set_fullscreen(true); }
+    }
     if let Some(id)=chat_id {
         if id.len()!=32 || !id.chars().all(|c|c.is_ascii_hexdigit()) { return Err("Invalid conversation.".into()); }
         let _=app.emit_to("main","workspace-chat",id);
@@ -716,6 +790,8 @@ fn main() {
             let menu=Menu::with_items(app,&[&show,&quit])?;
             let _tray=tauri::tray::TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Pebble").menu(&menu).on_menu_event(|app,event| match event.id.as_ref() {"show"=>reveal(app),"quit"=>request_quit(app),_=>{}}).build(app)?;
             configure_pet(app.handle())?;
+            #[cfg(target_os="macos")]
+            let _ = hide_dock_in_fullscreen(); // the windows exist, so tao's delegate class is registered
             // Phase 24 (V1-038, t24-ux-shell): with no model connected (a first launch), show the workspace, whose
             // welcome offers "Connect your ChatGPT account" and "Use a local model"; otherwise Pebble starts as the
             // pet, as before. Read off the main thread: the backend may still be starting. A backend that does not
@@ -733,10 +809,13 @@ fn main() {
             }
             Ok(())
         })
-        .on_window_event(|window,event| { if let tauri::WindowEvent::CloseRequested{api,..}=event { api.prevent_close(); let _=window.hide();
-            #[cfg(target_os="macos")]
-            if window.label()=="main" { let _=window.app_handle().set_activation_policy(tauri::ActivationPolicy::Accessory); }
-        } })
+        .on_window_event(|window,event| match event {
+            // Phase 31 (D43): closing the full workspace leaves full screen first, then goes back to the pebble.
+            tauri::WindowEvent::CloseRequested{api,..} if window.label()=="main" => { api.prevent_close(); to_pet(window.app_handle()); }
+            tauri::WindowEvent::CloseRequested{api,..} => { api.prevent_close(); let _=window.hide(); }
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Focused(_) => sync_title_bar(window),
+            _ => {}
+        })
         .build(tauri::generate_context!()).expect("Could not start Pebble");
     application.run(|app,event| match event {
         // ⌘Q and other user requests confirm first while schedules are active; app.exit(0) carries a code and passes.

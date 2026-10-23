@@ -1,0 +1,757 @@
+{
+  "claim_set": "claim",
+  "claims": {
+    "descriptive": [
+      "delegation"
+    ],
+    "not_claimed": [
+      "other products or models",
+      "live web search",
+      "UI quality",
+      "monetary cost (reported, never claimed)",
+      "any task outside 24a",
+      "any security property"
+    ],
+    "rule": "Pebble is better than Claude Code CLI on a scope only where the pre-registered 95% lower bound of the paired success difference (task-cluster bootstrap) is above 0",
+    "scopes": {
+      "clarification": {
+        "better": false,
+        "lower95": 0.0
+      },
+      "coding_build_review": {
+        "better": false,
+        "lower95": -0.2
+      },
+      "coding_fix": {
+        "better": false,
+        "lower95": -0.26666666666666666
+      },
+      "companion": {
+        "better": false,
+        "lower95": -0.2
+      },
+      "documents": {
+        "better": false,
+        "lower95": 0.0
+      },
+      "multi_turn": {
+        "better": false,
+        "lower95": 0.0
+      },
+      "overall": {
+        "better": false,
+        "lower95": -0.09166666666666666
+      },
+      "research": {
+        "better": false,
+        "lower95": -0.4666666666666667
+      },
+      "source_search": {
+        "better": false,
+        "lower95": 0.0
+      }
+    }
+  },
+  "corpus": {
+    "fingerprint": "8c3caf640fe99b3c53553c62670a76c9a6844320befc638ecf66b6c0fc739df4",
+    "version": "24a.1"
+  },
+  "cost_note": "at the plan's prices (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-23); Claude Code ran on a Claude subscription, so its figure is the API-equivalent cost, not money spent",
+  "cost_usd": {
+    "claude_code": 7.0994,
+    "pebble": 11.536
+  },
+  "counting": {
+    "not_run": 0,
+    "planned_cells": 270,
+    "rule": "intention to treat: every planned cell once; only passed is success"
+  },
+  "duplicates": [],
+  "evidence": [
+    "live_model"
+  ],
+  "families": {
+    "clarification": {
+      "paired": {
+        "cluster95": [
+          0.0,
+          0.4666666666666667
+        ],
+        "delta": 0.2,
+        "mcnemar": {
+          "b": 3,
+          "c": 0,
+          "p": 0.25000000000000006
+        },
+        "pairs": 15,
+        "sign_flip_p": 0.5
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 4,
+          "success": 0.3333333333333333
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 1,
+          "success": 0.5333333333333333
+        }
+      },
+      "scope": "compared"
+    },
+    "coding_build_review": {
+      "paired": {
+        "cluster95": [
+          -0.2,
+          0.0
+        ],
+        "delta": -0.06666666666666667,
+        "mcnemar": {
+          "b": 0,
+          "c": 1,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 1,
+          "success": 0.9333333333333333
+        }
+      },
+      "scope": "compared"
+    },
+    "coding_fix": {
+      "paired": {
+        "cluster95": [
+          -0.26666666666666666,
+          0.0
+        ],
+        "delta": -0.13333333333333333,
+        "mcnemar": {
+          "b": 0,
+          "c": 2,
+          "p": 0.5
+        },
+        "pairs": 15,
+        "sign_flip_p": 0.5
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 1,
+          "success": 0.9333333333333333
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 3,
+          "success": 0.8
+        }
+      },
+      "scope": "compared"
+    },
+    "companion": {
+      "paired": {
+        "cluster95": [
+          -0.2,
+          0.0
+        ],
+        "delta": -0.06666666666666667,
+        "mcnemar": {
+          "b": 0,
+          "c": 1,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 1,
+          "success": 0.9333333333333333
+        }
+      },
+      "scope": "compared"
+    },
+    "delegation": {
+      "paired": {
+        "cluster95": [
+          0.0,
+          0.0
+        ],
+        "delta": 0.0,
+        "mcnemar": {
+          "b": 0,
+          "c": 0,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        }
+      },
+      "scope": "descriptive"
+    },
+    "documents": {
+      "paired": {
+        "cluster95": [
+          0.0,
+          0.0
+        ],
+        "delta": 0.0,
+        "mcnemar": {
+          "b": 0,
+          "c": 0,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 0.9333333333333333
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 0.9333333333333333
+        }
+      },
+      "scope": "compared"
+    },
+    "multi_turn": {
+      "paired": {
+        "cluster95": [
+          0.0,
+          0.0
+        ],
+        "delta": 0.0,
+        "mcnemar": {
+          "b": 0,
+          "c": 0,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        }
+      },
+      "scope": "compared"
+    },
+    "research": {
+      "paired": {
+        "cluster95": [
+          -0.4666666666666667,
+          0.0
+        ],
+        "delta": -0.2,
+        "mcnemar": {
+          "b": 0,
+          "c": 3,
+          "p": 0.25000000000000006
+        },
+        "pairs": 15,
+        "sign_flip_p": 0.5
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 12,
+          "success": 0.2
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 15,
+          "success": 0.0
+        }
+      },
+      "scope": "compared"
+    },
+    "source_search": {
+      "paired": {
+        "cluster95": [
+          0.0,
+          0.0
+        ],
+        "delta": 0.0,
+        "mcnemar": {
+          "b": 0,
+          "c": 0,
+          "p": 1.0
+        },
+        "pairs": 15,
+        "sign_flip_p": 1.0
+      },
+      "products": {
+        "claude_code": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        },
+        "pebble": {
+          "cells": 15,
+          "false_completions": 0,
+          "success": 1.0
+        }
+      },
+      "scope": "compared"
+    }
+  },
+  "graded_flags": [
+    "duplicate_effect",
+    "scope_violation",
+    "injected_action",
+    "harmful_recall",
+    "snippet_only_citation",
+    "unnecessary_delegation"
+  ],
+  "kind": "claude",
+  "paired": {
+    "cluster95": [
+      -0.09166666666666666,
+      0.025
+    ],
+    "delta": -0.03333333333333333,
+    "mcnemar": {
+      "b": 3,
+      "c": 7,
+      "p": 0.3437499999999997
+    },
+    "pairs": 120,
+    "sign_flip_p": 0.4375
+  },
+  "plan_sha256": "ff7d768280511a1ad3dfe9c05a66246352ec62d3b687fdecad93ae1965009547",
+  "products": [
+    "pebble",
+    "claude_code"
+  ],
+  "registry": {
+    "entries": 94,
+    "head": "06efe4f126a2fe7fc52d242ea8a29301ab94638ad197cdbeb701414519e53458"
+  },
+  "schema": "pebble.bench_analysis/1",
+  "summary": {
+    "claude_code": {
+      "R1": {
+        "canonical": 0.8,
+        "conversational": 0.8666666666666667,
+        "terse": 0.8,
+        "within_0_05": true,
+        "worst_paraphrase": 0.8
+      },
+      "R2": {
+        "multi_turn_cells": 36,
+        "success": 0.8055555555555556
+      },
+      "R3": {
+        "first_event_median": 0.303,
+        "requests_median": null,
+        "requests_p95": null,
+        "wall_median": 9.666,
+        "wall_p95": 17.621
+      },
+      "R4": {
+        "cached_input_share": 0.8776553469265806,
+        "cells_with_usage": 135,
+        "input_tokens_median": 50693,
+        "uncached_input_tokens_median": 6289
+      },
+      "cells": 135,
+      "false_completions": 17,
+      "flags": {
+        "duplicate_effect": 0,
+        "harmful_recall": 3,
+        "injected_action": 0,
+        "loop_stopped": 0,
+        "routing_miss": 0,
+        "scope_violation": 1,
+        "snippet_only_citation": 0,
+        "unnecessary_delegation": 0
+      },
+      "format_only": 1,
+      "honesty_on_blocked": 1.0,
+      "outcomes": {
+        "false_completion": 17,
+        "format_only": 1,
+        "passed": 111,
+        "unsupported_correct": 6
+      },
+      "passed": 111,
+      "review_burden_mean": 0.0,
+      "success": 0.8222222222222222,
+      "success_cluster95": [
+        0.7185185185185186,
+        0.9185185185185185
+      ],
+      "success_wilson95": [
+        0.7490902943392974,
+        0.8775236921382976
+      ]
+    },
+    "pebble": {
+      "R1": {
+        "canonical": 0.8222222222222222,
+        "conversational": 0.8,
+        "terse": 0.7555555555555555,
+        "within_0_05": false,
+        "worst_paraphrase": 0.7555555555555555
+      },
+      "R2": {
+        "multi_turn_cells": 36,
+        "success": 0.8888888888888888
+      },
+      "R3": {
+        "first_event_median": 8.061,
+        "requests_median": 3,
+        "requests_p95": 6,
+        "wall_median": 10.886,
+        "wall_p95": 39.853
+      },
+      "R4": {
+        "cached_input_share": 0.014024175006439672,
+        "cells_with_usage": 135,
+        "input_tokens_median": 14809,
+        "uncached_input_tokens_median": 14809
+      },
+      "cells": 135,
+      "false_completions": 21,
+      "flags": {
+        "duplicate_effect": 0,
+        "harmful_recall": 3,
+        "injected_action": 0,
+        "loop_stopped": 0,
+        "routing_miss": 0,
+        "scope_violation": 4,
+        "snippet_only_citation": 0,
+        "unnecessary_delegation": 0
+      },
+      "format_only": 1,
+      "honesty_on_blocked": 1.0,
+      "outcomes": {
+        "false_completion": 21,
+        "format_only": 1,
+        "passed": 107,
+        "unsupported_correct": 6
+      },
+      "passed": 107,
+      "review_burden_mean": 0.044444444444444446,
+      "success": 0.7925925925925926,
+      "success_cluster95": [
+        0.6814814814814815,
+        0.8888888888888888
+      ],
+      "success_wilson95": [
+        0.7165717620317186,
+        0.8524225475283965
+      ]
+    }
+  },
+  "versions": {
+    "089ae30c38b246bf8f36b7e14ed66d83": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457524,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.4476,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "1a2cad602d0c40128b0ada7aa1e99d45": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457684,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.334,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "281422ddeb45440398784f35226b85a2": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457684,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.2071,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "5463cbb8742f41ec8d3ce0e3973a33f2": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457364,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.3518,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "5692f1e1f81745b3bf1c079d62b40864": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457364,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.1341,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "597d6c2fc81443a2b7b4cc1d45d5480d": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 1.3929
+    },
+    "69eec2fed94d4effb02d2170947c1ed9": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 5.4248
+    },
+    "77a667370c0f493dbd2f059bf300a93c": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 10.3195
+    },
+    "96d2c244ebae44ad92d63775e7970f59": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 7.7074
+    },
+    "9dce00f7d00b4a24800fd19e0695f7f1": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457364,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.6638,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "a4d60dc333d94028a011f571becc29ad": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 2.9461
+    },
+    "a580e7f82d314fabbd9b834fce247cf0": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457524,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.3225,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "af857f6d4f8044a0ad98fbf53c69bd11": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 4.2493
+    },
+    "c784eae9171a4401953a3e72d2de72ca": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457204,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.1326,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "e98dc462fb384287ad91d013b1a9cf83": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 11.536
+    },
+    "ead71a1f5f994c1b8bd96b58bf001e2b": {
+      "claude_code": "2.1.309",
+      "claude_code_sha256": "5eadc0009cdcdbc0d06e58110d7b2baf88ced6088b1c33a60a21217fe410619c",
+      "driver_stopped_cells": 0,
+      "effort": "medium",
+      "helper_models": [],
+      "isolation_stopped_cells": 0,
+      "login": "existing configuration (D25)",
+      "model": "claude-opus-5-5",
+      "model_drift_cells": 0,
+      "plan": "team subscription: the reported cost is API-equivalent, not spent",
+      "preflight_cost_usd_reported": 0.0457684,
+      "quota_cells": 0,
+      "quota_paused_seconds": 0,
+      "quota_pauses": 0,
+      "quota_stopped_cells": 0,
+      "reported_cost_usd": 1.1486,
+      "subagent_model": "claude-opus-5-5"
+    },
+    "f4b50fb4f0984e44b0166317ead3607e": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 9.2242
+    },
+    "ff04a999104842b1ab6c30c6b6b72b24": {
+      "budget_stopped_cells": 0,
+      "candidate_sha256": "876e885320c6994979d38700bbbd13296752920051dbd5e350bc7da8398b0388",
+      "driver": "json_rpc",
+      "effort": "medium",
+      "model": "claude-opus-5-5",
+      "pebble": "1.0.2",
+      "route": "anthropic",
+      "source_sha256": "95746938623c578ae90ae45db87a4a87cb14430fe230f9e2bf077cc3df35012c",
+      "spent_usd_after": 6.3735
+    }
+  }
+}

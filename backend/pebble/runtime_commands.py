@@ -36,11 +36,13 @@ CATALOGUE = [
     {'name': 'criteria', 'arguments': '[add [--evidence] "text"|check|uncheck|accept|reject criterion-id]', 'description': 'List or change the goal\'s completion criteria; evidence criteria need current results of finished steps.'},
     {'name': 'blockers', 'arguments': '', 'description': 'List what holds up the goal or task: questions, reviews, failed or unclear results.'},
     {'name': 'exports', 'arguments': '', 'description': 'List this conversation\'s export files and whether each was checked; nothing is published.'},
-    {'name': 'export', 'arguments': 'view-id pdf|docx|xlsx|csv|html', 'description': 'Plan an export of a view; saving needs the Save dialog and nothing is published.'},
+    {'name': 'export', 'arguments': 'view-id docx|xlsx|csv|html', 'description': 'Plan an export of a view; saving needs the Save dialog and nothing is published.'},
 ]
 
 ARGUMENTS = {'resume', 'steer', 'context', 'handoff', 'compact', 'memory', 'agent', 'goal', 'criteria', 'export'}
-EXPORT_FORMATS = ('pdf', 'docx', 'xlsx', 'csv', 'html')
+# Phase 30 (D42): no PDF. A release build has no native PDF view, so a PDF export could only end unavailable.
+EXPORT_FORMATS = ('docx', 'xlsx', 'csv', 'html')
+PDF_UNAVAILABLE = "PDF export isn't available yet. Export HTML instead, and print it to PDF from your browser."
 QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”')
 # Typed commands never carry C0 controls other than tab and line breaks. This also keeps the word split identical to
 # Rust's split_whitespace, which the pet's goal-settling check (main.rs settles_goal) uses (X17 F1).
@@ -204,8 +206,13 @@ def _export_command(app, cid, name, args):
             status = r.get('status') or ('verified' if r.get('verified') else 'unverified')
             return f"- `{r.get('export_id') or r.get('id')}` — {r.get('format')} of {source.get('kind', 'source')} `{source.get('id')}` revision {source.get('revision')}: {status}"
         return 'Exports (local files in Pebble\'s data folder; nothing is published):\n\n' + '\n'.join(line(r) for r in rows[:50])
-    if len(args) != 2 or args[1].lower() not in EXPORT_FORMATS or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', args[0]):
-        raise ValueError('Use /export view-id pdf|docx|xlsx|csv|html.')
+    usage = 'Use /export view-id docx|xlsx|csv|html.'
+    if len(args) != 2 or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', args[0]):
+        raise ValueError(usage)
+    if args[1].lower() == 'pdf':
+        raise ValueError(PDF_UNAVAILABLE)
+    if args[1].lower() not in EXPORT_FORMATS:
+        raise ValueError(usage)
     view, fmt = app.artifacts.get(cid, args[0]), args[1].lower()
     if exports is None or not hasattr(exports, 'preview'):
         return 'Exports are not available in this build. Nothing was written.'

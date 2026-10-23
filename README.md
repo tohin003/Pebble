@@ -13,7 +13,7 @@ keep memory you control and build interactive views, with the model you choose. 
 [![Release](https://img.shields.io/github/v/release/tohin003/Pebble?label=release&color=506e54)](https://github.com/tohin003/Pebble/releases/latest)
 [![macOS 12+ on Apple silicon](https://img.shields.io/badge/macOS-12%2B%20%C2%B7%20Apple%20silicon-191e1b?logo=apple&logoColor=white)](#install)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-a6c795)](LICENSE)
-[![8,421 tests at v1.0.1](https://img.shields.io/badge/tests-8%2C421%20at%20v1.0.1-506e54)](#built-like-infrastructure)
+[![8,653 tests at v1.0.4](https://img.shields.io/badge/tests-8%2C653%20at%20v1.0.4-506e54)](#built-like-infrastructure)
 [![AgentGuard built in](https://img.shields.io/badge/AgentGuard-built%20in-23351f)](#agentguard-evidence-before-done)
 
 [**Download for macOS**](https://github.com/tohin003/Pebble/releases/latest/download/Pebble-macos-arm64.zip) ·
@@ -53,7 +53,7 @@ or for a specific version.
 ### 🪨 A companion, not a terminal
 
 Pebble sits on your desktop as a small, living character. Ask it something in a click, or open the full window when a
-task needs room. One app covers chat, projects, the web, documents and your apps.
+task needs room. One app covers chat, projects, the web and documents, and opens your apps when you approve.
 
 </td>
 <td width="33%" valign="top">
@@ -70,7 +70,7 @@ that changed code until the tests it reaches have passed.
 ### 🔌 Your model, your choice
 
 Sign in with ChatGPT, add an Anthropic or any OpenAI-compatible key, or run a GGUF model on your Mac with the bundled
-llama.cpp. Switch per conversation.
+llama.cpp. Switch at any time; the choice applies to every conversation.
 
 </td>
 </tr>
@@ -79,8 +79,8 @@ llama.cpp. Switch per conversation.
 
 ### 🧠 Memory you can see
 
-Six kinds of memory you can search, edit in plain words (`~/.pebble/PEBBLE.md`) and forget one by one, or switch off.
-Recalled memory is labelled data, never instructions.
+Six kinds of memory you can search and forget one by one, or switch off, plus `~/.pebble/PEBBLE.md` in your own
+words. Recalled memory is labelled data, never instructions.
 
 </td>
 <td valign="top">
@@ -95,7 +95,7 @@ Keychain. A local conversation reaches a cloud model only after you review it.
 
 ### 🧪 Built like infrastructure
 
-1.0.1 passed 8,421 tests and 1,772 service checks, on source and on the frozen app. Its backend build is reproducible,
+1.0.4 passed 8,653 tests and 1,840 service checks, on source and on the frozen app. Its backend build is reproducible,
 and the release passed a full licence inventory and a secret scan.
 
 </td>
@@ -104,10 +104,42 @@ and the release passed a full licence inventory and a secret scan.
 
 ---
 
+## See it
+
+<div align="center">
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/01-hero.png"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/01-hero-light.png" width="900" alt="The Pebble window in the Companion space, with the floating pebble beside it"></picture>
+
+<sub>The main window, with the pebble beside it.</sub>
+
+</div>
+
+<table>
+<tr>
+<td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/02-project-edit.png"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/02-project-edit-light.png" width="440" alt="Two edit cards with diffs waiting for approval"></picture><br><sub><b>Edits wait for you.</b> A fix proposed as two reviewed edit cards, in "Ask for approval".</sub></td>
+<td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/03-agentguard.png"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/03-agentguard-light.png" width="440" alt="AgentGuard holding a task: not verified, with Run the tests, Ask Pebble to finish and Accept as unverified"></picture><br><sub><b>AgentGuard holds the task.</b> Two files changed and no test ran, so "done" waits: run the tests, finish, or accept it as unverified.</sub></td>
+</tr>
+<tr>
+<td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/04-memory.png"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/04-memory-light.png" width="440" alt="Settings, Memory: the six layers with counts and the records of one layer"></picture><br><sub><b>Memory you can see.</b> Six layers, each record with where it came from, and Forget on every one.</sub></td>
+<td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/05-views.png"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/05-views-light.png" width="440" alt="A Lisbon trip budget dashboard in the canvas"></picture><br><sub><b>Views.</b> A live dashboard built from your words, opened in the canvas.</sub></td>
+</tr>
+</table>
+
+<div align="center">
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/06-pebble-gaze.gif"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/06-pebble-gaze-light.gif" width="300" alt="The pebble's eyes following a pointer that circles it"></picture>
+
+<sub>Every name, file, number and conversation in these captures is synthetic demo data. The windows are Pebble 1.0.1's
+own interface.</sub>
+
+</div>
+
+---
+
 ## AgentGuard: evidence before "done"
 
 Left alone, a model decides for itself when a task is finished. In Pebble, a separate engine reads the evidence first.
-[AgentGuard](backend/vendor/agentguard) (Apache-2.0) is built in as a **verification layer**. It indexes your project,
+[AgentGuard](https://github.com/tohin003/Pebble/tree/main/backend/vendor/agentguard) (Apache-2.0) is built in as a **verification layer**. It indexes your project,
 then grounds the request in the files it actually reaches. It checks each proposed change against that, and it reads
 test results only as the host observed them, never as the model reports them.
 
@@ -128,7 +160,7 @@ flowchart LR
 | What happens | What a model alone might do | What Pebble does |
 |---|---|---|
 | A bug fix quietly rewrites six unrelated helpers | Keep going | **Challenges** at the sixth write: "5 file(s) changed that the task does not reach" |
-| The model calls a function that does not exist in your code | Write it in anyway | **Challenges** the invented API, so the model must look it up or change course |
+| The model calls a function that does not exist in your Python code | Write it in anyway | **Challenges** the invented API, so the model must look it up or change course (Python projects; other languages aren't checked yet) |
 | The model says "fixed, all tests pass" | Report done | **Holds** the run at "verification required" until the host has seen the covering tests pass |
 | A lint or build pass is offered as proof | Count it | **Does not count it:** only a test run is evidence |
 | "No tests" appears somewhere in the request | Skip the tests | **Skips them only** for an explicit "don't run the tests" |
@@ -169,7 +201,7 @@ flowchart TB
 
 Pebble remembers the way a good colleague does: separately for what you told it, what it learned, how things are done,
 what happened before, what expires, and where the current task stands. Every layer is visible, searchable and yours
-to edit or forget.
+to forget.
 
 ```mermaid
 flowchart LR
@@ -193,16 +225,18 @@ flowchart LR
 
 | Layer | In Pebble | What it holds | Who writes it |
 |---|---|---|---|
-| **Profile** | Your preferences | How you like to work. "Remember that …" saves one right away. | You; removable |
-| **Semantic** | Facts & knowledge | Facts about your projects and the world | You; personal or per project |
-| **Procedural** | Procedures | How things are done here, such as how a project's tests run | You; guidance only, never permission to act |
+| **Profile** | Your preferences | How you like to work. "Remember that I …" saves one right away. | You; removable |
+| **Semantic** | Facts & knowledge | Facts about your projects and the world | Pebble (from evidence) or you; personal or per project |
+| **Procedural** | Procedures | How things are done here, such as how a project's tests run | Pebble (from evidence) or you; guidance only, never permission to act |
 | **Episodic** | Past experiences | What earlier tasks asked for and how they went | Pebble (up to 1,500 automatic episodes) |
 | **Temporal** | Time-sensitive information | Dates and temporary arrangements, each with an expiry | Pebble or you, always with an expiry |
 | **Working** | Working context | Where the current conversation's task stands | Pebble, per conversation |
 
 Recalled memory reaches the model as **labelled data, never as instructions**: a memory can inform an answer but can
-never grant a permission. Asking Pebble to forget something shows the matching memories, and nothing goes until you
-confirm. Pebble also remembers what you forgot, so it doesn't learn it again from the same place.
+never grant a permission. `PEBBLE.md`, which you write, is the exception: Pebble follows it as your standing
+instructions, and it grants no permission either. Asking Pebble to forget something shows the matching memories in the
+main window, and nothing goes until you confirm. A memory you forget is not learnt again from the same place;
+**Forget all** starts over, so Pebble can learn again.
 
 ---
 
@@ -224,14 +258,15 @@ flowchart TB
 ```
 
 - **Bounded agents.** A task can hand parts to agents. Each one gets steps, seconds and tokens reserved from the parent
-  task, and a reduced tool set: it can read, search, ask and propose. Agents never write, run commands or call
-  connectors. The main task reviews each proposal, re-checks it against the latest files, and applies it through
-  AgentGuard and your normal approval. You can see every agent's work, send it input or stop it.
+  task, and a reduced tool set: it can read, search, ask and propose. Agents never change your project, run commands
+  or call connectors themselves; an agent in its own worktree writes only in that copy. The main task reviews each
+  proposal, re-checks it against the latest files, and applies it through AgentGuard and your normal approval. You can
+  see every agent's work, send it input or stop it.
 - **Goals with criteria.** `/goal "title"` gives a conversation a checklist: criteria you tick off or tie to finished
   steps (`/criteria`), and blockers Pebble records (`/blockers`). A goal tracks progress; it is never a permission.
 - **Reviewed schedules.** A conversation can set up a task that runs at set times, with the model, permissions and
-  project you approved. Results arrive as notifications. If the model or permissions change, the schedule waits for
-  your review again.
+  project you approved. Results appear in Details › Tools, and as macOS notifications once you turn those on. If the
+  model or permissions change, the schedule waits for your review again.
 - **Recoverable runs.** If Pebble quits mid-task, it marks what was interrupted and asks before anything resumes.
   **Rewind files** puts back what a task changed, unless the files changed since, and lists what it cannot undo.
 
@@ -245,7 +280,7 @@ flowchart TB
 
 **📊 Views and exports**<br>
 Ask for a dashboard, chart, plan, diagram, quiz or app demo. Pebble builds it as a live view and keeps its earlier
-versions. Export to PDF, Word, Excel, CSV or HTML. A view can show and collect things, never approve or run them.
+versions. Export to Word, Excel, CSV or HTML. A view can show and collect things, never approve or run them.
 
 </td>
 <td width="33%" valign="top">
@@ -274,8 +309,8 @@ OAuth. Each starts off until you review it.
 <td valign="top">
 
 **🌐 Pebble for Chrome**<br>
-Share a Chrome tab and Pebble can look at it and act in it, one site at a time, with your grant. It is paired with the
-app, and screen control asks first.
+Share a Chrome tab and grant it, and Pebble can look at it and act in it on that one site; every press asks first. It
+cannot open, close or switch tabs.
 
 </td>
 <td valign="top">
@@ -320,8 +355,8 @@ Pebble is built to the standard of software that people trust with their project
 
 | | |
 |---|---|
-| **Tests** | 8,421 automated tests at v1.0.1, none skipped. They never call a model or the network. |
-| **Service checks** | 1,772 checks across 40 validator suites, each run against the source *and* the frozen, signed app |
+| **Tests** | 8,653 automated tests at v1.0.4, none skipped. They never call a model or the network. |
+| **Service checks** | 1,840 checks across 45 validator suites, each run against the source *and* the frozen, signed app |
 | **Reproducible build** | The shipped backend is byte-identical to the tested one, apart from its signature |
 | **Release gates** | Secret scan, licence inventory (366 components, every notice present), a scan for personal paths, and every published test run in a fresh clone |
 | **Safe updates** | The installer keeps the previous app. Database upgrades back up first. Every release is rehearsed on a copy of real data and drilled with a rollback before it ships. |
@@ -330,14 +365,28 @@ Pebble is built to the standard of software that people trust with their project
 
 ## Benchmarks: measured, not claimed
 
-Next, Pebble goes head to head against **Claude Code CLI** on the same Claude models, and against **Codex CLI** on GPT
-models:
-- **The corpus:** a 60-task graded set covering bug fixes, features, refactors and traps.
-- **AgentGuard ablation:** separately, the same tasks with AgentGuard on, off and observe-only.
-- **Rules:** every run is registered before it starts, every cell is counted, and nothing is projected.
+**Pebble against Claude Code CLI, both on Claude Opus 5.5: no difference shown.** On the same 45 tasks, three
+repetitions each, Pebble 1.0.2 passed 79.3 % and Claude Code 82.2 %. The paired difference is −3.3 points, with a 95 %
+interval of −9.2 to +2.5. Pebble was ahead on multi-turn and clarification tasks, and behind on coding fixes and
+research.
 
-The results and charts will appear here and in [docs/PEBBLE_V1_BENCHMARKS.md](docs/PEBBLE_V1_BENCHMARKS.md) when the
-runs finish. Until then, this README makes no claim about which agent is better.
+<p align="center">
+<img src="docs/benchmarks/claude-opus-5-5/success.svg" width="760" alt="Task success: Pebble 79 percent, Claude Code CLI 82 percent, with overlapping 95 percent intervals">
+<img src="docs/benchmarks/claude-opus-5-5/paired.svg" width="760" alt="Paired difference: minus 3 points, interval minus 9 to plus 2, includes zero">
+</p>
+
+- **How it ran:**
+  - Each run was registered before its first task.
+  - Every task counts, and only a pass is success. A claim needs the whole interval above zero.
+  - Both products used the same model and effort, the same tasks, phrasing and turns, and the same 15-minute limit.
+- **What it cost:** at Anthropic's list prices, about $0.085 a task for Pebble and $0.053 for Claude Code. Pebble sends
+  fewer tokens, but almost none come from the prompt cache yet. That is the next change.
+- **What it found:** a real Pebble bug on Claude (multi-step tasks could fail on their third request), fixed in 1.0.2
+  before the counted run.
+
+Everything is in [docs/PEBBLE_V1_BENCHMARKS.md](docs/PEBBLE_V1_BENCHMARKS.md#5b-pebble-against-claude-code-cli-24a-claude-opus-55):
+the setup, every family, the cost, the harness fixes, and the cases to read with care. Codex CLI on GPT models and the
+AgentGuard ablation are still to come. This README claims nothing they have not measured.
 
 ---
 
@@ -405,8 +454,9 @@ To read the installer before running it, download it first:
 1. Open Pebble from Applications or Spotlight.
    - The first time, with no model connected, the full window opens with a welcome: **Connect your ChatGPT account** or
      **Use a local model**.
-   - After that, Pebble starts as the pebble. Click it to chat, and use its arrow (or open Pebble again) to bring up the
-     full window.
+   - After that, Pebble starts as the pebble. Click it to chat. Its arrow opens the full workspace in full screen, with
+     the Dock out of the way; Floating companion, the red button or ⌘W bring you back to the pebble. Opening Pebble
+     again brings up the window as you left it.
 2. Connect a model in **Settings › Models** (⌘,):
    - **Continue with ChatGPT** signs in with your ChatGPT account in your browser. It needs an eligible Plus or Pro plan
      through OpenAI's preview for open-source and approved clients; plan limits apply, and API billing is separate.
@@ -476,7 +526,8 @@ and earlier phases' tests and validators are never weakened.
   - Prompt injection from web pages or files is limited, not impossible.
 - Web search depends on Bing's RSS feed, which may change or stop without notice. The free Open-Meteo service is for
   non-commercial use.
-- Pebble for Chrome needs Chrome's Developer mode, and Pebble's own built-in browser is not available yet.
+- Pebble for Chrome needs Chrome's Developer mode. It has been tested against a simulated Chrome so far, not yet end
+  to end in a real one. Pebble's own built-in browser and control of other apps' windows are not available yet.
 - Scheduled tasks run only while Pebble is open.
 
 ## Security, licence and credits
@@ -485,7 +536,7 @@ and earlier phases' tests and validators are never weakened.
 - **Licence:** Pebble is licensed under the [Apache License 2.0](LICENSE). Community standards are in
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - **Built with:**
-  - [AgentGuard](backend/vendor/agentguard) (Apache-2.0), the verification engine;
+  - [AgentGuard](https://github.com/tohin003/Pebble/tree/main/backend/vendor/agentguard) (Apache-2.0), the verification engine;
   - **bloub** (MIT), the companion's animation engine;
   - [Tauri](https://tauri.app), [Vue](https://vuejs.org) and [llama.cpp](https://github.com/ggml-org/llama.cpp).
 

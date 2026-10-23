@@ -1,17 +1,21 @@
 """Corpus 24a benchmark runner (Phase 24, t24-bench). Parent-run; see docs/PEBBLE_V1_BENCHMARKS.md.
 
   manifest                          public corpus manifest (ids, families, fingerprints; no prompts or answers)
-  plan --kind harness|codex [--claim-set pilot|claim] [--seed N] [--candidate-sha256 H] --report FILE
-                                    dry-run plan with its digest and seeded schedule (no request)
+  plan --kind harness|codex|claude [--claim-set pilot|claim] [--seed N] [--candidate-sha256 H] [--model ID]
+       [--budget-file FILE] --report FILE
+                                    dry-run plan with its digest and seeded schedule (no request); a claude plan needs
+                                    --model and --budget-file (cap, stop line and per-million-token prices, D20)
   register PLAN --ledger DIR        pre-register the plan (refuses an edited plan or a changed corpus)
   stamp PLAN --ledger DIR --decision D13 --statement TEXT --confirm-person
                                     record the person's go-ahead for this registered plan (the parent asks first)
   check-go-ahead PLAN --ledger DIR  verify the plan is unchanged, registered and stamped
   run PLAN --product pebble|baseline --ledger DIR --profile-metadata FILE --report FILE --confirm-live
                                     run this product's planned cells live (needs the stamp and the evaluation
-                                    connection, V1-015); Codex CLI cells run through scripts/bench_codex.py
-  analyse PLAN RESULTS... --ledger DIR [--report FILE] [--markdown FILE]
-                                    offline intention-to-treat analysis and the report tables (no request)
+                                    connection, V1-015); Codex CLI cells run through scripts/bench_codex.py, and every
+                                    cell of a claude plan through scripts/bench_claude.py
+  analyse PLAN RESULTS... --ledger DIR [--report FILE] [--markdown FILE] [--charts NEW_DIR]
+                                    offline intention-to-treat analysis, the report tables and the SVG charts (no
+                                    request)
 
 Nothing here reads a credential. Live cells use the private ledger's evaluation connection only and send requests
 only after --confirm-live, a registered plan and the go-ahead stamp. Exit codes: 0 done, 2 refused, 3 source drift.
@@ -62,6 +66,8 @@ def _parser():
     plan.add_argument('--claim-set', choices=sorted(bp.CLAIM_SETS), default='pilot')
     plan.add_argument('--seed', type=int)
     plan.add_argument('--candidate-sha256')
+    plan.add_argument('--model')
+    plan.add_argument('--budget-file', type=Path)
     plan.add_argument('--report', type=Path, required=True)
     for name in ('register', 'check-go-ahead'):
         sub = commands.add_parser(name)
@@ -91,6 +97,7 @@ def _parser():
     analyse.add_argument('--ledger', type=Path, required=True)
     analyse.add_argument('--report', type=Path)
     analyse.add_argument('--markdown', type=Path)
+    analyse.add_argument('--charts', type=Path, help='a new folder for the SVG charts (benchmarks/charts.py)')
     return parser
 
 
@@ -123,7 +130,9 @@ def main(argv=None):
             return 0
         if args.command == 'plan':
             _new(args.report)
-            plan = bp.make_plan(args.kind, args.claim_set, seed=args.seed, candidate_sha256=args.candidate_sha256)
+            budget = _read(args.budget_file) if args.budget_file else None
+            plan = bp.make_plan(args.kind, args.claim_set, seed=args.seed, candidate_sha256=args.candidate_sha256,
+                                model=args.model, budget=budget)
             _write_new(args.report, plan)
             print(json.dumps({'plan_sha256': plan['plan_sha256'], 'kind': plan['kind'], 'totals': plan['totals']},
                              indent=2, sort_keys=True))
@@ -149,12 +158,19 @@ def main(argv=None):
         if args.command == 'analyse':
             _new(args.report)
             _new(args.markdown)
+            _new(args.charts)
             ledger = EvidenceLedger(args.ledger)
             analysis = bp.analyse(_read(args.plan), [_read(p) for p in args.results], ledger)
             if args.report:
                 _write_new(args.report, analysis)
             if args.markdown:
                 _write_new(args.markdown, bp.tables(analysis))
+            if args.charts:
+                from benchmarks import charts
+                plan = _read(args.plan)
+                args.charts.mkdir(mode=0o755)
+                for name, svg in charts.render_all(analysis, {'model': plan['route']['model']}).items():
+                    (args.charts / name).write_text(svg, encoding='utf-8')
             print(json.dumps({'plan_sha256': analysis['plan_sha256'], 'counting': analysis['counting']}, indent=2,
                              sort_keys=True))
             return 0

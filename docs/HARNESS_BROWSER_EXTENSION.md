@@ -321,7 +321,7 @@ Use a test page on 127.0.0.1 first, then one ordinary site of the person's choic
   - `manifest.json`, `service-worker.js`;
   - `popup.html`, `popup.css`, `popup.js`;
   - `lib/worker.mjs`, `lib/policy.mjs`, `lib/shares.mjs`, `lib/credential.mjs`, `lib/page.mjs`, `lib/crypto.mjs`, `lib/popup-model.mjs`, `lib/icon.mjs`;
-  - `icons/pebble.svg`. The toolbar icon is drawn at runtime with OffscreenCanvas. The manifest has no PNG `icons` until the parent generates them (the note gives the shapes and colours).
+  - `icons/pebble.svg` and the PNG icons (16, 32, 48 and 128 px) the manifest lists. The toolbar icon is drawn at runtime with OffscreenCanvas.
 - `backend/pebble/browser_bridge.py` and `backend/pebble/native_host.py`.
 - `backend/pebble/browser_session.py`:
   - an indicator skip hook in `_Walk`;

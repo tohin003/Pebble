@@ -258,6 +258,14 @@ try {
   const row = all(root).find((element) => element.type === "article" && textOf(element).includes("ada@example.test · ChatGPT"));
   assert.equal(row.parent.children[row.parent.children.indexOf(row) + 1], block, "a row's sign-in status follows that row");
   assert.deepEqual(paramsFor("chatgpt_start"), { profile_id: "p1" });
+  // 1.0.2: each model row names its window once. A GGUF row has no model name, and it used to stand in the window for
+  // the name, so "4,096-token window" showed twice.
+  const rowLine = (name) => textOf(all(all(root).find((element) => element.type === "article"
+    && textOf(element).includes(name))).find((element) => element.type === "small")).replace(/\s+/g, " ").trim();
+  assert.equal(rowLine("Local Qwen"), "On this Mac (GGUF file) · 4,096-token window · " + rowLine("Local Qwen").split("window · ")[1]);
+  assert.equal(rowLine("Local Qwen").match(/token window/g).length, 1, rowLine("Local Qwen"));
+  assert.ok(rowLine("ada@example.test · ChatGPT").startsWith("ChatGPT plan · gpt-6-luna · 32,768-token window · "),
+    rowLine("ada@example.test · ChatGPT"));
   // V1-163: Sign out is a secondary button, not an icon button.
   const signOut = button("Sign out");
   assert.equal(signOut.props.class, "secondary-button");

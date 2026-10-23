@@ -16,9 +16,11 @@ type Receipt = { exportId: string; format: string; status: string; reason: strin
 type Saved = { path: string; sha256: string; verified: boolean };
 const props = defineProps<{ chatId: string; source: Source }>();
 const emit = defineEmits<{ error: [message: string] }>();
+// Phase 30 (D42): no PDF. A release build has no native PDF view, so a PDF export could only end unavailable; an
+// HTML export prints to PDF from a browser.
 const FORMATS = [
-  { id: 'pdf', label: 'PDF document' }, { id: 'docx', label: 'Word document (DOCX)' }, { id: 'xlsx', label: 'Excel workbook (XLSX)' },
-  { id: 'csv', label: 'CSV table' }, { id: 'html', label: 'Web page (HTML, no scripts)' },
+  { id: 'html', label: 'Web page (HTML, no scripts)' }, { id: 'docx', label: 'Word document (DOCX)' },
+  { id: 'xlsx', label: 'Excel workbook (XLSX)' }, { id: 'csv', label: 'CSV table' },
 ];
 const STATUS: Record<string, string> = {
   verified: 'Verified: every readback check passed.',
@@ -27,9 +29,8 @@ const STATUS: Record<string, string> = {
   failed: 'Failed: nothing was written.',
   cancelled: 'Cancelled: the partial file was removed.',
 };
-const format = ref('pdf');
+const format = ref('html');
 const includeAnswers = ref(false);
-const paper = ref('a4');
 const busy = ref('');
 const status = ref('');
 const plan = ref<Plan | null>(null);
@@ -48,7 +49,6 @@ const size = (bytes: number) => bytes >= 1 << 20 ? (bytes / (1 << 20)).toFixed(1
 function options() {
   const chosen: Record<string, unknown> = {};
   if (quiz.value) chosen.include_answers = includeAnswers.value;
-  if (format.value === 'pdf') chosen.paper = paper.value;
   return chosen;
 }
 function readReceipt(value: unknown): Receipt {
@@ -137,7 +137,7 @@ async function deleteExport() {
 
 // A plan pins one source revision, format and option set; any change drops it,
 // and a reply still in flight for the old plan is ignored.
-watch(() => [format.value, includeAnswers.value, paper.value], () => { if (plan.value) { generation++; plan.value = null; busy.value = ''; status.value = 'Options changed. Preview the export again.'; } });
+watch(() => [format.value, includeAnswers.value], () => { if (plan.value) { generation++; plan.value = null; busy.value = ''; status.value = 'Options changed. Preview the export again.'; } });
 watch(() => [props.chatId, props.source.kind, props.source.id, props.source.revision], (next, previous) => {
   generation++; busy.value = '';
   const hadPlan = !!plan.value;
@@ -159,9 +159,6 @@ onBeforeUnmount(() => { disposed = true; generation++; });
       </label>
     </fieldset>
     <label v-if="quiz" class="export-choice"><input v-model="includeAnswers" type="checkbox" :disabled="!!busy"> Include the answer key</label>
-    <label v-if="format === 'pdf'" class="export-choice">Paper
-      <select v-model="paper" :disabled="!!busy"><option value="a4">A4</option><option value="letter">Letter</option></select>
-    </label>
     <div class="setting-actions">
       <button type="button" class="secondary-button" :disabled="!!busy" @click="previewExport">{{ busy === 'preview' ? 'Checking…' : 'Preview export' }}</button>
     </div>

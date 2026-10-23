@@ -1,8 +1,13 @@
 """Benchmark plans for corpus 24a: digests, registration, the person's go-ahead stamp, results and analysis.
 
-Two plan kinds (docs/PEBBLE_V1_INSPECTION.md §7.2-§7.3):
+Three plan kinds (docs/PEBBLE_V1_INSPECTION.md §7.2-§7.3; Phase 27 adds ``claude``):
 - ``harness``: Pebble against the baseline harness on every 24a task (the claim set; thresholds T1-T11 unchanged);
-- ``codex``: Pebble against Codex CLI on the compared families, with delegation descriptive.
+- ``codex``: Pebble against Codex CLI on the compared families, with delegation descriptive (a ChatGPT model:
+  gpt-6-luna by default, or gpt-6-asta / gpt-6.1-sol for the small GPT sample, D20);
+- ``claude``: Pebble against Claude Code CLI on the same families and the same Claude model (D20/D21). Pebble uses the
+  person's Anthropic key through its evaluation provider profile and Claude Code the person's existing Claude
+  subscription login (D25), isolated per process; the plan carries the budget (D20: USD 100, the run stops at the plan's stop line) and the
+  per-million-token prices it is metered at, with their source.
 
 A plan is a dry run: building it reads no profile, ledger or credential and sends nothing. ``plan_sha256`` covers the
 corpus (prompts, paraphrases, follow-ups, fixtures, oracles, grader source), the seed, products, repetitions, limits,
@@ -36,9 +41,14 @@ PLAN_SCHEMA = 'pebble.bench_plan/1'
 RESULTS_SCHEMA = 'pebble.bench_results/1'
 ANALYSIS_SCHEMA = 'pebble.bench_analysis/1'
 STAMP_SCHEMA = 'pebble.bench_go_ahead/1'
-KINDS = {'harness': ('pebble', 'baseline'), 'codex': ('pebble', 'codex')}
+KINDS = {'harness': ('pebble', 'baseline'), 'codex': ('pebble', 'codex'), 'claude': ('pebble', 'claude_code')}
 # The registry's two arm slots (eval_registry.ARMS_18): in a codex plan the second slot stands for Codex CLI.
-REGISTRY_ARMS = {'pebble': 'pebble', 'baseline': 'baseline', 'codex': 'baseline'}
+REGISTRY_ARMS = {'pebble': 'pebble', 'baseline': 'baseline', 'codex': 'baseline', 'claude_code': 'baseline'}
+# The models each live kind may name (D20): the ChatGPT models on the person's Plus plan, the Claude models on the
+# person's Anthropic key and Claude subscription.
+MODELS = {'codex': ('gpt-6-luna', 'gpt-6-asta', 'gpt-6.1-sol'),
+          'claude': ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5')}
+BUDGET_CAP_USD = 100  # D20: the person's hard budget for Anthropic API spend across every claude plan
 CLAIM_SETS = {'pilot': 1, 'claim': 3}
 PLAN_DERIVED = ('plan_sha256', 'schedule')
 LIMITS = {'cell_wall_seconds': 900, 'turn_max_steps': 24, 'turn_max_seconds': 300}
@@ -74,6 +84,80 @@ FAIRNESS = (
     'Tokens and time are compared only where both products report them.',
     'Synthetic data only; the person\'s approval (D13) is recorded as a go-ahead stamp for each plan.',
 )
+
+
+CLAUDE_CLAIMS = {'rule': 'Pebble is better than Claude Code CLI on a scope only where the pre-registered 95% lower bound '
+                         'of the paired success difference (task-cluster bootstrap) is above 0',
+                 'scopes': CODEX_CLAIMS['scopes'], 'descriptive': CODEX_CLAIMS['descriptive'],
+                 'not_claimed': ['other products or models', 'live web search', 'UI quality',
+                                 'monetary cost (reported, never claimed)', 'any task outside 24a',
+                                 'any security property']}
+
+
+def fairness(kind, model=None):
+    """The fairness rules a plan states. ``harness`` and ``codex`` on gpt-6-luna keep the 24a text unchanged."""
+    if kind != 'claude':
+        if model in (None, 'gpt-6-luna'):
+            return list(FAIRNESS)
+        return [FAIRNESS[0].replace('gpt-6-luna', model)] + list(FAIRNESS[1:])
+    return [
+        'Same model: %s at medium effort for both. Pebble uses the person\'s Anthropic API key through its evaluation '
+        'provider profile (its own Keychain record, never the installed app\'s); Claude Code CLI uses the person\'s '
+        'existing Claude subscription login (D25) with its sub-agents pinned to the same model. Every Claude Code '
+        'reply\'s model is recorded; a reply from any other model makes the cell model_drift.' % model,
+        'Same autonomy: Pebble in Auto mode in the project with a driver that approves only the case\'s declared '
+        'in-scope proposals; Claude Code non-interactive and never asking (bypassPermissions) under a Seatbelt profile '
+        'that confines its writes to the cell. Approvals count as review burden (T7).',
+        'Same budget: 15 minutes of wall time per cell; each product keeps only its own automatic retries; follow-ups are '
+        'identical fixed text.',
+        'Same information: identical throwaway task folders under /private/tmp/pebble-bench-<plan>/ (no AGENTS.md, '
+        'CLAUDE.md, GEMINI.md, PEBBLE.md or prior memory); for Claude Code only the project settings source loads '
+        '(none exists), with no MCP server and a scratch HOME, so none of the person\'s CLAUDE.md, hooks, plugins, '
+        'skills or MCP servers loads, and every turn\'s init event is checked; web tools are off for both; research '
+        'pages are files.',
+        'Same grading: graders see a normalised output (the workspace and the replies), never the product name.',
+        'Ordering: a seeded, interleaved, randomised schedule that alternates products per task; network status logged.',
+        'Retention: one attempt per cell; crashes count; repeats never replace a first attempt.',
+        'Tokens are compared in the same terms (input counts cache reads and writes; cached is the cache-read part); '
+        'cost is reported at the plan\'s prices for both, never claimed.',
+        'Budget: Pebble\'s API spend is metered at the plan\'s prices and the run stops before the plan\'s stop line; '
+        'cells not run because of it count as not_run.',
+        'Synthetic data only; the person\'s approval (D13) is recorded as a go-ahead stamp for each plan.',
+    ]
+
+
+def check_budget(budget):
+    """A claude plan's budget: the cap (at most D20's USD 100), the stop line below it, and the prices it is metered at
+    (USD per million tokens for input, cache reads and output), with where and when they were read."""
+    if not isinstance(budget, dict):
+        raise PlanRefused('budget_required')
+    cap, stop = budget.get('usd_cap'), budget.get('stop_at_usd')
+    prices = budget.get('prices_per_mtok')
+    if not (isinstance(cap, (int, float)) and 0 < cap <= BUDGET_CAP_USD):
+        raise PlanRefused('budget_cap_invalid')
+    if not (isinstance(stop, (int, float)) and 0 < stop < cap):
+        raise PlanRefused('budget_stop_invalid')
+    if not (isinstance(prices, dict) and set(prices) == {'input', 'cache_read', 'output'}
+            and all(isinstance(v, (int, float)) and 0 < v < 1000 for v in prices.values())):
+        raise PlanRefused('budget_prices_invalid')
+    if not (isinstance(budget.get('prices_source'), str) and budget['prices_source'].startswith('https://')
+            and isinstance(budget.get('prices_retrieved'), str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}',
+                                                                                budget['prices_retrieved'])):
+        raise PlanRefused('budget_source_invalid')
+    return {'usd_cap': cap, 'stop_at_usd': stop, 'prices_per_mtok': dict(prices),
+            'prices_source': budget['prices_source'], 'prices_retrieved': budget['prices_retrieved']}
+
+
+def cell_cost_usd(usage, prices):
+    """A cell's cost at the plan's prices: uncached input, cache reads and output; None when usage is unknown."""
+    if not isinstance(usage, dict):
+        return None
+    total, cached, output = usage.get('input_tokens'), usage.get('cached_tokens'), usage.get('output_tokens')
+    if type(total) is not int or type(output) is not int:
+        return None
+    cached = cached if type(cached) is int and 0 <= cached <= total else 0
+    return round(((total - cached) * prices['input'] + cached * prices['cache_read'] + output * prices['output'])
+                 / 1_000_000, 6)
 
 
 class PlanRefused(ValueError):
@@ -120,7 +204,7 @@ def plan_tasks(kind):
 
 
 def thresholds(kind):
-    return THRESHOLDS_18 if kind == 'harness' else CODEX_CLAIMS
+    return THRESHOLDS_18 if kind == 'harness' else (CLAUDE_CLAIMS if kind == 'claude' else CODEX_CLAIMS)
 
 
 def baseline_definition():
@@ -172,9 +256,19 @@ def _derive(body):
     return {'plan_sha256': _sha(_canonical(body)), 'schedule': schedule(body)}
 
 
-def make_plan(kind='harness', claim_set='pilot', *, seed=None, candidate_sha256=None, repetitions=None):
+def make_plan(kind='harness', claim_set='pilot', *, seed=None, candidate_sha256=None, repetitions=None, model=None,
+              budget=None):
     if kind not in KINDS:
         raise PlanRefused('plan_kind_unknown')
+    if kind == 'harness' and model not in (None, 'gpt-6-luna'):
+        raise PlanRefused('model_not_for_kind')
+    if kind in MODELS:
+        model = MODELS[kind][0] if model is None and kind == 'codex' else model
+        if model not in MODELS[kind]:
+            raise PlanRefused('model_not_for_kind')
+    if kind != 'claude' and budget is not None:
+        raise PlanRefused('budget_not_for_kind')
+    budget = check_budget(budget) if kind == 'claude' else None
     if claim_set not in CLAIM_SETS:
         raise PlanRefused('claim_set_unknown')
     repetitions = CLAIM_SETS[claim_set] if repetitions is None else repetitions
@@ -188,6 +282,15 @@ def make_plan(kind='harness', claim_set='pilot', *, seed=None, candidate_sha256=
     tasks = plan_tasks(kind)
     source = source_fingerprint()
     bar = thresholds(kind)
+    if kind == 'claude':
+        route = {'kind': 'anthropic', 'model': model, 'effort': 'medium',
+                 'pebble': 'the evaluation provider profile (scripts/bench_claude.py eval-provider): the person\'s '
+                           'Anthropic key in its own Keychain record',
+                 'claude_code': 'the person\'s existing Claude subscription login (D25), isolated per process'}
+    else:
+        route = {'kind': 'chatgpt', 'model': model or 'gpt-6-luna', 'effort': 'medium',
+                 'pebble': 'the separate evaluation connection (scripts/evaluate_harness.py eval-connection)',
+                 'codex': 'its own ChatGPT sign-in in a scratch CODEX_HOME' if kind == 'codex' else None}
     body = {
         'schema': PLAN_SCHEMA, 'kind': kind, 'claim_set': claim_set, 'performs_requests': False,
         'corpus': {'version': corpus.CORPUS_VERSION, 'fingerprint': corpus.corpus_fingerprint(), **corpus.digests(),
@@ -198,10 +301,8 @@ def make_plan(kind='harness', claim_set='pilot', *, seed=None, candidate_sha256=
         'bench_source': bench_source_fingerprint(),
         'candidate': {'backend_sha256': candidate_sha256,
                       'rule': 'Pebble runs the frozen 1.0 candidate backend, SHA-256-equal to the installed one'},
-        'route': {'kind': 'chatgpt', 'model': 'gpt-6-luna', 'effort': 'medium',
-                  'pebble': 'the separate evaluation connection (scripts/evaluate_harness.py eval-connection)',
-                  'codex': 'its own ChatGPT sign-in in a scratch CODEX_HOME' if kind == 'codex' else None},
-        'limits': dict(LIMITS), 'fairness': list(FAIRNESS), 'statistics': dict(STATISTICS), 'metrics': dict(METRICS),
+        'route': route,
+        'limits': dict(LIMITS), 'fairness': fairness(kind, model), 'statistics': dict(STATISTICS), 'metrics': dict(METRICS),
         'thresholds': bar, 'thresholds_sha256': _sha(_canonical(bar)),
         'registry_arms': {p: REGISTRY_ARMS[p] for p in KINDS[kind]},
         'baseline': baseline_definition() if kind == 'harness' else None,
@@ -209,6 +310,7 @@ def make_plan(kind='harness', claim_set='pilot', *, seed=None, candidate_sha256=
         'totals': {'tasks': len(tasks), 'cells': len(tasks) * repetitions * 2,
                    'runs_per_product': len(tasks) * repetitions,
                    'turns_per_product': sum(1 + len(t.turns) for t in tasks) * repetitions},
+        **({'budget': budget} if budget else {}),
         'authorization': {'registration': 'register this plan in the ledger registry before any live call',
                           'go_ahead': 'the person\'s go-ahead (D13) recorded as a stamp bound to this plan',
                           'flag': '--confirm-live'},
@@ -619,13 +721,22 @@ def analyse(plan, reports, ledger):
     if plan['kind'] == 'harness':
         result['thresholds'] = _thresholds(summary, paired, rows)
     else:
+        rules = thresholds(plan['kind'])
         claims = {}
-        for scope in CODEX_CLAIMS['scopes']:
+        for scope in rules['scopes']:
             item = paired if scope == 'overall' else (families.get(scope) or {}).get('paired')
             low = item['cluster95'][0] if item else None
             claims[scope] = {'lower95': low, 'better': bool(low is not None and low > 0)}
-        result['claims'] = {'rule': CODEX_CLAIMS['rule'], 'scopes': claims,
-                            'descriptive': CODEX_CLAIMS['descriptive'], 'not_claimed': CODEX_CLAIMS['not_claimed']}
+        result['claims'] = {'rule': rules['rule'], 'scopes': claims,
+                            'descriptive': rules['descriptive'], 'not_claimed': rules['not_claimed']}
+        if plan['kind'] == 'claude':
+            prices = plan['budget']['prices_per_mtok']
+            result['cost_usd'] = {p: round(sum(c for c in (cell_cost_usd(r.get('usage'), prices)
+                                                          for r in rows if r['product'] == p) if c is not None), 4)
+                                  for p in products}
+            result['cost_note'] = ('at the plan\'s prices (%s, read %s); Claude Code ran on a Claude subscription, so '
+                                   'its figure is the API-equivalent cost, not money spent' % (plan['budget']['prices_source'],
+                                                                                  plan['budget']['prices_retrieved']))
     return result
 
 

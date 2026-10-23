@@ -1,6 +1,7 @@
 # Pebble 1.0 benchmarks
 
-**Status:** method and empty tables. No live result is reported yet. The parent fills each table from the signed,
+**Status:** the first live result is in: **Pebble against Claude Code CLI on Claude Opus 5.5** (§5b, 2026-10-23).
+The tables in §4 and §5 (the ChatGPT route) are still method and empty tables. Each table is filled from the signed,
 registered results after the person's go-ahead (D13). Every cell, `not_run` included, is counted.
 
 Specification: §7 of the 1.0 inspection plan (a maintainers' record, not published). Runner: [`benchmarks/`](../benchmarks/README.md)
@@ -121,6 +122,102 @@ By family (success, paired Δ with 95 % CI): one row per family, filled by `benc
 | 11 Clarification and honesty | | | |
 | 12 Everyday companion | | | |
 | 9 Delegation (descriptive) | | | none |
+
+## 5b. Pebble against Claude Code CLI (24a, Claude Opus 5.5)
+
+**The result: no difference shown.** On the same 45 tasks, three repetitions each (135 per product), on Claude Opus
+5.5 at medium effort, Pebble 1.0.2 passed 79.3 % and Claude Code CLI 2.1.309 passed 82.2 %. The paired difference is
+−3.3 points, with a 95 % interval of −9.2 to +2.5 points, so neither product is better on this corpus. Pebble did best
+on multi-turn and clarification tasks, and worst on coding fixes and research.
+
+![Task success, same tasks and same model](benchmarks/claude-opus-5-5/success.svg)
+
+![Paired difference in success](benchmarks/claude-opus-5-5/paired.svg)
+
+### Setup
+
+| | Pebble | Claude Code CLI |
+|---|---|---|
+| Build | 1.0.2 release candidate, signed backend `876e8853…` (Phase 28 proof) | 2.1.309, one pinned copy for the whole run (`5eadc000…`) |
+| Model | `claude-opus-5-5`, medium effort | `claude-opus-5-5`, medium effort; sub-agents pinned to the same model |
+| Account | the person's Anthropic API key, in an evaluation profile of its own | the person's existing Claude subscription login (Team) |
+| Autonomy | Auto mode in the project; the driver approves only declared in-scope proposals | `--permission-mode bypassPermissions` under a Seatbelt profile that refuses writes outside the cell |
+| Isolation | a fresh evaluation home per cell | project settings only, no MCP server, web tools off, a scratch home; every turn's init event checked |
+| Plan | registered and stamped before the first cell: `ff7d7682…`, seed 20261024, USD 89 cap | |
+
+Counting is intention to treat: every planned cell counts once, and only `passed` is success. Intervals are 95 %
+task-cluster bootstrap. A claim "Pebble is better on a scope" needs the whole interval above zero. No claim is made on
+any scope.
+
+### Results (135 cells per product)
+
+| Measure | Pebble | Claude Code CLI |
+|---|---|---|
+| Success (95 % CI) | 79.3 % (68.1–88.9) | 82.2 % (71.9–91.9) |
+| False completions | 21 | 17 |
+| Multi-turn success | 88.9 % | 80.6 % |
+| Canonical phrasing / worst paraphrase | 82.2 % / 75.6 % | 80.0 % / 80.0 % |
+| Wall time per cell, median / p95 | 10.9 s / 39.9 s | 9.7 s / 17.6 s |
+| Cost per task at the plan's prices (see below) | $0.085 | $0.053 |
+| Input read from the prompt cache | 1.4 % | 87.8 % |
+
+| Family | Pebble | Claude Code CLI | Paired Δ (95 % CI) |
+|---|---|---|---|
+| Coding fix | 80.0 % | 93.3 % | −13.3 (−26.7 to 0.0) |
+| Coding build and review | 93.3 % | 100.0 % | −6.7 (−20.0 to 0.0) |
+| Source search | 100.0 % | 100.0 % | 0.0 |
+| Research | 0.0 % | 20.0 % | −20.0 (−46.7 to 0.0) |
+| Documents and data | 93.3 % | 93.3 % | 0.0 |
+| Multi-turn | 100.0 % | 100.0 % | 0.0 |
+| Clarification and honesty | 53.3 % | 33.3 % | +20.0 (0.0 to +46.7) |
+| Everyday companion | 93.3 % | 100.0 % | −6.7 (−20.0 to 0.0) |
+| Delegation (descriptive) | 100.0 % | 100.0 % | — |
+
+![Success by task family](benchmarks/claude-opus-5-5/families.svg)
+
+![Time and cost per task](benchmarks/claude-opus-5-5/efficiency.svg)
+
+The full analysis is in [`benchmarks/claude-opus-5-5/analysis.json`](benchmarks/claude-opus-5-5/analysis.json)
+(content-free: names, counts and timings, never a reply or a file).
+
+### Read these with the numbers
+
+- **Research is a strict grader.** Most research failures, for both products, are `no_distractor`. The answer is
+  right, but the reply also cites the outdated page it set aside ("The March page gives 22:40, but that timetable is out
+  of date"). The task says "cite the page you relied on", and the pre-registered grader fails any citation of the
+  distractor. Pebble cites more of what it checked, and that habit is worth changing.
+- **Cost.** One formula prices both products' token usage at Anthropic's list prices for Opus 5.5, read 2026-10-23.
+  Pebble's uncached input is metered at the cache-write price ($5/MTok, not $4), so its figure is an upper bound.
+  - Claude Code ran on a subscription; its own API-equivalent figure for the run is $11.74.
+  - Pebble sends far fewer tokens per task (median requests 3; inputs in the low thousands). Almost none come from the
+    prompt cache, though, because Pebble rebuilds its task notes at the start of the conversation each step. That is
+    V1-078: moving the notes to the end is the next change, and it is what lets caching pay.
+- **A borderline cell.** On one clarification task, Claude Code asked the right question ("Which one should I copy?"),
+  then ended with `FINAL: done`.
+  - Under the rule fixed before the run, applied to every product's text replies, a `FINAL: done` line is a completion
+    claim. So it counts as a false completion, not as asking.
+  - Pebble asks through its question form, which this rule does not read.
+- **Wall time** is a secondary measure: both products ran in parallel on one Mac.
+
+### What the pilot found before this run
+
+The pilot plans and one claim plan were superseded. Their signed results are kept and never used for a claim.
+
+- **A Pebble bug, fixed in 1.0.2.**
+  - On Claude, a multi-step task could fail on its third request with HTTP 400, "Invalid `signature` in `thinking`
+    block". Anthropic binds Claude's reasoning to the earlier conversation, and Pebble rewrites its task notes at the
+    start of it.
+  - Pebble now asks Anthropic's API to set stale reasoning aside (`block_binding: drop_block`), so the task continues.
+  - The plans that ran on the build without the fix were superseded.
+- **Harness defects, fixed before the counted run.**
+  - The question detector missed a reply that asked with "Please send: …" and ended with a FINAL line. Only the
+    text-only products were affected.
+  - The key prompt could echo without a terminal.
+  - A relative evaluation home nested inside itself.
+  - The installed Claude Code was rewritten mid-run by another process, and every cell of one batch failed in two
+    seconds. The CLI is now pinned for the whole plan, and a CLI that never starts is a driver error that stops the run.
+  - Each fix is tested and proved (Phases 28 and 29).
+- **Spend.** All plans together metered USD 21.81 of the USD 100 budget, at the conservative meter.
 
 ## 6. AgentGuard ablation (AGB-24): reliability, not security
 

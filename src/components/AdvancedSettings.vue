@@ -341,7 +341,7 @@ const toolLabels: Record<string, string> = {
   terminal: "Use terminal commands",
   plugins: "Use connectors you enabled",
   views: "Create interactive views",
-  screen: "Control granted app windows and browser tabs",
+  screen: "Screen control: Chrome tabs you share",
 };
 // V1-113 (D9): where a web search goes, said where the person turns it on.
 const WEB_DESTINATION =
@@ -642,7 +642,7 @@ const extensions = ref<any[]>([]),
   extensionText = ref("");
 // V1-102: what a local MCP server must be today, said in the form and in place of the launch refusals.
 const LOCAL_SERVER_SCOPE =
-  "Local servers must be one self-contained program under 100 MB, or a single Python file run by Pebble. Servers started through npx, uvx or Node are not supported yet; connect to an HTTP MCP endpoint instead.";
+  "Local servers must be one self-contained program under 100 MB, or a Python file run by a Python installed from python.org, and need the Terminal and Files switches on. Servers started through npx, uvx or Node are not supported yet; connect to an HTTP MCP endpoint instead.";
 const LAUNCH_REFUSAL = /MCP launch grants require|Local MCP requires an absolute command|Shell\/interpreter dispatch wrappers|Credential files cannot be MCP launch grants/;
 const extensionNouns: Record<string, string> = { skill: "Skill", hook: "Hook", plugin: "Connector" };
 const packageOpen = ref(false), packageText = ref(""), packageTarget = ref(""),
@@ -864,7 +864,7 @@ async function inspectReference(id: string, digest: string, reference: string, o
 const words = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const ACTION_NOUNS: Record<string, string> = {
   edit: "File edit", tests: "Test run", command: "Command", app: "App launch", git: "Git change", plugin: "Connector call",
-  worktree: "Helper worktree", install: "Install", screen: "Browser or app action",
+  worktree: "Helper worktree", install: "Install", screen: "Chrome tab action",
 };
 const ACTION_STATES: Record<string, string> = {
   applied: "done", completed: "done", rejected: "declined", failed: "failed", pending: "waiting for you", running: "running",
@@ -1084,9 +1084,9 @@ async function power() {
                       ? "ChatGPT plan"
                       : "API provider"
             }}
-            · {{ p.model || p.context.toLocaleString() + "-token window"
-            }}{{ p.has_key ? " · Key stored securely" : "" }} ·
-            {{ p.context.toLocaleString() }}-token window · {{ connectionCount(p) }}
+            · {{ p.model ? p.model + " · " : ""
+            }}{{ p.has_key ? "Key stored securely · " : ""
+            }}{{ p.context.toLocaleString() }}-token window · {{ connectionCount(p) }}
             {{ connectionCount(p) === 1 ? "model" : "models" }}</small
           ></span
         ><i

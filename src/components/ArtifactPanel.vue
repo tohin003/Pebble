@@ -26,6 +26,9 @@ const props = defineProps<{
 // section for this view (ExportPanel there makes the requests); Copy writes the view's own data as text.
 const emit = defineEmits<{ close: []; workspace: []; feedback: [payload: PrototypeFeedback]; export: [id: string] }>();
 const panelSurface = computed(() => props.surface || (props.embedded ? "pet" : "main"));
+// Phase 30 (D42): the pet's window may not stop a view, send a form's answers, open a static preview or read connector
+// media (main.rs, the pet's allowlist). In the pet those views point to the workspace instead of failing there.
+const inPet = computed(() => panelSurface.value === "pet");
 const selected = ref(props.selected || props.artifacts.at(-1)?.id || "");
 const listedActive = computed(() =>
   props.artifacts.find((a) => a.id === selected.value),
@@ -74,7 +77,7 @@ const customUrl = ref(""),
 const hasGeneratedScript = computed(() => active.value?.kind === "html" && !!active.value.data.script);
 const connectorMedia = ref<any>(null);
 async function downloadConnectorMedia() {
-  if (!active.value || active.value.kind !== 'mcp_media') return;
+  if (inPet.value || !active.value || active.value.kind !== 'mcp_media') return;
   try {
     const d=active.value.data;
     const result=await rpc('media_download',{chat_id:active.value.chat_id,run_id:d.run_id,snapshot_id:d.snapshot_id});
@@ -226,7 +229,7 @@ watch(
     customError.value = "";
     showSource.value = false;
     connectorMedia.value=null;
-    if (active.value?.kind==='mcp_media') {
+    if (active.value?.kind==='mcp_media' && !inPet.value) {
       const view=active.value;
       try {
         const d=view.data;
@@ -454,7 +457,7 @@ onUnmounted(() => {
       </label>
       <div class="artifact-native-actions">
         <button v-if="embedded" class="secondary-button" :disabled="artifactLoading || artifactBusy || !native" @click="loadArtifact">Refresh</button>
-        <button class="secondary-button" :disabled="artifactLoading || artifactBusy || historical || !artifactLive || !native" @click="stopArtifact">{{ artifactBusy ? 'Saving…' : 'Stop artifact' }}</button>
+        <button v-if="!inPet" class="secondary-button" :disabled="artifactLoading || artifactBusy || historical || !artifactLive || !native" @click="stopArtifact">{{ artifactBusy ? 'Saving…' : 'Stop artifact' }}</button>
       </div>
       <details v-if="active.evidence_ids?.length || active.data_hash" class="artifact-integrity">
         <summary>Evidence and integrity</summary>
@@ -466,11 +469,16 @@ onUnmounted(() => {
     <p v-if="artifactLoading" class="artifact-read-message" role="status">Loading artifact revision…</p>
     <p v-if="artifactError" class="artifact-read-message artifact-read-error" role="alert">{{ artifactError }}</p>
     <div v-if="active && !artifactLoading && !artifactError" class="canvas-content">
-      <NativeArtifactRenderer v-if="nativeArtifact" :artifact="nativeArtifact" :historical="historical" :disabled="!native" :busy="artifactBusy" :error="formError" @submit="submitForm" />
+      <NativeArtifactRenderer v-if="nativeArtifact" :artifact="nativeArtifact" :historical="historical" :disabled="!native || inPet" :disabled-note="inPet ? 'Answer this form in the workspace.' : undefined" :busy="artifactBusy" :error="formError" @submit="submitForm" />
+      <button v-if="nativeArtifact && inPet" type="button" class="secondary-button" @click="emit('workspace')">Open in the workspace</button>
       <DashboardRenderer v-if="dashboard" :artifact="dashboard" :historical="historical" :disabled="!native" :busy="artifactBusy" :error="formError" @refresh="refreshDashboard" />
       <PrototypeRenderer v-if="prototype" :artifact="prototype" :historical="historical" @feedback="emit('feedback', $event)" />
       <template v-if="active.kind==='mcp_media'">
         <h2>{{active.title}}</h2>
+        <template v-if="inPet">
+          <p>Media from a connector opens in the workspace.</p>
+          <button type="button" class="secondary-button" @click="emit('workspace')">Open in the workspace</button>
+        </template>
         <p v-if="customError" role="alert">{{customError}}</p>
         <template v-if="connectorMedia">
           <img v-if="connectorMedia.rendered && connectorMedia.preview?.startsWith('data:image/png;base64,')" :src="connectorMedia.preview" alt="Untrusted connector image" style="max-width:100%;height:auto" />
@@ -672,7 +680,9 @@ SHA256 {{connectorMedia.sha256}}</pre></details>
             Generated scripts cannot run here. Use native widgets or reviewed Mods for interactive behavior.
           </p>
           <p v-else-if="!artifactLive">This artifact is {{ active.status }}.</p>
+          <button v-if="inPet" type="button" class="secondary-button" @click="emit('workspace')">Open in the workspace</button>
           <button
+            v-else
             class="primary-button"
             :disabled="customBusy || !native || hasGeneratedScript || !artifactLive || artifactBusy"
             @click="runCustom"

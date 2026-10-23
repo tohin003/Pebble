@@ -48,7 +48,7 @@ export const LOCAL_COMMANDS: readonly LocalCommand[] = Object.freeze([
   entry("clear", "Clear the message box", "clear"),
   // Phase 24 (V1-108, V1-124): each says where it goes, by the names the drawer shows.
   entry("schedule", "Schedules for this conversation (Details › Tools)", "schedule", ["chat"]),
-  entry("windows", "App windows and browser tabs you shared (Details › Tools)", "windows", ["chat"]),
+  entry("windows", "Chrome tabs you shared with Pebble (Details › Tools)", "windows", ["chat"]),
   entry("browser", "Open the Browser panel (Pebble for Chrome)", "browser", ["chat"]),
   entry("settings", "Open settings", "settings"),
 ]);
@@ -132,16 +132,27 @@ export function slashQuery(text: string): string | null {
   return input && input.stage === "name" ? input.name : null;
 }
 
-/** Name prefix first, then name substring, then description; display order within a rank. */
+/** The exact name first, then name prefix, then name substring, then description; display order within a rank. */
 export function filterSlash(items: readonly SlashItem[], query: string): SlashItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return items.slice();
   const ranked: { rank: number; order: number; item: SlashItem }[] = [];
   items.forEach((item, order) => {
-    const rank = item.name.startsWith(needle) ? 0 : item.name.includes(needle) ? 1 : item.description.toLowerCase().includes(needle) ? 2 : -1;
+    const rank = item.name === needle ? 0 : item.name.startsWith(needle) ? 1 : item.name.includes(needle) ? 2
+      : item.description.toLowerCase().includes(needle) ? 3 : -1;
     if (rank >= 0) ranked.push({ rank, order, item });
   });
   return ranked.sort((a, b) => a.rank - b.rank || a.order - b.order).map((r) => r.item);
+}
+
+/**
+ * The row Enter runs while a name is typed: the first, when its name holds what was typed; otherwise none (-1), so a
+ * match on a description alone runs only when the person moves to it. Phase 30 (D42): with no task running, the stop
+ * action was hidden and Enter ran the host's resume command instead, whose description says "stopped".
+ */
+export function defaultSlashIndex(items: readonly SlashItem[], query: string): number {
+  const needle = query.trim().toLowerCase();
+  return items.length && (!needle || items[0].name.includes(needle)) ? 0 : -1;
 }
 
 /** Whether a host command needs an argument before it can be sent ("text", "agent-id"; not "[run-id]"). */
@@ -159,7 +170,8 @@ export interface SlashData {
   agents?: readonly { id: string; name?: string }[] | null;
 }
 export type SlashSource = "skills" | "criteria" | "agents";
-export const EXPORT_FORMATS = Object.freeze(["pdf", "docx", "xlsx", "csv", "html"]);
+// Phase 30 (D42): the host's formats; no PDF until a native PDF view exists.
+export const EXPORT_FORMATS = Object.freeze(["docx", "xlsx", "csv", "html"]);
 const words = (list: readonly string[], description = ""): SlashItem[] =>
   list.map((w) => ({ id: "arg:" + w, name: w, hint: "", description, kind: "argument", value: w }));
 const when = (seconds: unknown) =>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="274" viewBox="0 0 760 274" role="img" aria-label="Time and cost per task">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="34.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#252c28" text-anchor="start">Time and cost per task</text>
+<text x="24.0" y="56.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#66706a" text-anchor="start">claude-opus-5-5 · 270 cells</text>
+<text x="178.0" y="104.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#252c28" text-anchor="end">Pebble</text>
+<rect x="190" y="84" width="320.0" height="30" rx="4" fill="#506e54"/>
+<text x="520.0" y="104.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#252c28" text-anchor="start">11 s median  ·  $0.09 a task</text>
+<text x="178.0" y="154.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#252c28" text-anchor="end">Claude Code CLI</text>
+<rect x="190" y="134" width="284.1" height="30" rx="4" fill="#9aa39b"/>
+<text x="484.1" y="154.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#252c28" text-anchor="start">10 s median  ·  $0.05 a task</text>
+<text x="24.0" y="228.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#66706a" text-anchor="start">Wall time per cell, median. Cost at the plan&#x27;s prices (https://platform.claude.com/docs/en/about-claude/pricing,</text>
+<text x="24.0" y="243.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#66706a" text-anchor="start">read 2026-10-23); Claude Code ran on a Claude subscription, so its figure is the API-equivalent cost, not money</text>
+<text x="24.0" y="258.0" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#66706a" text-anchor="start">spent</text>
+</svg>

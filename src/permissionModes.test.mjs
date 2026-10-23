@@ -51,11 +51,13 @@ test("the copy matches what the host does", () => {
   // Full adds app launches and Git changes that neither delete nor publish (git_plans requires review for those).
   assert.match(read("../backend/pebble/git_plans.py"), /'requires_review': destructive or publication/);
   assert.match(P.MODES.full.runs_without_asking, /app launches and Git changes that neither delete work nor publish/);
-  // Connector calls, installs and browser/app-window actions ask in every mode.
+  // Connector calls, installs and presses in a granted Chrome tab ask in every mode (Phase 30, D42: app windows cannot
+  // be granted, and looking, typing and choosing in a granted tab run under the grant).
   assert.match(read("../backend/pebble/extensions.py"), /'run_id': run_id, 'requires_review': True\}/);
   assert.match(read("../backend/pebble/coding_api.py"), /app\.propose\(cid, 'install', \{\*\*payload, 'requires_review': True\}\)/);
   assert.match(read("../backend/pebble/app.py"), /self\.propose\(cid, 'screen', \{\*\*result\['proposal'\], 'requires_review': True\}\)\s*# every mode/);
-  for (const words of ["connector calls", "installs", "browser and app-window actions"]) assert.ok(P.EVERY_MODE.toLowerCase().includes(words), "every mode: " + words);
+  for (const words of ["connector calls", "installs", "every press in a chrome tab you granted", "run under your grant"]) assert.ok(P.EVERY_MODE.toLowerCase().includes(words), "every mode: " + words);
+  assert.ok(!/app-window|app window/i.test(P.EVERY_MODE + P.MODES.full.always_asks), "no app-window wording");
   for (const id of ["auto", "full"]) assert.ok(/connector calls/.test(P.MODES[id].always_asks) && /installs/.test(P.MODES[id].always_asks), id);
   assert.match(P.MODES.ask.always_asks, /Every edit, test run, terminal command, app launch, Git change and connector call/);
 });

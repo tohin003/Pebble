@@ -26,6 +26,9 @@ from .capabilities import capabilities, choose, output_budget
 from .token_budget import TokenBudget
 
 MAX_CONTEXT = 10_000_000
+# Phase 28: the beta that lets a request choose what happens to a thinking block whose prefix changed
+# (platform.claude.com/docs/en/build-with-claude/thinking, Preserved thinking).
+THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 
 
 def model_capacity(url, model):
@@ -949,6 +952,21 @@ class Providers:
                     }
                     for t in tools
                 ]
+            # Phase 27 (D26): automatic prompt caching. One top-level marker and Anthropic's API keeps the breakpoint
+            # on the last cacheable block, moving it forward as the conversation grows, so each request of a task
+            # reads the tools, system and earlier turns at the cache price instead of paying full input on them
+            # again. Anthropic-compatible gateways may refuse the field, so only Anthropic's own API gets it.
+            if urlsplit(p["url"]).hostname == "api.anthropic.com":
+                body["cache_control"] = {"type": "ephemeral"}
+                # Phase 28: Anthropic binds each thinking block to everything sent before it (system, tools and
+                # earlier messages) and, by default on accounts created since 2026-08-31, refuses a request with
+                # HTTP 400 when that prefix changed. Pebble rebuilds the first user message each step (the host
+                # checkpoint and the working record), so a task's third request failed ("Invalid `signature` in
+                # `thinking` block"). Until the request layout is append-only (V1-078), the API is asked to drop
+                # the blocks whose prefix changed instead; the task continues without that earlier reasoning.
+                if isinstance(body.get("thinking"), dict):
+                    body["thinking"] = {**body["thinking"],
+                                        "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
         else:
             cap=capabilities(p)
             if effort != 'default' and capabilities(p)['effort_parameter'] == 'reasoning_effort':
@@ -961,8 +979,11 @@ class Providers:
         content, calls, usage, timings, first = "", {}, {}, {}, None
         blocks, finished = {}, False
         received = 0
+        headers = self.headers(p["kind"], key)
+        if isinstance(body.get("thinking"), dict) and body["thinking"].get("block_binding"):
+            headers["anthropic-beta"] = THINKING_BINDING_BETA
         with self.request(
-            p["url"] + path, self.headers(p["kind"], key), body, timeout=60
+            p["url"] + path, headers, body, timeout=60
         ) as response:
             self.response = response
             for raw in response:

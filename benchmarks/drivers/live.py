@@ -85,14 +85,28 @@ def run_cells(plan, product, cells, route, *, root, resources=None, progress=Non
     return rows
 
 
-def candidate_command(plan, backend):
-    """The frozen candidate's command, only when its SHA-256 equals the one the plan pinned (§7.2)."""
-    import hashlib
+def evaluation_backend(backend):
+    """The backend as a path, refused when it sits inside a bundle with the installed app's identity.
+
+    Phase 30 (D41, V1-015): the release bundle's backend (com.pebble.local, with the vault helper) owns the person's
+    shared Keychain item, so an evaluation run there would store and rotate its own secrets beside the installed app's.
+    The candidate's test bundle holds the same backend bytes under its own identity and keeps per-item records."""
     from pathlib import Path
+    from pebble import vault
+    path = Path(backend)
+    if vault.bundle_identifier(path) == vault.OWNER_IDENTIFIER:
+        raise bp.PlanRefused('candidate_has_the_installed_identity')
+    return path
+
+
+def candidate_command(plan, backend):
+    """The frozen candidate's command, only when its SHA-256 equals the one the plan pinned (§7.2), and never from a
+    bundle with the installed app's identity (evaluation_backend)."""
+    import hashlib
     pinned = (plan.get('candidate') or {}).get('backend_sha256')
     if not pinned:
         raise bp.PlanRefused('candidate_not_pinned')
-    path = Path(backend)
+    path = evaluation_backend(backend)
     if not path.is_file() or path.is_symlink():
         raise bp.PlanRefused('candidate_missing')
     if hashlib.sha256(path.read_bytes()).hexdigest() != pinned:
@@ -102,6 +116,8 @@ def candidate_command(plan, backend):
 
 def run_product(plan, product, *, ledger, metadata_path, resources=None, scratch_parent=ws.TMP,
                 installed_homes=None, positions=None, auth_factory=None, progress=None, backend=None):
+    if plan.get('kind') == 'claude':
+        raise bp.PlanRefused('claude_plan_runs_through_bench_claude')  # its own provider route and spend meter
     if product not in ('pebble', 'baseline') or product not in plan.get('products', ()):
         raise bp.PlanRefused('product_not_in_plan')
     bp.require_go_ahead(plan, ledger)
