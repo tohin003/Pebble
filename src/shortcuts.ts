@@ -15,7 +15,9 @@ export type ShortcutId =
   | "settings"
   | "close"
   | "send"
-  | "reveal";
+  | "reveal"
+  | "stealth_toggle"
+  | "stealth_hide";
 export interface Shortcut {
   readonly id: ShortcutId;
   readonly label: string;
@@ -24,6 +26,9 @@ export interface Shortcut {
   /** ⌘ on macOS, Ctrl elsewhere. */
   readonly mod: boolean;
   readonly shift: boolean;
+  /** Phase 33: ⌃ and ⌥, for the two Stealth Lockdown keys (global, registered by the shell). */
+  readonly ctrl?: boolean;
+  readonly alt?: boolean;
   readonly surfaces: readonly Surface[];
   readonly scope: "window" | "composer" | "global";
 }
@@ -53,6 +58,9 @@ export const SHORTCUTS: readonly Shortcut[] = Object.freeze(
       { id: "close", label: "Close the open panel or dialog", key: "escape", mod: false, shift: false, surfaces: both, scope: "window" },
       { id: "send", label: "Send the message", key: "enter", mod: false, shift: false, surfaces: both, scope: "composer" },
       { id: "reveal", label: "Show Pebble from any app", key: " ", mod: true, shift: true, surfaces: both, scope: "global" },
+      // Phase 33 (1.1.0): Stealth Lockdown, from any app (main.rs registers both).
+      { id: "stealth_toggle", label: "Turn Stealth Lockdown on or off", key: "s", mod: true, shift: false, ctrl: true, alt: true, surfaces: both, scope: "global" },
+      { id: "stealth_hide", label: "Hide Pebble at once", key: "h", mod: true, shift: false, ctrl: true, alt: true, surfaces: both, scope: "global" },
     ] as Shortcut[]
   ).map((item) => Object.freeze(item)),
 );
@@ -83,8 +91,8 @@ const names: Record<string, string> = { escape: "Esc", enter: "Enter", " ": "Spa
 export function keysLabel(item: Shortcut, platform = "darwin"): string {
   const key = names[item.key] || item.key.toUpperCase();
   if (platform === "darwin")
-    return (item.mod ? "⌘" : "") + (item.shift ? "⇧" : "") + key;
-  return [item.mod ? "Ctrl" : "", item.shift ? "Shift" : "", key]
+    return (item.ctrl ? "⌃" : "") + (item.alt ? "⌥" : "") + (item.mod ? "⌘" : "") + (item.shift ? "⇧" : "") + key;
+  return [item.ctrl ? "Ctrl" : "", item.alt ? "Alt" : "", item.mod ? (item.ctrl ? "Super" : "Ctrl") : "", item.shift ? "Shift" : "", key]
     .filter(Boolean)
     .join("+");
 }

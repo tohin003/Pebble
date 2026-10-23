@@ -208,8 +208,27 @@ def test_a_reply_asks_for_details_unless_it_reports_done(reply, asks):
         out = '--json --skip-git-repo-check --cd --sandbox --model --config' if argv[1:] == ['exec', '--help'] else 'codex-cli 0.160.0'
         return subprocess.CompletedProcess(argv, 0, out, '')
     probed = cx.probe('codex', run=run)
-    assert probed == {'version': '0.160.0', 'missing_flags': ['--output-last-message'], 'ok': False}
+    # Phase 32: `exec resume` is probed for its own flags too (0.163.0's has no --cd or --sandbox).
+    assert probed == {'version': '0.160.0', 'missing_flags': ['--output-last-message'] + ['exec resume ' + f for f in cx.RESUME_FLAGS],
+                      'ok': False}
     assert all(a[0] == 'codex' for a in seen) and seen[-1][1:3] == ['exec', 'resume']
+
+
+def test_a_follow_up_turn_uses_only_flags_exec_resume_takes():
+    """Phase 32 (plan 0c4cb78c): every follow-up turn passed --cd and --sandbox to `codex exec resume`, which 0.163.0
+    rejects ("unexpected argument '--cd'"), so each failed at once. A follow-up keeps the same model, effort, approval,
+    sandbox (as config) and network rule, and runs in the workspace through the process's working folder."""
+    first = cx.command('/opt/codex', '/w', '/c/last-1.txt', 'turn one')
+    follow = cx.command('/opt/codex', '/w', '/c/last-2.txt', 'turn two', session_id='th-1')
+    assert first[1] == 'exec' and first[first.index('--cd') + 1] == '/w' and first[first.index('--sandbox') + 1] == 'workspace-write'
+    assert follow[1:4] == ['exec', 'resume', 'th-1'] and '--cd' not in follow and '--sandbox' not in follow
+    flags = {a for a in follow if a.startswith('--')} - {'--'}
+    assert flags <= set(cx.RESUME_FLAGS), flags - set(cx.RESUME_FLAGS)
+    assert 'sandbox_mode="workspace-write"' in follow
+    for argv in (first, follow):
+        assert argv[argv.index('--model') + 1] == cx.MODEL and 'model_reasoning_effort="%s"' % cx.EFFORT in argv
+        assert 'approval_policy="never"' in argv and 'sandbox_workspace_write.network_access=false' in argv
+        assert argv[-2:] == ['--', argv[-1]]
 
 
 class ScriptedCodex:

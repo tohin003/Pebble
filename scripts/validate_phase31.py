@@ -74,6 +74,14 @@ def changelog_entry(version):
     return re.sub(r'\s+', ' ', match.group(1))
 
 
+def notes_version(current, released='1.0.4'):
+    """The release whose CHANGELOG entry carries what this validator proves: the checkout's own version up to
+    `released`, and `released` once the checkout has moved past it (Phase 33, D60: at 1.1.0 the current entry would
+    otherwise have to repeat 1.0.4's notes, which would be false for 1.1.0). Every assertion on the entry is unchanged."""
+    parts = lambda v: tuple(int(x) for x in v.split('.'))
+    return released if parts(current) > parts(released) else current
+
+
 def digests():
     return {rel: sha((ROOT / rel).read_bytes()) for rel in READS}
 
@@ -154,7 +162,7 @@ class Campaign:
             assert tuple(int(x) for x in current.split('.')) > (1, 0, 3), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
-            entry = changelog_entry(current)
+            entry = changelog_entry(notes_version(current))
             assert 'full screen' in entry and 'Dock' in entry and 'Open full workspace' in entry, 'the entry lacks the fix'
             assert '1.0.2 and 1.0.3 were not published on their own' in entry, 'the entry hides the unpublished versions'
             return {'version': current, 'declarations': len(declared)}

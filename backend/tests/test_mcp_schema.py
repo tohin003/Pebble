@@ -179,3 +179,32 @@ def test_ambiguous_or_invalid_parameter_header_annotations_refused(schema):
 def test_header_parameter_requires_safe_primitive(value):
     with pytest.raises(PolicyError, match='safe primitive'):
         parameter_headers({'properties': {'x': {'type': 'integer', 'x-mcp-header': 'Value'}}}, {'x': value})
+
+
+@pytest.mark.parametrize('failure', ['ImportError', 'MemoryError', 'OSError'])
+def test_a_failed_checker_is_not_a_verdict_on_the_arguments(monkeypatch, failure):
+    """Phase 32: the isolated checker failing (import, memory, files) says validation could not complete; it never
+    reports valid arguments as not matching the schema."""
+    monkeypatch.setattr(mcp_transport, 'isolated_http', lambda *a, **k: {'valid': False, 'checker_failed': failure})
+    with pytest.raises(PolicyError, match='could not be validated: the isolated checker failed \\(' + failure + '\\)'):
+        valid_arguments({'type': 'string'}, 'safe')
+    with pytest.raises(PolicyError, match='MCP schema could not be validated'):
+        valid_schema({'type': 'string'})
+    monkeypatch.setattr(mcp_transport, 'isolated_http', lambda *a, **k: {'valid': False})
+    assert valid_arguments({'type': 'string'}, 1) is False  # a refusal stays a refusal
+
+
+@pytest.mark.parametrize('error, expected', [(ImportError('jsonschema'), {'valid': False, 'checker_failed': 'ImportError'}),
+                                             (MemoryError(), {'valid': False, 'checker_failed': 'MemoryError'}),
+                                             (PolicyError('too complex'), {'valid': False}),
+                                             (ValueError('bad pattern'), {'valid': False})])
+def test_the_worker_tells_a_checker_failure_from_a_refusal(monkeypatch, capsysbinary, error, expected):
+    import io, json, sys
+    from pebble import mcp_schema
+
+    def broken(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(mcp_schema, 'worker', broken)
+    monkeypatch.setattr(sys, 'stdin', type('In', (), {'buffer': io.BytesIO(json.dumps({'schema': True}).encode())})())
+    mcp_transport.schema_worker_main()
+    assert json.loads(capsysbinary.readouterr().out) == expected

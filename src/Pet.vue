@@ -109,6 +109,8 @@ const companionSetting = computed<CompanionSettings>(
   () => state.value?.settings.companion || { pointer: true, reactions: true, status_words: "rotate", ui_guidance: true },
 );
 const reducedMotion = computed(() => !!state.value?.settings.reduced_motion);
+// Phase 33: the pebble wears the Veil while Stealth Lockdown is on (the shell does the hiding).
+const stealthOn = computed(() => !!state.value?.settings.stealth);
 const companion = useCompanion({
   approvals: () => pending.value,
   questions: () => chat.value?.questions?.filter((q) => q.status === "pending").length || 0,
@@ -1084,6 +1086,7 @@ onUnmounted(() => {
         :reduced="reducedMotion"
         :look="nativeGaze?.look.value ?? null"
         :gaze="companionSetting.pointer"
+        :stealth="stealthOn"
       />
     </button>
   </div>

@@ -440,6 +440,69 @@ eq(avatarMotion("happy", 0).cue, "celebrate");
 eq(avatarMotion("success", 0).cue, "celebrate", "legacy names still map");
 eq(avatarMotion("__proto__", 0).cue, "");
 
+// ---- Phase 33 (1.1.0, D57): the Veil, Stealth Lockdown's look (stealthVeil.ts timings) ----
+{
+  const veilOf = (svg) => all(svg).find((el) => el.props.class === "avatar-veil");
+  const rimOf = (svg) => all(svg).find((el) => el.type === "path" && el.props.stroke === "var(--avatar-stealth-rim)");
+  const pingOf = (svg) => all(svg).find((el) => el.type === "circle" && el.props.stroke === "var(--avatar-stealth-glow)");
+  const props = reactive({ key: "v", state: "idle", stealth: false });
+  const quiet = reactive({ key: "q", state: "idle", stealth: false, rank: 9 }); // a lower rank wins the animation slot
+  const view = mount([props, quiet]);
+  await settle();
+  const [svg, other] = view.svgs();
+  eq([svg.props["data-stealth"], svg.props["data-animated"], other.props["data-animated"]], ["off", "true", "false"]);
+  ok(!veilOf(svg) && !rimOf(svg), "off: no Veil layers at all");
+  props.stealth = true;
+  quiet.stealth = true;
+  await settle();
+  await frames(24); // 0.4 s: the cloak is under way
+  const mid = veilOf(svg);
+  ok(mid && mid.props["clip-path"] && pingOf(svg), "the cast wipes the dusk colour down and sends one ping");
+  const cloak = (el) => all(el).find((n) => n.type === "rect" && n.parent?.type === "clipPath" && String(n.parent.props.id).startsWith("veil-cloak"));
+  ok(veilOf(other) && !pingOf(other) && rimOf(other).props.opacity > 0.9 && cloak(other).props.height >= 188,
+    "an avatar that does not animate shows the end state at once: fully cloaked, rim on, no cast");
+  await frames(60); // past 1.25 s
+  eq(svg.props["data-stealth"], "on");
+  ok(!pingOf(svg) && rimOf(svg).props.opacity > 0.9, "the cast ends calm, with the light rim");
+  const glass = all(veilOf(svg)).find((el) => el.type === "path" && String(el.props.fill).startsWith("url(#veil-glass"));
+  ok(glass && Math.abs(glass.props["fill-opacity"] - 0.7) < 0.01, "the glass body at 70% opacity");
+  await frames(9 * 60); // past the 8 s hold: the still frame still carries the state
+  ok(veilOf(svg) && rimOf(svg).props.opacity > 0.9, "a held frame keeps the tint and the rim");
+  props.stealth = false;
+  await settle();
+  await frames(45); // past 0.65 s
+  ok(!veilOf(svg) && !rimOf(svg), "the release leaves the plain pebble");
+  view.app.unmount();
+}
+{
+  // Reduce Motion: one cross-fade (opacity on the layers, a CSS transition), no wipe, ping or squash.
+  const props = reactive({ key: "r", state: "idle", stealth: false, reduced: true });
+  const view = mount([props]);
+  await settle();
+  props.stealth = true;
+  await settle();
+  await frames(3);
+  const svg = view.svgs()[0];
+  const veil = all(svg).find((el) => el.props.class === "avatar-veil");
+  ok(veil && veil.props.opacity === 1 && !veil.props["clip-path"], "reduced: the layers fade, never wipe");
+  ok(!all(svg).some((el) => el.type === "circle" && el.props.stroke === "var(--avatar-stealth-glow)"), "reduced: no ping");
+  ok(/transition: opacity 0\.3s/.test(avatarSource), "the fade is 0.3 s");
+  view.app.unmount();
+}
+{
+  // Under 64 px: tint and a thicker rim carry the state; no glass, highlight or shimmer.
+  const props = reactive({ key: "s", state: "idle", stealth: true, size: 24 });
+  const view = mount([props]);
+  await settle();
+  const svg = view.svgs()[0];
+  const rim = all(svg).find((el) => el.type === "path" && el.props.stroke === "var(--avatar-stealth-rim)");
+  ok(Math.abs(rim.props["stroke-width"] - (2 * 1.3 * 220) / 24) < 1e-6, "the rim stays about 1.3 px wide on screen");
+  ok(!all(svg).some((el) => el.type === "ellipse") && !all(svg).some((el) => String(el.props.fill).startsWith("url(#veil-glass")),
+    "no glass or highlight at 24 px");
+  view.app.unmount();
+}
+eq(vueErrors, [], "no Vue errors in the Veil fixtures");
+
 // ---- SSR: a static, aria-hidden frame with no claim and no listener ----
 const html = await renderToString(createSSRApp(defineComponent({ render: () => h(Avatar, { state: "happy", size: 40 }) })));
 ok(html.includes('aria-hidden="true"') && html.includes('data-pose="happy"') && html.includes('data-animated="false"'));
@@ -457,4 +520,4 @@ const report = await measure({ seconds: 12, samples: 1500 });
 console.log("measure_companion_frames report:\n" + JSON.stringify(report, null, 2));
 for (const check of report.checks) ok(check.pass, `${check.name}: ${check.value} (bar ${check.bar})`);
 ok(report.pass);
-console.log(`Avatar fixtures passed: ${checks} checks; 30/15 fps caps, 8 s hold with zero animation frames, reduced and hidden stillness, one animated avatar and one rAF-throttled pointer listener per window (F12), native gaze lifecycle and payload checks (F4), cue pulses at or under 0.5 Hz, E1 frame fixture.`);
+console.log(`Avatar fixtures passed: ${checks} checks; 30/15 fps caps, 8 s hold with zero animation frames, reduced and hidden stillness, one animated avatar and one rAF-throttled pointer listener per window (F12), native gaze lifecycle and payload checks (F4), cue pulses at or under 0.5 Hz, the Veil (cast, hold, release, reduced, small sizes), E1 frame fixture.`);

@@ -128,8 +128,11 @@ def test_grant_review_refuses_bad_shapes_before_fetching(field, value):
     assert calls == [] and broker.stats()['live'] == 0
 
 
+# Phase 32: fixed IDs, because SECRET is random per process and parallel workers must collect the same test IDs.
 @pytest.mark.parametrize('value', ['has space' + SECRET, SECRET + '\n', '', 'x' * 8193, 'é' + SECRET, 42, None,
-                                   [SECRET], SECRET.encode() + b'\x00', b'\r\n' + SECRET.encode()])
+                                   [SECRET], SECRET.encode() + b'\x00', b'\r\n' + SECRET.encode()],
+                         ids=['space', 'newline', 'empty', 'too-long', 'non-ascii', 'int', 'none', 'list', 'nul-bytes',
+                              'crlf-bytes'])
 def test_unusable_vault_values_are_refused_without_echo(value):
     broker = make(value)
     with pytest.raises(PolicyError) as info:

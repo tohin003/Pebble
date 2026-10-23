@@ -18,7 +18,7 @@ from pathlib import Path
 from ..corpus_24a import prompt_for
 from ..corpus_24a.graders import Output
 from . import workspace as ws
-from .codex_cell import asks_question
+from .codex_cell import asks_question, last_turn_changed
 from .pebble_cell import LIMITS, STATE, permissions
 
 STATE_OF = {**STATE, 'timeout': 'timeout'}
@@ -93,7 +93,8 @@ def run_cell(task, planned, root, *, command, route, resources=None, limits=LIMI
         texts = [(prompt_for(task, planned['phrasing']), None)] + [(turn.text, turn) for turn in task.turns]
         for index, (text, turn) in enumerate(texts):
             if turn is not None and turn.if_asked:
-                if not (answers or asks_question(replies[-1] if replies else None)):
+                if not (answers or asks_question(replies[-1] if replies else None,
+                                                 changed=last_turn_changed(before, turn_files))):
                     replies.append(None)
                     turn_files.append(None)
                     continue

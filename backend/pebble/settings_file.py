@@ -1,8 +1,9 @@
 """settings.json: the person's settings as a readable, validated file (Phase 22, s22-storage).
 
 Inventory. These are every person-facing setting that exists, with the validators the app already uses:
-``theme``, ``reduced_motion``, ``memory_enabled``, ``memory_layers``, ``permissions``, ``companion`` and
-``notifications`` (App.setting), plus ``storage`` (the Documents copies, new in Phase 22). Models, effort
+``theme``, ``reduced_motion``, ``memory_enabled``, ``memory_layers``, ``permissions``, ``companion``,
+``notifications`` and ``stealth`` (App.setting; Stealth Lockdown, Phase 33), plus ``storage`` (the Documents copies, new in
+Phase 22). Models, effort
 and accounts stay with Providers and the Keychain; telemetry needs the consent notice the app shows;
 connectors and skills are reviewed in the app; internal state (permissions_version, memory_initialized,
 model_handoff_chats, notification_mutes, plan_credentials, recently_deleted...) never leaves the database.
@@ -39,7 +40,7 @@ from pathlib import Path
 from . import data_home
 
 KEYS = ('theme', 'reduced_motion', 'memory_enabled', 'memory_layers', 'permissions', 'companion', 'notifications',
-        'storage')
+        'stealth', 'storage')
 STORAGE = 'storage'
 STORAGE_DEFAULT = {'documents_mirror': True, 'documents_folder': None}
 LAYERS = ('working', 'episodic', 'semantic', 'procedural', 'temporal', 'profile')
@@ -60,7 +61,7 @@ CONTROL = re.compile(r'[\x00-\x1f\x7f]')
 def default(key):
     if key == 'theme':
         return 'system'
-    if key == 'reduced_motion':
+    if key in ('reduced_motion', 'stealth'):
         return False
     if key == 'memory_enabled':
         return True
@@ -86,7 +87,7 @@ def validate(key, value):
         if value not in THEMES:
             raise ValueError('theme is "system", "light" or "dark".')
         return value
-    if key in ('reduced_motion', 'memory_enabled'):
+    if key in ('reduced_motion', 'memory_enabled', 'stealth'):
         if type(value) is not bool:
             raise ValueError(f'{key} is true or false.')
         return value
@@ -291,6 +292,10 @@ def schema():
             '$schema': {'type': 'string'},
             'theme': {'description': 'Colour theme.', 'enum': list(THEMES)},
             'reduced_motion': {**flag, 'description': 'Stop animations and the companion\'s eye movement.'},
+            # Phase 33: privacy, not access. Turning it on gives Pebble nothing more, so it needs no confirmation.
+            'stealth': {**flag, 'description': 'Stealth Lockdown: keep Pebble out of screen capture, screen sharing, the '
+                                              'Dock and Cmd-Tab, and never take focus from the app in front. Not hidden '
+                                              'from a camera, a capture card or a process list.'},
             'memory_enabled': {**flag, 'description': 'Whether Pebble remembers and recalls anything. Turning it on '
                                                        'needs your confirmation in the app.'},
             'memory_layers': {'description': 'Each memory layer on or off.', 'type': 'object',

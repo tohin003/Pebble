@@ -7,6 +7,7 @@ import { BotEngine } from "../vendor/bloub/engine";
 import { liveliness } from "../vendor/bloub/face";
 import { SHAPE_BY_ID } from "../vendor/bloub/skins";
 import { EXPRESSION_BY_ID } from "../vendor/bloub/expressions";
+import { ACTIVATE, GLASS_OPACITY, OFF, ON, RELEASE, moving, nextVeilId, shimmer, veil, type Veil } from "../stealthVeil";
 // The pose comes from host signals (companionState.ts). `look` is an external
 // gaze (the pet's native sampler); inside the window the shared document
 // listener is used. Only the window's elected avatar animates or follows the
@@ -22,8 +23,9 @@ const props = withDefaults(
     animate?: boolean;
     rank?: number;
     fps?: number;
+    stealth?: boolean;
   }>(),
-  { state: "idle", size: 80, reduced: false, look: undefined, gaze: true, animate: true, rank: 1, fps: 30 },
+  { state: "idle", size: 80, reduced: false, look: undefined, gaze: true, animate: true, rank: 1, fps: 30, stealth: false },
 );
 const HOLD_SECONDS = 8; // calm poses settle to a static frame (§2.4)
 const engine = new BotEngine(65, "idle", SHAPE_BY_ID.get("galet")!.radii);
@@ -43,6 +45,38 @@ const pointer = usePointerGaze(svg, () => props.gaze && !still.value);
 const gaze = computed<Gaze | null>(() =>
   !props.gaze || still.value ? null : pointer.gaze.value || (props.look ?? null),
 );
+// Phase 33 (1.1.0, D57): the Veil, Stealth Lockdown's look (stealthVeil.ts). The still frame carries the tint and the
+// rim, so an avatar that does not animate (another one is elected, or motion is reduced) still shows the mode; the
+// cast, the release and the shimmer play only on the animated one. Under 64 px the glass, highlight, shimmer and ping
+// are left out and the rim is thickened, so 24 and 30 px avatars keep the signal.
+const ids = nextVeilId();
+const fine = computed(() => props.size >= 64);
+const motionReduced = computed(() => props.reduced || systemReduced.value);
+let veilAt = -Infinity,
+  veilFrom: Veil = props.stealth ? ON : OFF;
+const veilFrame = shallowRef<Veil>(props.stealth ? ON : OFF);
+const shine = shallowRef<{ x: number; opacity: number } | null>(null);
+function veilAtTime(t: number): Veil {
+  if (still.value || veilAt === -Infinity) return props.stealth ? { ...ON, fade: motionReduced.value } : { ...OFF, fade: motionReduced.value };
+  return veil(props.stealth, t - veilAt, veilFrom, motionReduced.value);
+}
+function paintVeil(t: number) {
+  veilFrame.value = veilAtTime(t);
+  // The shimmer counts from the end of the cast, or from mount when the mode was already on.
+  const since = veilAt === -Infinity ? t : t - veilAt - 0.95;
+  shine.value = props.stealth && fine.value && !still.value && !motionReduced.value ? shimmer(since) : null;
+}
+const edge = computed(() => -78 + 156 * veilFrame.value.cloak);
+const squash = computed(() => {
+  const v = veilFrame.value;
+  return v.sy === 1 ? undefined : `translate(0 ${(66 * (1 - v.sy)).toFixed(2)}) scale(${v.sx.toFixed(4)} ${v.sy.toFixed(4)})`;
+});
+const showVeil = computed(() => veilFrame.value.cloak > 0.001 || veilFrame.value.rim > 0.001 || veilFrame.value.ping >= 0);
+const rimWidth = computed(() => (fine.value ? 5 : (2 * 1.3 * 220) / props.size));
+function eyeTransform(matrix: string) {
+  const k = veilFrame.value.eye;
+  return k >= 0.999 ? matrix : `${matrix} scale(1 ${Math.max(0.06, k).toFixed(3)})`;
+}
 let raf = 0,
   last = 0,
   holdUntil = Infinity,
@@ -66,6 +100,7 @@ function paint() {
     time.value = now();
     frame.value = engine.sample(time.value);
   }
+  paintVeil(now());
 }
 function pose() {
   const t = now();
@@ -90,6 +125,7 @@ function tick(ts: number) {
   if (ts - last >= frameMs()) {
     frame.value = engine.sample(now());
     time.value = now();
+    paintVeil(time.value);
     last = ts;
   }
   if (now() >= holdUntil) return; // hold: this frame stays until something changes
@@ -127,6 +163,18 @@ watch(still, () => {
   if (still.value) engine.setLook(null, now());
   wake();
 });
+// The switch changed: start from wherever the Veil is now and keep frames coming until the cast or release ends.
+watch(
+  () => props.stealth,
+  (on) => {
+    const t = now();
+    veilFrom = veilAtTime(t);
+    veilAt = t;
+    if (!still.value) holdUntil = Math.max(holdUntil, t + (on ? ACTIVATE : RELEASE) + 0.1);
+    paintVeil(t);
+    animation();
+  },
+);
 function claim(on: boolean) {
   if (on && mounted && !slot.value) slot.value = claimAnimation(() => props.rank);
   else if (!on && slot.value) {
@@ -168,6 +216,7 @@ onUnmounted(() => {
     :data-emotion="visual.emotion"
     :data-pose="visual.id"
     :data-animated="still ? 'false' : 'true'"
+    :data-stealth="stealth ? 'on' : 'off'"
     :width="size"
     :height="size"
     viewBox="-110 -110 220 220"
@@ -185,19 +234,88 @@ onUnmounted(() => {
         fill="currentColor"
       />
     </g>
+    <defs v-if="showVeil">
+      <clipPath :id="ids.body"><path :d="frame.bodyPath" /></clipPath>
+      <clipPath :id="ids.base"><rect x="-110" :y="edge" width="220" :height="Math.max(0, 110 - edge)" /></clipPath>
+      <clipPath :id="ids.cloak"><rect x="-110" y="-110" width="220" :height="Math.max(0, edge + 110)" /></clipPath>
+      <linearGradient :id="ids.glass" x1=".15" y1="0" x2=".85" y2="1">
+        <stop offset="0" stop-color="var(--avatar-stealth-hi)" />
+        <stop offset=".75" stop-color="var(--avatar-stealth)" />
+      </linearGradient>
+      <linearGradient :id="ids.sheen" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#fff" stop-opacity="0" />
+        <stop offset=".5" stop-color="#fff" stop-opacity=".55" />
+        <stop offset="1" stop-color="#fff" stop-opacity="0" />
+      </linearGradient>
+    </defs>
     <g :transform="motion.transform">
-      <path
-        :d="frame.bodyPath"
-        :opacity="frame.bodyAlpha"
-        fill="currentColor"
-      />
-      <path
-        v-for="(eye, i) in frame.eyes"
-        :key="i"
-        :d="eye.d"
-        :transform="eye.matrix"
-        :opacity="eye.alpha"
-        fill="var(--avatar-eye)"
+      <g :transform="squash">
+        <g
+          :clip-path="showVeil && !veilFrame.fade ? `url(#${ids.base})` : undefined"
+          :opacity="showVeil && veilFrame.fade ? 1 - veilFrame.cloak : undefined"
+          class="avatar-base"
+        >
+          <path
+            :d="frame.bodyPath"
+            :opacity="frame.bodyAlpha"
+            fill="currentColor"
+          />
+          <path
+            v-for="(eye, i) in frame.eyes"
+            :key="i"
+            :d="eye.d"
+            :transform="eyeTransform(eye.matrix)"
+            :opacity="eye.alpha"
+            fill="var(--avatar-eye)"
+          />
+        </g>
+        <g
+          v-if="showVeil"
+          class="avatar-veil"
+          :clip-path="veilFrame.fade ? undefined : `url(#${ids.cloak})`"
+          :opacity="veilFrame.fade ? veilFrame.cloak : undefined"
+        >
+          <path
+            :d="frame.bodyPath"
+            :opacity="frame.bodyAlpha"
+            :fill="fine ? `url(#${ids.glass})` : 'var(--avatar-stealth)'"
+            :fill-opacity="fine ? 1 - (1 - GLASS_OPACITY) * veilFrame.glass : 1"
+          />
+          <g v-if="fine" :clip-path="`url(#${ids.body})`">
+            <ellipse cx="-26" cy="-30" rx="20" ry="9" transform="rotate(-35 -26 -30)" fill="#fff" :opacity="0.2 * veilFrame.glass" />
+            <rect
+              v-if="shine"
+              x="-20"
+              y="-140"
+              width="40"
+              height="280"
+              :fill="`url(#${ids.sheen})`"
+              :opacity="shine.opacity * veilFrame.glass"
+              :transform="`translate(${(-130 + 260 * shine.x).toFixed(1)} 0) rotate(22)`"
+            />
+          </g>
+          <path
+            v-for="(eye, i) in frame.eyes"
+            :key="i"
+            :d="eye.d"
+            :transform="eyeTransform(eye.matrix)"
+            :opacity="eye.alpha"
+            fill="var(--avatar-stealth-eye)"
+          />
+        </g>
+        <g v-if="showVeil" :clip-path="`url(#${ids.body})`">
+          <path :d="frame.bodyPath" fill="none" stroke="var(--avatar-stealth-rim)" :stroke-width="rimWidth" :opacity="0.95 * veilFrame.rim" />
+          <rect v-if="veilFrame.hem > 0" x="-110" :y="edge - 0.9" width="220" height="1.8" fill="var(--avatar-stealth-rim)" :opacity="0.95 * veilFrame.hem" />
+        </g>
+      </g>
+      <circle
+        v-if="fine && veilFrame.ping >= 0"
+        r="66"
+        fill="none"
+        stroke="var(--avatar-stealth-glow)"
+        :transform="`scale(${(1 + (16 / 66) * (1 - (1 - veilFrame.ping) ** 5)).toFixed(4)})`"
+        :stroke-width="(3.5 - 2.8 * veilFrame.ping).toFixed(2)"
+        :opacity="(0.85 * (1 - veilFrame.ping)).toFixed(3)"
       />
     </g>
     <g
@@ -295,3 +413,10 @@ onUnmounted(() => {
     />
   </svg>
 </template>
+<style scoped>
+/* Phase 33: under Reduce Motion the Veil cross-fades (0.3 s, ease-in-out) instead of wiping. */
+.avatar-veil,
+.avatar-base {
+  transition: opacity 0.3s cubic-bezier(0.65, 0, 0.35, 1);
+}
+</style>

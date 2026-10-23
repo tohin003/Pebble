@@ -25,6 +25,17 @@
   --user-bubble: #eaf0e5;
   --avatar: #536b54;
   --avatar-eye: #fff;
+  /* Phase 33 (1.1.0, D57): the Veil, Stealth Lockdown's dusk family (design preview, look A). */
+  --avatar-stealth: #44528c;
+  --avatar-stealth-hi: #7684c6;
+  --avatar-stealth-eye: #fff;
+  --avatar-stealth-rim: #d6ddff;
+  --avatar-stealth-glow: #7d8df2;
+  --stealth-glow: #7d8df2;
+  --stealth-glow-soft: #7d8df266;
+  --stealth-ink: #3b4785;
+  --stealth-soft: #eef0fb;
+  --stealth-line: #cdd3f1;
   --selection: #d4e5c8;
   --danger: #a45141;
   --danger-line: #ebd3ca;
@@ -72,6 +83,16 @@
   --user-bubble: #2c3928;
   --avatar: #b4cda6;
   --avatar-eye: #23351f;
+  --avatar-stealth: #a3aeea;
+  --avatar-stealth-hi: #ccd4fb;
+  --avatar-stealth-eye: #1c2246;
+  --avatar-stealth-rim: #fff;
+  --avatar-stealth-glow: #8494f7;
+  --stealth-glow: #8494f7;
+  --stealth-glow-soft: #8494f777;
+  --stealth-ink: #b8c2f6;
+  --stealth-soft: #262b42;
+  --stealth-line: #3c4470;
   --selection: #425d35;
   --danger: #e3a38f;
   --danger-line: #66483d;

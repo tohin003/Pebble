@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stealth-set"
+description = "Enables the stealth_set command without any pre-configured scope."
+commands.allow = ["stealth_set"]
+
+[[permission]]
+identifier = "deny-stealth-set"
+description = "Denies the stealth_set command without any pre-configured scope."
+commands.deny = ["stealth_set"]

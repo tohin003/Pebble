@@ -138,6 +138,10 @@ def run_product(plan, product, *, ledger, metadata_path, resources=None, scratch
         raise bp.PlanRefused('source_drift')
     route = {'mode': 'live', 'profile': ev.validate_live_profile(metadata['profile']),
              'host_id': metadata['chatgpt_host_id'], 'auth_factory': auth_factory}
+    # Phase 32 (D50): Pebble runs the model its profile names, so a profile on another model would quietly measure the
+    # wrong product configuration (the gpt-6.1-sol plan with the gpt-6-luna profile). The two must be the same.
+    if route['profile'].get('model') != (plan.get('route') or {}).get('model'):
+        raise bp.PlanRefused('profile_model_is_not_the_plan_model')
     root = ws.plan_root(plan['plan_sha256'], scratch_parent)
     evaluation_id = uuid.uuid4().hex
     started_at = datetime.now(timezone.utc).isoformat(timespec='seconds')

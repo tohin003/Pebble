@@ -16,7 +16,7 @@ from pebble import evaluation as ev
 from ..corpus_24a import prompt_for
 from ..corpus_24a.graders import Output
 from . import workspace as ws
-from .codex_cell import asks_question
+from .codex_cell import asks_question, last_turn_changed
 
 LIMITS = {'cell_wall_seconds': 900, 'turn_max_steps': 24, 'turn_max_seconds': 300}
 STATE = {'completed': 'completed', 'verification_required': 'incomplete', 'needs_reconciliation': 'incomplete',
@@ -113,7 +113,8 @@ def run_cell(task, planned, root, route, *, resources=None, limits=LIMITS, prepa
         texts = [(prompt_for(task, planned['phrasing']), None)] + [(turn.text, turn) for turn in task.turns]
         for index, (text, turn) in enumerate(texts):
             if turn is not None and turn.if_asked:
-                if not (counters['answered'] or asks_question(replies[-1] if replies else None)):
+                if not (counters['answered'] or asks_question(replies[-1] if replies else None,
+                                                              changed=last_turn_changed(before, turn_files))):
                     replies.append(None)
                     turn_files.append(None)
                     continue

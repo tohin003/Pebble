@@ -14,6 +14,7 @@ Where your things are kept, and how deleting works: [Where Pebble keeps your thi
 - [Bigger tasks: agents, goals and schedules](#bigger-tasks-agents-goals-and-schedules)
 - [Skills and connectors](#skills-and-connectors)
 - [Pebble for Chrome](#pebble-for-chrome)
+- [Stealth Lockdown](#stealth-lockdown)
 - [Data and storage](#data-and-storage)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Troubleshooting](#troubleshooting)
@@ -233,6 +234,25 @@ Pages that look like sign-in, password, payment or verification pages are handed
 Enter, waits for your approval; looking, typing and choosing run under your grant. **Stop Pebble in Chrome** in the
 Browser panel, or **Stop** in Chrome, ends all of Pebble's Chrome sessions; a task's Stop ends only the task.
 
+## Stealth Lockdown
+
+One switch for presenting, calls and screen shares: **Settings › Privacy and focus › Stealth Lockdown**, **Stealth
+Lockdown** in the menu-bar icon's menu, or ⌃⌥⌘S from any app. It stays on, across restarts, until you turn it off.
+
+- **Stealth.** Pebble's windows are left out of screen capture and screen sharing: a recording or a shared screen
+  shows what is behind them. Pebble leaves the Dock, ⌘Tab and Mission Control, and its workspace drops its shadow and
+  opens as a window, not in full screen. ⌃⌥⌘H (or **Hide Pebble now** in the menu-bar menu) hides every Pebble window
+  at once. The menu-bar icon, or ⌘⇧Space, brings Pebble back.
+- **Lockdown.** Pebble never takes keyboard focus from the app in front. Its windows take your typing without making
+  Pebble the active app, so your slides, call or full-screen app stay in front, and Pebble never brings itself
+  forward.
+- **How you can tell.** The pebble wears the Veil, a dusk-blue glass with a light rim, and the menu-bar icon becomes a
+  filled pebble in a ring. With **Reduce motion** on, the change is a short fade.
+- **What it does not hide.** Hidden from screen capture and screen sharing, not from a camera, a capture card or a
+  process list. Exams and interviews that forbid assistants still forbid it. macOS draws the menu bar, so Pebble's
+  menu-bar icon shows in a full-screen share like any other, and dialogs macOS opens for Pebble, such as Save or a
+  Keychain prompt, can appear in a share.
+
 ## Data and storage
 
 **Settings › Data & storage** shows what Pebble keeps and where, with sizes and **Show in Finder**:
@@ -251,6 +271,8 @@ The details, what is safe to delete, and how to remove everything: [Where Pebble
 | Keys | Action | Where |
 | --- | --- | --- |
 | ⌘⇧Space | Show Pebble from any app | everywhere |
+| ⌃⌥⌘S | Turn Stealth Lockdown on or off | everywhere |
+| ⌃⌥⌘H | Hide Pebble at once | everywhere |
 | ⌘K | Open the command palette | both windows |
 | ⌘. | Stop the current task | both windows |
 | ⌘J | Show task activity | both windows |

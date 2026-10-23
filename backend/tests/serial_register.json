@@ -1,0 +1,32 @@
+{
+ "test_connector_auth.py": {
+  "reason": "Its tests start Pebble's isolated MCP workers (mcp_transport.isolated_http: the schema checker and the HTTP client, each a fresh process with a 2 s or 0.5 s wall budget). Under 6 workers that start-up has missed the budget: pre-trial 2, test_stdio_gets_one_explicit_environment_credential_and_echo_is_redacted ('MCP schema could not be checked within its isolated budget')."
+ },
+ "test_connector_effects.py": {
+  "reason": "Its tests start Pebble's isolated MCP workers (mcp_transport.isolated_http: the schema checker and the HTTP client, each a fresh process with a 2 s or 0.5 s wall budget). Under 6 workers that start-up has missed the budget: Phase 32 T3 parallel run 1, test_a_refusal_after_dispatch_is_uncertain (the checker answered 'not valid'; 0 of 55 loaded single-file reruns reproduced it; checker failures now name their class); pre-trial 1, test_send_injects_the_key_journals_and_summarizes and test_send_without_explicit_instruction_must_draft ('MCP schema could not be checked within its isolated budget')."
+ },
+ "test_context_latency_22.py::test_twenty_thousand_records_meet_the_design_studys_bar": {
+  "reason": "A latency bar (the design study's 0.3 s at 20,000 records). Phase 32 T3, 6 workers: 0.334 s (run 1)."
+ },
+ "test_guard_overhead_24.py::test_send_to_first_model_request_stays_under_a_second_at_1500_files": {
+  "reason": "A wall-clock bar (send to first model request under 1.0 s at 1,500 files). Phase 32 T3, 6 workers: 1.61 s and 1.73 s (run 1), 2.16 s and 6.96 s (run 2), 1.46 s and 1.72 s (run 3); alone it measures 0.2-0.7 s. The bar is the product's, so the test runs with nothing beside it."
+ },
+ "test_job_shim.py::test_footprint_reads_a_plausible_value_for_this_process": {
+  "reason": "Measures the growth of its own process's physical footprint after a 64 MB ballast. Phase 32 trial 1, in a long-lived xdist worker (footprint 489,849,960 bytes) that had freed large buffers earlier, malloc reused memory the footprint already counted and the reading did not change; in a fresh process it rises as asserted."
+ },
+ "test_mcp_lifecycle.py": {
+  "reason": "Its tests start Pebble's isolated MCP workers (mcp_transport.isolated_http: the schema checker and the HTTP client, each a fresh process with a 2 s or 0.5 s wall budget). Under 6 workers that start-up has missed the budget: Phase 32 T3 parallel run 1, test_dispatched_failure_is_uncertain_and_never_retried[disconnect] (the best-effort notifications/cancelled, 0.5 s, never arrived); pre-trial 1, test_stateless_initializes_once_and_owned_session_closes[sse]."
+ },
+ "test_mcp_modern.py": {
+  "reason": "Its tests start Pebble's isolated MCP workers (mcp_transport.isolated_http: the schema checker and the HTTP client, each a fresh process with a 2 s or 0.5 s wall budget). Under 6 workers that start-up has missed the budget: pre-trial 1, test_modern_output_schema_is_checked_with_run_owned_route and test_missing_structured_output_fails_even_for_nullable_schema ('MCP schema could not be checked within its isolated budget')."
+ },
+ "test_mod_worker.py::test_real_frozen_vm_allocation_is_observed_by_owned_pid_rss_and_reaped": {
+  "reason": "Starts the frozen backend as a mod worker, whose run has a wall-clock deadline (mod_worker.py raises 'timeout' at it). Phase 32 T3, 6 workers: the first pane run hit that deadline while the frozen runtime started (run 3)."
+ },
+ "test_terminal_text.py": {
+  "reason": "Wall-clock bars (each hostile sequence and a 1 MB random fuzz under 1.0 s). Phase 32 T3, 6 workers: test_hostile_sequences_terminate_in_linear_time crlf_flood 1.43 s (run 2), backspace_pairs 1.13 s (run 3); pre-trial 3: test_one_megabyte_random_fuzz_runs_under_a_second 1.10 s."
+ },
+ "test_validate_phase24.py::test_the_whole_source_campaign_runs_within_the_verifier_budget": {
+  "reason": "Runs validate_phase24's whole campaign, whose first_request_not_blocked_by_index check bounds a first request at 1.0 s. Phase 32 T3, 6 workers: 2.25 s (run 1), 1.75 s (run 2), 1.89 s (run 3). Phase 31 trial 1 measured 1.11 s once under load too."
+ }
+}

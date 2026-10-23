@@ -22,6 +22,7 @@
     "allow-pet-expand",
     "allow-pet-gaze",
     "allow-show-pet",
+    "allow-stealth-set",
     "allow-login-item-status",
     "allow-login-item-set",
     "allow-notification-authorization",

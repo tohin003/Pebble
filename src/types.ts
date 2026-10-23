@@ -282,6 +282,7 @@ export interface State {
   settings: {
     theme: string;
     reduced_motion: boolean;
+    stealth?: boolean; // Phase 33: Stealth Lockdown
     memory_enabled: boolean;
     memory_layers?: Record<string, boolean>;
     permissions: Permissions;

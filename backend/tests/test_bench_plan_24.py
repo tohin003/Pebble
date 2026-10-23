@@ -610,3 +610,33 @@ def test_the_cli_plans_registers_stamps_and_refuses_without_the_go_ahead(tmp_pat
     capsys.readouterr()
     assert cli.main(['check-go-ahead', str(plan_file), '--ledger', str(ledger)]) == 0
     assert json.loads(capsys.readouterr().out)['decision'] == 'D13'
+
+
+def test_a_profile_on_another_model_than_the_plan_is_refused(tmp_path, monkeypatch):
+    """Phase 32 (D50): Pebble runs the model its evaluation profile names. A gpt-6.1-sol plan run with the gpt-6-luna
+    profile would measure the wrong configuration, so the live runner refuses it before any cell."""
+    import hashlib
+    from benchmarks.drivers import live
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.delenv('PEBBLE_HOME', raising=False)
+    started = []
+    monkeypatch.setattr(live, 'run_cells', lambda *a, **k: started.append(a) or [])
+    backend = tmp_path / 'build' / 'pebble-backend'
+    backend.parent.mkdir()
+    backend.write_bytes(b'frozen candidate')
+    ledger = ev.EvidenceLedger(tmp_path / 'ledger')
+    plan = bp.make_plan('codex', 'pilot', seed=50, model='gpt-6.1-sol',
+                        candidate_sha256=hashlib.sha256(b'frozen candidate').hexdigest())
+    bp.register(plan, ledger)
+    bp.stamp(plan, ledger, decision='D50', statement='The person asked for the gpt-6.1-sol benchmark.')
+    profile = {'id': 'evalprofile', 'kind': 'chatgpt', 'name': 'x · ChatGPT', 'url': 'https://api.openai.com/v1',
+               'model': 'gpt-6-luna', 'context': 32768, 'budget': 32768, 'tools': True, 'has_key': False,
+               'client_id': 'oaiapp_x', 'subject': 'user-x', 'connection_id': 'evalconnection'}
+    host = 'urn:uuid:55555555-5555-4555-8555-555555555555'
+    ev.record_evaluation_connection(ledger, profile, host, installed={'connection_ids': set(), 'host_ids': set(), 'stores': 0})
+    metadata = tmp_path / 'meta.json'
+    metadata.write_text(json.dumps({'profile': profile, 'chatgpt_host_id': host}))
+    metadata.chmod(0o600)
+    with pytest.raises(bp.PlanRefused, match='profile_model_is_not_the_plan_model'):
+        live.run_product(plan, 'pebble', ledger=ledger, metadata_path=metadata, scratch_parent=tmp_path, backend=backend)
+    assert started == []

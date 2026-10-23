@@ -6,6 +6,9 @@
 
 # Test runner.
 pytest==9.1.1
+# Phase 32: parallel runs (scripts/run_full_suite.py, scripts/affected_tests.py --run); execnet is xdist's transport.
+pytest-xdist==3.8.0
+execnet==2.1.2
 
 # HEIC is decoded by macOS (ImageIO through /usr/bin/sips in the confined parser, V1-045). pillow-heif stays here
 # only as the encoder of scripts/validate_phase21.py's h1/h2 fixture photo; it is never collected into the bundle

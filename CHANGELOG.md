@@ -4,6 +4,67 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.1.0]
+
+**Stealth Lockdown**: one switch that keeps Pebble out of screen capture and screen sharing, and stops it taking focus
+from the app you're in. Turn it on in Settings → Privacy and focus, from the menu-bar icon, or with ⌃⌥⌘S. It is built
+for privacy and for working without interruptions: a presentation, a call or a full-screen app keeps the screen and
+the keyboard.
+
+> Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and
+> interviews that forbid assistants still forbid it.
+
+### Highlights
+
+- Stealth Lockdown keeps Pebble out of screen shares and recordings and never takes focus from the app you're in.
+- While it's on, the pebble wears the Veil: a dusk-blue glass with a light rim, so you can always tell.
+- ⌃⌥⌘H hides every Pebble window at once; the menu-bar icon brings Pebble back.
+- Turn it on in Settings → Privacy and focus, from the menu-bar icon, or with ⌃⌥⌘S.
+- A task that stopped right after its answer no longer repeats the answer when you resume it.
+- A plugin tool that could not be checked in time now says so, instead of calling your input invalid.
+- Tests run in parallel, so each release is proved in about a third of the time.
+
+### Added
+
+- **Stealth Lockdown.** One switch turns on both halves.
+  - **Stealth:** every Pebble window is left out of screen capture and screen sharing, the workspace has no window
+    shadow, and Pebble leaves the Dock, ⌘Tab and Mission Control. The full workspace opens as a window instead of in
+    full screen, so it never takes over the screen you share. ⌃⌥⌘H, or **Hide Pebble now** in the menu-bar menu, hides
+    every Pebble window at once.
+  - **Lockdown:** Pebble never takes keyboard focus from the app in front. Its windows become panels that take your
+    typing without making Pebble the active app, so your slides, call or full-screen app stay in front, and Pebble
+    never brings itself forward.
+  - The menu-bar icon changes shape while it's on (a filled pebble in a ring) and carries the switch. With Pebble out of
+    the Dock and ⌘Tab, it is the way back in. macOS draws the menu bar, so the icon itself shows in a full-screen share.
+  - It stays on across restarts until you turn it off.
+- **The Veil.** When you turn Stealth Lockdown on, the pebble gathers, a dusk colour sweeps down over it and it opens
+  calmer eyes behind a light rim (1.25 s). While it's on it keeps that glassy dusk look, with one slow shimmer every
+  6 s. Turning it off lifts the colour and the pebble hops back (0.65 s). With Reduce motion on, each change is a
+  0.3 s fade. At sidebar and status-line sizes, the colour and a thicker rim carry it.
+
+### Fixed
+
+- **A resumed task no longer repeats its answer.** If Pebble stopped (a restart or a quit) right after showing a task's
+  answer but before marking it done, resuming the task asked the model to continue, and the answer could come twice.
+  Pebble now finishes such a task with the answer you already saw, after its usual completion check, with no new
+  request.
+- **A plugin tool check that fails says so.** When Pebble's isolated checker for a plugin tool's input failed (it ran
+  out of memory, for example), the call was refused as "arguments do not match the reviewed tool schema". It now says
+  the input could not be validated, and names the failure.
+
+### For contributors
+
+- **Parallel tests.** `scripts/run_full_suite.py` runs the backend suite on six workers and then, alone, the tests
+  that measure time or the machine (`backend/tests/serial_register.json`, each with its measured reason). It writes
+  the same proof log the release checks read. A release proof now takes about 17 minutes instead of about 47.
+  `scripts/affected_tests.py` picks the tests a change can reach for everyday work, and runs everything when unsure.
+- **A fairer benchmark harness.** An audit of the gpt-6.1-sol comparison found three harness defects, all counting
+  against Codex CLI: Python cache files counted as unrequested edits, a question that obeyed the prompt's `FINAL: done`
+  line was never answered, and a process race lost one cell. They are fixed for every product, with tests
+  (`backend/tests/test_bench_harness_fixes_32.py`). That comparison's results are not published yet.
+- **A held-out benchmark set is sealed** for the next comparison, before any change aimed at it: SHA-256
+  `27889ccdb1fa8d26c047ec3d127f10d2dadd9cf8cb550d74f0d565d70054d051`.
+
 ## [1.0.4]
 
 An audit of every command, shortcut and feature claim against the code. Its fixes are below, and so is every claim

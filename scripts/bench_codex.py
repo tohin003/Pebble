@@ -14,6 +14,7 @@ medium effort, a scratch HOME and CODEX_HOME, 15 minutes per cell, one attempt p
 """
 
 import argparse
+import hashlib
 import json
 import socket
 import sys
@@ -87,6 +88,12 @@ def _online():
         return False
 
 
+def binary_sha256(binary):
+    """Phase 32 (H5): the Codex binary's SHA-256 beside its version (as the Claude runner records), or None."""
+    path = Path(binary)
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
 def run(plan, *, ledger, binary, codex_home, parent=ws.TMP, positions=None, probe=cx.probe, spawn=cx.Process,
         progress=None):
     """Live Codex cells of a registered, stamped codex plan; returns the signed, content-free results report."""
@@ -121,7 +128,8 @@ def run(plan, *, ledger, binary, codex_home, parent=ws.TMP, positions=None, prob
             progress(planned, outcome)
     network['online_at_end'] = _online()
     report = bp.sign_results(ledger, plan, 'codex', rows, evaluation_id=evaluation_id, evidence='live_model',
-                             versions={'codex': checked['version'], 'model': plan['route']['model'], 'effort': cx.EFFORT},
+                             versions={'codex': checked['version'], 'codex_sha256': binary_sha256(binary),
+                                       'model': plan['route']['model'], 'effort': cx.EFFORT},
                              started_at=started_at, network=network)
     bp.end(ledger, report)
     return report

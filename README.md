@@ -13,7 +13,7 @@ keep memory you control and build interactive views, with the model you choose. 
 [![Release](https://img.shields.io/github/v/release/tohin003/Pebble?label=release&color=506e54)](https://github.com/tohin003/Pebble/releases/latest)
 [![macOS 12+ on Apple silicon](https://img.shields.io/badge/macOS-12%2B%20%C2%B7%20Apple%20silicon-191e1b?logo=apple&logoColor=white)](#install)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-a6c795)](LICENSE)
-[![8,653 tests at v1.0.4](https://img.shields.io/badge/tests-8%2C653%20at%20v1.0.4-506e54)](#built-like-infrastructure)
+[![8,793 tests at v1.1.0](https://img.shields.io/badge/tests-8%2C793%20at%20v1.1.0-506e54)](#built-like-infrastructure)
 [![AgentGuard built in](https://img.shields.io/badge/AgentGuard-built%20in-23351f)](#agentguard-evidence-before-done)
 
 [**Download for macOS**](https://github.com/tohin003/Pebble/releases/latest/download/Pebble-macos-arm64.zip) ·
@@ -95,7 +95,7 @@ Keychain. A local conversation reaches a cloud model only after you review it.
 
 ### 🧪 Built like infrastructure
 
-1.0.4 passed 8,653 tests and 1,840 service checks, on source and on the frozen app. Its backend build is reproducible,
+1.1.0 passed 8,793 tests and 1,874 service checks, on source and on the frozen app. Its backend build is reproducible,
 and the release passed a full licence inventory and a secret scan.
 
 </td>
@@ -133,6 +133,29 @@ and the release passed a full licence inventory and a secret scan.
 own interface.</sub>
 
 </div>
+
+### Stealth Lockdown
+
+<div align="center">
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/07-stealth-veil.gif"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/07-stealth-veil-light.gif" width="300" alt="The pebble turning Stealth Lockdown on: it gathers, a dusk colour sweeps over it and it settles as dusk-blue glass with a light rim, then turns back"></picture>
+
+<sub>The Veil, rendered frame by frame from Pebble 1.1's own avatar code (a protected window can't be screen-recorded).</sub>
+
+</div>
+
+One switch for presenting, calls and screen shares. Turn it on in Settings → Privacy and focus, from the menu-bar
+icon, or with ⌃⌥⌘S.
+
+- **Stealth.** Pebble's windows are left out of screen capture and screen sharing. Pebble leaves the Dock, ⌘Tab and
+  Mission Control. ⌃⌥⌘H hides every Pebble window at once, and the menu-bar icon brings it back.
+- **Lockdown.** Pebble never takes focus from the app in front. You can type to it while your slides or call stay
+  active.
+- **You can always tell it's on.** The pebble wears the Veil, a dusk-blue glass with a light rim, and the menu-bar icon
+  changes shape.
+
+> Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and
+> interviews that forbid assistants still forbid it.
 
 ---
 
@@ -355,8 +378,8 @@ Pebble is built to the standard of software that people trust with their project
 
 | | |
 |---|---|
-| **Tests** | 8,653 automated tests at v1.0.4, none skipped. They never call a model or the network. |
-| **Service checks** | 1,840 checks across 45 validator suites, each run against the source *and* the frozen, signed app |
+| **Tests** | 8,793 automated tests at v1.1.0, none skipped. They never call a model or the network. |
+| **Service checks** | 1,874 checks across 47 validator suites, each run against the source *and* the frozen, signed app |
 | **Reproducible build** | The shipped backend is byte-identical to the tested one, apart from its signature |
 | **Release gates** | Secret scan, licence inventory (366 components, every notice present), a scan for personal paths, and every published test run in a fresh clone |
 | **Safe updates** | The installer keeps the previous app. Database upgrades back up first. Every release is rehearsed on a copy of real data and drilled with a rollback before it ships. |

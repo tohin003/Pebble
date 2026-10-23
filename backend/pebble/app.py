@@ -767,6 +767,7 @@ class App:
                 for k, v in [
                     ("theme", "system"),
                     ("reduced_motion", False),
+                    ("stealth", False),  # Phase 33: Stealth Lockdown
                     ("memory_enabled", True),
                     ('memory_layers', {k: True for k in ('working','episodic','semantic','procedural','temporal','profile')}),
                     ("permissions", DEFAULT),
@@ -1482,7 +1483,7 @@ class App:
         if (
             key == "theme"
             and value in ("system", "light", "dark")
-            or key in {"reduced_motion", "memory_enabled"}
+            or key in {"reduced_motion", "memory_enabled", "stealth"}
             and isinstance(value, bool)
         ):
             self.store.set_setting(key, value)
@@ -2042,7 +2043,9 @@ class App:
                 self.emit('run', {'chat_id': id, 'run_id': run_id, 'state': 'waiting_input'})
                 return {'run_id': run_id, 'status': 'waiting_input'}
             self.runs.transition(run_id, 'queued')
-            self.controller.launch(chat, run['goal'], config['effort'], snapshot.get('sources', []), run_id, snapshot)
+            # Phase 32: the runner tells a resume after a stop or restart from one after a decision (resumed_from).
+            self.controller.launch(chat, run['goal'], config['effort'], snapshot.get('sources', []), run_id,
+                                   {**snapshot, 'resumed_from': run['state']})
         return {'run_id': run_id, 'status': 'queued'}
 
     def run_readback(self, id, run_id):

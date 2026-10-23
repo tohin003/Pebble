@@ -234,26 +234,42 @@ def isolated_http(packet, cancel, timeout, flag='--mcp-http-worker'):
             for stream in (proc.stdin,proc.stdout,proc.stderr):stream.close()
 
 
+# Phase 32: a failure of the checker itself (it could not import, allocate, or reach a file) is no verdict on the
+# schema or the arguments. Phase 32's parallel measurement once saw a valid call refused as "Plugin arguments do not
+# match the reviewed tool schema" on a machine short of memory; such a failure now says validation could not
+# complete, and names the exception class. Every other exception stays a refusal of the schema or arguments.
+CHECKER_FAILURES = (ImportError, MemoryError, OSError, SystemError)
+
+
 def schema_worker_main():
     from .mcp_schema import worker
     raw = sys.stdin.buffer.read(48_001)
     packet = json.loads(raw) if len(raw) <= 48_000 else {}
     try:result={'valid':worker(packet['schema'],packet.get('arguments'),packet.get('check') is True)} if packet else {'valid':False}
+    except CHECKER_FAILURES as exc:result={'valid':False,'checker_failed':type(exc).__name__}
     except Exception:result={'valid':False}
     sys.stdout.buffer.write(encoded(result))
+
+
+def _verdict(result, what):
+    failed = result.get('checker_failed')
+    if failed:
+        raise PolicyError(what + ' could not be validated: the isolated checker failed (' + str(failed)[:40] + ').')
+    return result.get('valid') is True
 
 
 def valid_arguments(schema, arguments, cancel=None):
     try:
         result = isolated_http({'schema': schema, 'arguments': arguments}, cancel or threading.Event(), 2, '--mcp-schema-worker')
-        return result.get('valid') is True
     except (ValueError, OSError):
         raise PolicyError('MCP arguments could not be validated within the isolated budget.') from None
+    return _verdict(result, 'MCP arguments')
 
 
 def valid_schema(schema):
-    try:return isolated_http({'schema':schema,'check':True},threading.Event(),2,'--mcp-schema-worker').get('valid') is True
+    try:result=isolated_http({'schema':schema,'check':True},threading.Event(),2,'--mcp-schema-worker')
     except (ValueError,OSError):raise PolicyError('MCP schema could not be checked within its isolated budget.') from None
+    return _verdict(result,'MCP schema')
 
 
 def file_digest(path):

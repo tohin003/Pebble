@@ -75,12 +75,12 @@ def edit(path, **changes):
 
 def test_the_inventory_covers_every_person_setting_with_the_apps_validators():
     assert settings_file.KEYS == ('theme', 'reduced_motion', 'memory_enabled', 'memory_layers', 'permissions',
-                                  'companion', 'notifications', 'storage')
+                                  'companion', 'notifications', 'stealth', 'storage')  # Phase 33: stealth
     for key in settings_file.KEYS:
         assert settings_file.validate(key, settings_file.default(key)) == settings_file.default(key)
     schema = settings_file.schema()
     assert set(settings_file.KEYS) <= set(schema['properties']) and schema['additionalProperties'] is True
-    for key, bad in (('theme', 'purple'), ('reduced_motion', 'yes'), ('permissions', {'mode': 'god', 'tools': {}}),
+    for key, bad in (('theme', 'purple'), ('reduced_motion', 'yes'), ('stealth', 'yes'), ('permissions', {'mode': 'god', 'tools': {}}),
                      ('memory_layers', {'working': True}), ('storage', {'documents_mirror': True}),
                      ('notifications', {}), ('companion', {'pointer': 1})):
         with pytest.raises(ValueError):

@@ -24,6 +24,10 @@ from . import workspace as ws
 
 MODEL, EFFORT = 'gpt-6-luna', 'medium'
 REQUIRED_FLAGS = ('--json', '--skip-git-repo-check', '--cd', '--sandbox', '--model', '--output-last-message', '--config')
+# Phase 32 (the GPT sample, plan 0c4cb78c): `codex exec resume` (0.163.0) takes neither --cd nor --sandbox, so every
+# follow-up turn failed at once and three cells were scored wrong. A follow-up runs in the process's working folder
+# (run_cell starts it in the workspace) and takes the sandbox as config; the probe checks resume's own flags.
+RESUME_FLAGS = ('--json', '--skip-git-repo-check', '--model', '--output-last-message', '--config')
 ENV_KEYS = ('PATH', 'HOME', 'CODEX_HOME', 'TMPDIR', 'LANG', 'USER', 'LOGNAME')
 PATH = '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin'
 AUTH_TEXT = re.compile(r'\b(401|403|unauthori[sz]ed|not logged in|login required|sign in again|refresh token)\b', re.I)
@@ -66,12 +70,16 @@ def environment(codex_home, fake_home, tmpdir):
 
 
 def command(binary, workspace, last_message, prompt, session_id=None, model=MODEL):
-    """argv for one turn: a new session for the first turn, `exec resume <session>` for a follow-up."""
-    head = [str(binary), 'exec'] + (['resume', session_id] if session_id else [])
-    return head + ['--json', '--skip-git-repo-check', '--cd', str(workspace), '--sandbox', 'workspace-write',
-                   '--model', model, '--config', 'model_reasoning_effort="%s"' % EFFORT,
-                   '--config', 'approval_policy="never"', '--config', 'sandbox_workspace_write.network_access=false',
-                   '--output-last-message', str(last_message), '--', prompt]
+    """argv for one turn: a new session for the first turn, `exec resume <session>` for a follow-up. A follow-up gets
+    the same model, effort, approval policy, sandbox and network rule, with the sandbox as config (resume has no
+    --sandbox) and the workspace as the process's working folder (resume has no --cd; run_cell starts every turn there)."""
+    tail = ['--model', model, '--config', 'model_reasoning_effort="%s"' % EFFORT,
+            '--config', 'approval_policy="never"', '--config', 'sandbox_workspace_write.network_access=false',
+            '--output-last-message', str(last_message), '--', prompt]
+    if session_id:
+        return [str(binary), 'exec', 'resume', session_id, '--json', '--skip-git-repo-check',
+                '--config', 'sandbox_mode="workspace-write"'] + tail
+    return [str(binary), 'exec', '--json', '--skip-git-repo-check', '--cd', str(workspace), '--sandbox', 'workspace-write'] + tail
 
 
 def public_command(argv):
@@ -85,23 +93,45 @@ FINAL_LINE = re.compile(r'^[\s>*_`#-]*FINAL\s*:(.*)$', re.I | re.M)
 REQUEST = re.compile(r"\b(?:please\s+(?:send|provide|share|tell\s+me|give\s+me|confirm|specify)"
                      r"|(?:could|can|would)\s+you\s+(?:please\s+)?(?:send|provide|share|tell\s+me|give\s+me|confirm|"
                      r"specify|let\s+me\s+know)|i\s+need\s+(?:the|your|to\s+know))\b", re.I)
+# Phase 32 (H2): a question mark that ends a sentence anywhere in a line ("…`report_q4.md`? I can also include both.")
+# and phrases that wait on the person's answer ("let me know if …" stays an offer).
+QUESTION = re.compile(r'\?(?=$|\s|[)\]"\'*_`])')
+WAITING = re.compile(r"\b(?:once\s+you\s+(?:tell|let)\s+me|let\s+me\s+know\s+(?:which|what|whether)|"
+                     r"tell\s+me\s+(?:which|what|whether))\b", re.I)
 
 
-def asks_question(reply):
-    """A reply that asks for missing details: it does not report the task done (no `FINAL: done` line) and it asks, with
-    a question mark in its last lines or an explicit request for the details.
+def asks_question(reply, *, changed=None):
+    """A reply that asks for missing details: a question in its last lines (also mid-line) or an explicit request for
+    the details, and, when it carries a `FINAL: done` line, a turn that changed nothing.
 
     Phase 27 (the Claude pilot, plan db9ede15): the first rule ("no FINAL line and a question mark in its last two
     lines") missed a reply that asked with "Please send: 1. Room …" and, as the task's own instruction says to, ended
     with a FINAL line ("FINAL: waiting on room, date, time and number of people"). Its scripted follow-up was never
-    sent. Pebble's question form is counted without this rule, so the miss fell only on the text-only products."""
+    sent. Pebble's question form is counted without this rule, so the miss fell only on the text-only products.
+
+    Phase 32 (H2): corpus 24a's clarification prompts tell every reply to end with `FINAL: done`. A reply that asked
+    ("Which report should I copy into `summary.md`: `report_q3.md` or `report_q4.md`?") and obeyed was read as a claim
+    of completion, so 6 Codex cells of plan 6f4dc958 and 2 Claude Code cells of the claim plan never got their answer.
+    Such a reply now asks when the turn changed nothing (`changed is False`, which the drivers measure); one that also
+    wrote files claimed the work done, and with `changed` unknown the old reading stands. Questions mid-line and
+    waiting phrases ("Once you tell me, …", "let me know which …") count too."""
     if not isinstance(reply, str):
         return False
     finals = [value.strip(' `*_').lower() for value in FINAL_LINE.findall(reply)]
-    if any(value.startswith('done') for value in finals):
-        return False
     lines = [line.strip() for line in FINAL_LINE.sub('', reply).strip().splitlines() if line.strip()]
-    return any(line.endswith('?') for line in lines[-3:]) or bool(REQUEST.search(reply))
+    asks = (any(QUESTION.search(line) for line in lines[-3:]) or bool(REQUEST.search(reply))
+            or bool(WAITING.search(reply)))
+    if any(value.startswith('done') for value in finals):
+        return asks and changed is False
+    return asks
+
+
+def last_turn_changed(before, turn_files):
+    """Whether the newest turn that ran changed the workspace (False without a workspace or a turn)."""
+    ran = [files for files in turn_files if files is not None]
+    if not ran:
+        return False
+    return ran[-1] != (ran[-2] if len(ran) > 1 else before)
 
 
 def parse_events(lines):
@@ -171,6 +201,19 @@ def dry_run_cell(task, planned, root, binary, codex_home, model=MODEL):
             'wall_seconds': planned.get('wall_seconds', 900)}
 
 
+def signal_group(pid, signum):
+    """Signal a turn's process group whose leader is still unreaped (so its id cannot have been reused).
+
+    Phase 32 (H3): a leader can exit between `poll()` and the signal; macOS then refuses a group of zombies with EPERM.
+    Plan 6f4dc958's Codex e12-miles rep 2 wrote its first reply ("FINAL: 42.16") and then most likely lost the cell to
+    that PermissionError (`driver_permissionerror`). A group that is gone or only zombies needs no signal; the caller
+    reaps it."""
+    try:
+        os.killpg(pid, signum)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 class Process:
     """One Codex turn as a child process in its own session; killed only while its leader is unreaped."""
 
@@ -199,12 +242,12 @@ class Process:
 
     def stop(self):
         if self.child.poll() is None:
-            os.killpg(self.child.pid, signal.SIGTERM)
+            signal_group(self.child.pid, signal.SIGTERM)
             try:
                 self.child.wait(KILL_GRACE)
             except subprocess.TimeoutExpired:
                 if self.child.poll() is None:
-                    os.killpg(self.child.pid, signal.SIGKILL)
+                    signal_group(self.child.pid, signal.SIGKILL)
                 self.child.wait()
 
 
@@ -220,7 +263,7 @@ def run_cell(task, planned, root, binary, codex_home, *, wall=900, spawn=Process
     texts = [(prompt_for(task, planned['phrasing']), None)] + [(turn.text, turn) for turn in task.turns]
     for index, (prompt, turn) in enumerate(texts):
         if turn is not None and turn.if_asked:
-            if not asks_question(replies[-1] if replies else None):
+            if not asks_question(replies[-1] if replies else None, changed=last_turn_changed(before, turn_files)):
                 replies.append(None)
                 turn_files.append(None)
                 continue
@@ -268,10 +311,13 @@ def probe(binary, run=subprocess.run):
     missing = [flag for flag in REQUIRED_FLAGS if flag not in text]
     if resume.returncode != 0:
         missing.append('exec resume')
+    else:
+        resume_text = (resume.stdout or '') + (resume.stderr or '')
+        missing += ['exec resume ' + flag for flag in RESUME_FLAGS if flag not in resume_text]
     found = re.search(r'\d+\.\d+\.\d+', (version.stdout or '') + (version.stderr or ''))
     return {'version': found.group(0) if found else None, 'missing_flags': missing,
             'ok': version.returncode == 0 and help_text.returncode == 0 and not missing}
 
 
 __all__ = ['CodexRefused', 'asks_question', 'check_codex_home', 'command', 'dry_run_cell', 'environment',
-           'parse_events', 'probe', 'run_cell']
+           'last_turn_changed', 'parse_events', 'probe', 'run_cell', 'signal_group']

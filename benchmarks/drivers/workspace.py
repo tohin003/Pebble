@@ -13,6 +13,10 @@ TMP = Path('/private/tmp')
 PREFIX = 'pebble-bench-'
 INSTRUCTION_FILES = ('AGENTS.md', 'AGENTS.override.md', 'CLAUDE.md', 'GEMINI.md', 'PEBBLE.md')
 INVENTORY_LIMIT, FILE_LIMIT = 2000, 2_000_000
+# Phase 32 (H1): caches that Python and pytest write beside code they run. They are not edits anyone asked for or made,
+# and only a product that checks its code inside the workspace writes them (Codex imports the module; Pebble's tests run
+# in a snapshot), so counting them failed 16 Codex cells of plan 6f4dc958 on scope alone. No fixture contains them.
+CACHE_DIRS, CACHE_SUFFIXES = frozenset({'__pycache__', '.pytest_cache'}), ('.pyc', '.pyo')
 
 
 class SandboxRefused(RuntimeError):
@@ -67,14 +71,17 @@ def instruction_files_absent(workspace):
 
 
 def inventory(root, limit=INVENTORY_LIMIT):
-    """{relative path: bytes} of regular files (symlinks never followed; large files as None)."""
+    """{relative path: bytes} of regular files (symlinks never followed; large files as None; Python and pytest caches
+    left out)."""
     found = {}
     if root is None or not Path(root).is_dir():
         return found
     root = Path(root)
     for base, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not (Path(base) / d).is_symlink())
+        dirs[:] = sorted(d for d in dirs if d not in CACHE_DIRS and not (Path(base) / d).is_symlink())
         for name in sorted(files):
+            if name.endswith(CACHE_SUFFIXES):
+                continue
             path = Path(base) / name
             info = os.lstat(path)
             if not stat.S_ISREG(info.st_mode):

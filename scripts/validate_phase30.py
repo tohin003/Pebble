@@ -129,6 +129,14 @@ def changelog_entry(version):
     return match.group(1)
 
 
+def notes_version(current, released='1.0.4'):
+    """The release whose CHANGELOG entry carries what this validator proves: the checkout's own version up to
+    `released`, and `released` once the checkout has moved past it (Phase 33, D60: at 1.1.0 the current entry would
+    otherwise have to repeat 1.0.4's notes, which would be false for 1.1.0). Every assertion on the entry is unchanged."""
+    parts = lambda v: tuple(int(x) for x in v.split('.'))
+    return released if parts(current) > parts(released) else current
+
+
 def fake_bundle(root, identifier, payload):
     """A minimal .app with the given CFBundleIdentifier and a backend file of the given bytes."""
     app = root / (identifier + '.app')
@@ -248,7 +256,7 @@ class Campaign:
                 text = flat(read(rel))
                 found += [(rel, phrase, why) for phrase, why in RETRACTED if phrase in text]
             assert not found, found[:6]
-            entry = flat(changelog_entry(checkout_version()))
+            entry = flat(changelog_entry(notes_version(checkout_version())))
             assert '### Corrections' in entry, 'CHANGELOG has no Corrections list for this release'
             missing = [word for word in CORRECTIONS if word not in entry]
             assert not missing, ('the Corrections list does not cover', missing)

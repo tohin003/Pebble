@@ -556,3 +556,56 @@ def test_service_restart_retains_model_tool_context_without_repeating_artifact(t
 def test_owner_limits_are_validated(limits):
     with pytest.raises(ValueError):
         RunLimits.parse(limits)
+
+
+def test_a_resume_after_a_stop_finishes_a_shown_reply_without_asking_again(app, monkeypatch):
+    """Phase 32: the run stopped after its final reply was committed and shown, before it was marked complete (the
+    bench's recovery drill under load). Resuming it asked the model to continue, and the scripted reply came twice."""
+    chat, requests, checks = app.new_chat(), [], []
+
+    def complete(messages, tools, cancel, token, effort):
+        requests.append(copy.deepcopy(messages))
+        return final(token, 'Done.\nFINAL: done')
+    app.model.complete = complete
+    real = app.controller.completion
+
+    def completion(run_id, ws, reply):
+        checks.append(reply)
+        if len(checks) == 1:  # the app is quitting while the completion gate runs
+            app.pause_requested.set()
+            raise InterruptedError('paused')
+        return real(run_id, ws, reply)
+    monkeypatch.setattr(app.controller, 'completion', completion)
+    app.work(chat, 'Say done', False, [])
+    rid = app.runs.list(chat['id'])[0]['id']
+    assert app.runs.get(rid)['state'] == 'paused' and len(requests) == 1
+    app.run_resume(chat['id'], rid)
+    app.worker.join(5)
+    assert not app.worker.is_alive() and app.runs.get(rid)['state'] == 'completed'
+    assert len(requests) == 1  # no new model request
+    replies = [m['content'] for m in app.chat(chat['id'])['messages'] if m['role'] == 'assistant']
+    assert replies[-1].count('FINAL: done') == 1 and replies[-1].startswith('Done.')
+    assert checks[-1].count('FINAL: done') == 1  # the gate judged the reply once, as shown
+
+
+def test_a_resume_after_a_stop_mid_task_still_asks_the_model(app):
+    """The finished-reply path needs a shown turn-end as the checkpoint's last message; after a committed tool result
+    the model continues as before."""
+    chat, requests = app.new_chat(), []
+
+    def complete(messages, tools, cancel, token, effort):
+        requests.append(copy.deepcopy(messages))
+        if len(requests) == 1:
+            return diagram_call()
+        if len(requests) == 2:
+            app.pause_requested.set()
+            raise InterruptedError('paused')
+        return final(token)
+    app.model.complete = complete
+    app.work(chat, 'Draw a diagram', False, [])
+    rid = app.runs.list(chat['id'])[0]['id']
+    assert app.runs.get(rid)['state'] == 'paused'
+    app.run_resume(chat['id'], rid)
+    app.worker.join(5)
+    assert app.runs.get(rid)['state'] == 'completed' and len(requests) == 3
+    assert 'HOST RESUME' in requests[-1][-1]['content']

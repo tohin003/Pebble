@@ -11,7 +11,7 @@ const { SHORTCUTS, matchShortcut, shortcutsFor, keysLabel, moveRowFocus } = modu
 assert.ok(Object.isFrozen(SHORTCUTS) && SHORTCUTS.every(Object.isFrozen));
 // Phase 22 adds two main-window entries, "details" (⌘⇧D, the Details drawer) and "copy_reply" (⌘⇧C,
 // design study §5.3); the earlier entries are unchanged.
-assert.deepEqual(SHORTCUTS.map((s) => s.id), ["palette", "stop", "activity", "details", "copy_reply", "new_chat", "settings", "close", "send", "reveal"]);
+assert.deepEqual(SHORTCUTS.map((s) => s.id), ["palette", "stop", "activity", "details", "copy_reply", "new_chat", "settings", "close", "send", "reveal", "stealth_toggle", "stealth_hide"]);
 assert.equal(new Set(SHORTCUTS.map((s) => s.id)).size, SHORTCUTS.length);
 for (const s of SHORTCUTS) {
   assert.ok(["window", "composer", "global"].includes(s.scope), s.id);
@@ -55,19 +55,24 @@ const cases = [
 ];
 for (const [event, surface, expected] of cases) assert.equal(matchShortcut(event, surface), expected, JSON.stringify([event, surface]));
 
-assert.deepEqual(shortcutsFor("pet").map((s) => s.id), ["palette", "stop", "activity", "close", "send", "reveal"]);
+assert.deepEqual(shortcutsFor("pet").map((s) => s.id), ["palette", "stop", "activity", "close", "send", "reveal", "stealth_toggle", "stealth_hide"]);
 assert.deepEqual(shortcutsFor("main").map((s) => s.id), SHORTCUTS.map((s) => s.id));
 const byId = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));
 assert.deepEqual(["palette", "stop", "activity", "details", "copy_reply", "new_chat", "settings", "close", "send", "reveal"].map((id) => keysLabel(byId[id])), ["⌘K", "⌘.", "⌘J", "⌘⇧D", "⌘⇧C", "⌘N", "⌘,", "Esc", "Enter", "⌘⇧Space"]);
 assert.equal(keysLabel(byId.details, "linux"), "Ctrl+Shift+D");
 assert.equal(keysLabel(byId.palette, "linux"), "Ctrl+K");
 assert.equal(keysLabel(byId.reveal, "windows"), "Ctrl+Shift+Space");
+// Phase 33: the Stealth Lockdown keys show as macOS writes them.
+assert.deepEqual([keysLabel(byId.stealth_toggle), keysLabel(byId.stealth_hide)], ["⌃⌥⌘S", "⌃⌥⌘H"]);
 
-// The only global shortcut is the native reveal, matching the shell's one registration.
+// The global shortcuts are exactly the shell's registrations: the reveal, and (Phase 33) Stealth Lockdown's two.
 const shell = readFileSync(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 const registered = [...shell.matchAll(/global_shortcut\(\)\.register\("([^"]+)"\)/g)].map((m) => m[1]);
-assert.deepEqual(registered, ["CommandOrControl+Shift+Space"]);
-assert.deepEqual(SHORTCUTS.filter((s) => s.scope === "global").map((s) => [s.id, s.key, s.mod, s.shift]), [["reveal", " ", true, true]]);
+assert.deepEqual(registered, ["CommandOrControl+Shift+Space", "Control+Alt+Command+S", "Control+Alt+Command+H"]);
+assert.deepEqual(SHORTCUTS.filter((s) => s.scope === "global").map((s) => [s.id, s.key, s.mod, s.shift, !!s.ctrl, !!s.alt]),
+  [["reveal", " ", true, true, false, false], ["stealth_toggle", "s", true, false, true, true], ["stealth_hide", "h", true, false, true, true]]);
+// No window shortcut uses ⌃ or ⌥: they belong to the shell.
+assert.ok(SHORTCUTS.filter((s) => s.scope !== "global").every((s) => !s.ctrl && !s.alt));
 
 // Table rows: arrow keys move a roving tabindex only when a row itself has focus.
 function table(count) {

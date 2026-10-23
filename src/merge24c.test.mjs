@@ -320,14 +320,15 @@ test("without the notice's release the same handoff keeps the on-device messages
   assert.deepEqual(errors, []);
 });
 
-test("About's What's new lines are CHANGELOG.md's 1.0.0 highlights, in order (V1-135)", () => {
+test("About's What's new lines are the newest CHANGELOG.md highlights, in order (V1-135)", () => {
   const app = read("./App.vue");
   const list = app.match(/const WHATS_NEW = Object\.freeze\(\[([\s\S]*?)\]\);/)?.[1];
   assert.ok(list, "App.vue keeps WHATS_NEW");
   const lines = [...list.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse('"' + m[1] + '"'));
   const changelog = read("../CHANGELOG.md");
-  const start = changelog.search(/^## \[1\.0\.0\]/m);
-  assert.ok(start >= 0, "CHANGELOG.md has a 1.0.0 section");
+  // Phase 33 (1.1.0): the newest release with a Highlights list (1.0.0's until 1.1.0 added one), so About is current.
+  const start = changelog.lastIndexOf("\n## [", changelog.indexOf("### Highlights")) + 1;
+  assert.ok(start > 0, "CHANGELOG.md has a release with Highlights");
   const section = changelog.slice(start, changelog.indexOf("\n## ", start + 1));
   const highlights = section.slice(section.indexOf("### Highlights"), section.indexOf("\n### ", section.indexOf("### Highlights") + 1));
   const bullets = [...highlights.matchAll(/^- (.+)$/gm)].map((m) => m[1].trim());

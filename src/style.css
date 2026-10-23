@@ -2106,3 +2106,128 @@ kbd {
   font-size: 11px;
   margin: 4px 12px;
 }
+
+/* Phase 33 (1.1.0, D57): Stealth Lockdown's Settings row, from the design preview (look A, Veil). The switch glows
+   (a slow halo and a turning light) and, once on, takes the dusk colour with a sheen. Reduce Motion keeps a static
+   halo. The honest note sits under the row. */
+.stealth-card {
+  display: grid;
+  gap: 10px;
+  margin-inline: -12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stealth-line);
+  background: linear-gradient(135deg, var(--stealth-soft), var(--panel) 78%);
+}
+.stealth-card .setting-row strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.stealth-state {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.stealth-state.on {
+  color: var(--stealth-ink);
+}
+@property --stealth-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.toggle.stealth {
+  position: relative;
+  isolation: isolate;
+  box-shadow: 0 0 0 1px var(--stealth-line), 0 0 8px 0 var(--stealth-glow-soft);
+  animation: stealth-breathe 2.8s ease-in-out infinite;
+}
+.toggle.stealth::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 24px;
+  z-index: -1;
+  pointer-events: none;
+  background: conic-gradient(from var(--stealth-spin), transparent 0turn, transparent 0.56turn, var(--stealth-glow) 0.74turn,
+    var(--avatar-stealth-hi) 0.8turn, transparent 0.93turn);
+  filter: blur(2.5px);
+  animation: stealth-spin 2.6s linear infinite;
+}
+.toggle.stealth.on {
+  background: linear-gradient(100deg, var(--avatar-stealth) 30%, var(--avatar-stealth-hi) 50%, var(--avatar-stealth) 70%);
+  background-size: 280% 100%;
+  animation: stealth-breathe-on 3.6s ease-in-out infinite, stealth-sheen 3.6s ease-in-out infinite;
+}
+.toggle.stealth.on::before {
+  box-shadow: 0 0 6px 1px var(--stealth-glow-soft);
+}
+.toggle.stealth.on::after {
+  animation-duration: 5.5s;
+}
+@keyframes stealth-spin {
+  to {
+    --stealth-spin: 360deg;
+  }
+}
+@keyframes stealth-breathe {
+  0%, 100% { box-shadow: 0 0 0 1px var(--stealth-line), 0 0 5px 0 var(--stealth-glow-soft); }
+  50% { box-shadow: 0 0 0 1px var(--stealth-glow), 0 0 14px 2px var(--stealth-glow-soft); }
+}
+@keyframes stealth-breathe-on {
+  0%, 100% { box-shadow: 0 0 0 1px var(--stealth-glow), 0 0 10px 1px var(--stealth-glow-soft); }
+  50% { box-shadow: 0 0 0 1px var(--stealth-glow), 0 0 20px 4px var(--stealth-glow-soft); }
+}
+@keyframes stealth-sheen {
+  0% { background-position: 100% 0; }
+  60%, 100% { background-position: 0 0; }
+}
+.reduced-motion .toggle.stealth,
+.reduced-motion .toggle.stealth.on {
+  animation: none;
+  box-shadow: 0 0 0 1px var(--stealth-glow), 0 0 12px 2px var(--stealth-glow-soft);
+}
+.reduced-motion .toggle.stealth.on {
+  background: var(--avatar-stealth);
+}
+.reduced-motion .toggle.stealth::after {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle.stealth,
+  .toggle.stealth.on,
+  .toggle.stealth::after {
+    animation: none;
+  }
+}
+.stealth-honest {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--secondary);
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--soft);
+}
+.stealth-halves {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.stealth-halves div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+}
+.stealth-halves dt {
+  font-size: 11px;
+  font-weight: 600;
+}
+.stealth-halves dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--muted);
+}

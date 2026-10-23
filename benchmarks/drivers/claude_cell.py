@@ -38,7 +38,7 @@ from pathlib import Path
 
 from ..corpus_24a.graders import Output
 from . import workspace as ws
-from .codex_cell import KILL_GRACE, asks_question
+from .codex_cell import KILL_GRACE, asks_question, last_turn_changed, signal_group
 
 EFFORT = 'medium'
 REQUIRED_FLAGS = ('--print', '--output-format', '--model', '--permission-mode', '--resume', '--strict-mcp-config',
@@ -361,12 +361,12 @@ class Process:
 
     def stop(self):
         if self.child.poll() is None:
-            os.killpg(self.child.pid, signal.SIGTERM)
+            signal_group(self.child.pid, signal.SIGTERM)  # Phase 32 (H3): EPERM on a zombie group
             try:
                 self.child.wait(KILL_GRACE)
             except subprocess.TimeoutExpired:
                 if self.child.poll() is None:
-                    os.killpg(self.child.pid, signal.SIGKILL)
+                    signal_group(self.child.pid, signal.SIGKILL)
                 self.child.wait()
 
 
@@ -384,7 +384,7 @@ def run_cell(task, planned, root, binary, config_dir, model, *, wall=900, spawn=
     texts = [(prompt_for(task, planned['phrasing']), None)] + [(turn.text, turn) for turn in task.turns]
     for prompt, turn in texts:
         if turn is not None and turn.if_asked:
-            if not asks_question(replies[-1] if replies else None):
+            if not asks_question(replies[-1] if replies else None, changed=last_turn_changed(before, turn_files)):
                 replies.append(None)
                 turn_files.append(None)
                 continue

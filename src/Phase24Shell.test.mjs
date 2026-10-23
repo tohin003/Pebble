@@ -266,15 +266,16 @@ test("switches expose role=switch with aria-checked, and the theme aria-pressed 
   await settle();
   const switches = roleOf(view.root, "switch");
   assert.deepEqual(switches.map((el) => [squash(textOf(el)).split(" ").slice(0, 2).join(" "), el.props["aria-checked"]]),
-    [["Reduce motion", "false"], ["Follow the", "true"], ["Expressive reactions", "true"], ["UI design", "true"]]);
-  assert.deepEqual(switches.map((el) => el.props.type), ["button", "button", "button", "button"]);
+    [["Stealth Lockdown", "false"], ["Reduce motion", "false"], ["Follow the", "true"], ["Expressive reactions", "true"], ["UI design", "true"]]);
+  // Phase 33 (1.1.0): Stealth Lockdown's switch leads, in its own Privacy and focus section.
+  assert.deepEqual(switches.map((el) => el.props.type), ["button", "button", "button", "button", "button"]);
   for (const el of switches) assert.ok(el.children.some((child) => child.props?.class?.toggle !== undefined || child.props?.["aria-hidden"] === "true"), "the drawn toggle is hidden");
   const theme = ["Light", "Dark", "System"].map((name) => button(view.root, name));
   assert.deepEqual(theme.map((el) => el.props["aria-pressed"]), ["false", "false", "true"]);
-  switches[0].props.onClick();
+  switches[1].props.onClick();
   theme[1].props.onClick();
   await settle();
-  assert.equal(roleOf(view.root, "switch")[0].props["aria-checked"], "true", "Reduce motion now reads on");
+  assert.equal(roleOf(view.root, "switch")[1].props["aria-checked"], "true", "Reduce motion now reads on");
   assert.deepEqual(["Light", "Dark", "System"].map((name) => button(view.root, name).props["aria-pressed"]), ["false", "true", "false"]);
   assert.deepEqual(called("setting").map((p) => p.key), ["reduced_motion", "theme"]);
   // Names and landmarks (V1-161): the sidebar toggle says whether it is open; the conversation list is a list.
@@ -784,3 +785,31 @@ test("the pet's shell refuses a wider permission (V1-055, parent main.rs patch)"
   assert.ok(rpc.indexOf("pet_widens(") < rpc.indexOf("backend.call(&method"), "checked before the setting is sent");
 });
 test("no window error", () => assert.deepEqual(errors, []));
+
+// ---------- Phase 33 (1.1.0, D45-D47, D57): Stealth Lockdown's switch ----------
+test("Phase 33: the Stealth Lockdown switch saves the setting, then asks the shell, and says plainly what it hides", async () => {
+  host();
+  registry["Avatar.vue"] = []; // the stubbed avatars this mount creates (their live attrs)
+  const view = mount(App);
+  await settle();
+  button(view.root, "Settings").props.onClick();
+  await settle();
+  const sw = roleOf(view.root, "switch")[0];
+  assert.ok(squash(textOf(sw)).startsWith("Stealth Lockdown"));
+  assert.equal(sw.props["aria-checked"], "false");
+  assert.equal(sw.props["aria-describedby"], "stealth-desc stealth-honest");
+  const honest = all(view.root).find((el) => el.props.id === "stealth-honest");
+  assert.equal(squash(textOf(honest)), "Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and interviews that forbid assistants still forbid it.");
+  const words = squash(textOf(view.root)).toLowerCase();
+  for (const word of ["undetectable", "proctor", "invisible to"]) assert.ok(!words.includes(word), word);
+  invokes.length = 0;
+  sw.props.onClick();
+  await settle();
+  assert.deepEqual(called("setting").filter((p) => p.key === "stealth"), [{ key: "stealth", value: true }]);
+  assert.deepEqual(invokes.filter(([command]) => command === "stealth_set"), [["stealth_set", { enabled: true }]]);
+  assert.equal(roleOf(view.root, "switch")[0].props["aria-checked"], "true");
+  // The boot screen's avatar ("Getting your space ready") unmounted before the click; every avatar on screen now wears it.
+  const avatars = registry["Avatar.vue"].filter((attrs) => attrs.state !== "loading");
+  assert.ok(avatars.length >= 3 && avatars.every((attrs) => attrs.stealth === true), "every avatar wears the Veil");
+  view.app.unmount();
+});

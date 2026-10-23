@@ -138,7 +138,9 @@ def test_temporal_quote_attributed_expires_and_never_becomes_verified_truth(app)
     assert not app.store.query('SELECT 1 FROM memory_search WHERE id=?', (record['id'],))
 
 
-@pytest.mark.parametrize('value', [True, float('inf'), float('nan'), time.time()-1, time.time()+8*86400])
+# Phase 32: fixed IDs, because the time-based values differ per process and parallel workers must collect the same IDs.
+@pytest.mark.parametrize('value', [True, float('inf'), float('nan'), time.time()-1, time.time()+8*86400],
+                         ids=['true', 'inf', 'nan', 'past', 'beyond-limit'])
 def test_invalid_ttl_cannot_queue(app, value):
     _, rid = run(app)
     with pytest.raises(PolicyError, match='seven days'):

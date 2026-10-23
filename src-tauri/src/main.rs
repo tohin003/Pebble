@@ -134,9 +134,21 @@ fn compact(window:tauri::WebviewWindow, enabled:bool) -> Result<(),String> {
 }
 
 fn reveal(app:&tauri::AppHandle) {
+    // Phase 33: under Stealth Lockdown the workspace stays out of the Dock and ⌘Tab and does not take focus.
     #[cfg(target_os="macos")]
-    let _=app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    if let Some(window) = app.get_webview_window("main") { let _=window.show(); let _=window.unminimize(); let _=window.set_focus(); }
+    if !stealth_on() { let _=app.set_activation_policy(tauri::ActivationPolicy::Regular); }
+    if let Some(window) = app.get_webview_window("main") { let _=window.show(); let _=window.unminimize(); focus(&window); }
+}
+
+/// set_focus activates Pebble; under Stealth Lockdown the window is only brought forward and made key, which a
+/// non-activating panel takes without activating the app.
+fn focus(window:&tauri::WebviewWindow) {
+    #[cfg(target_os="macos")]
+    if stealth_on() {
+        if let Ok(ns)=window.ns_window() { stealth_mac::front_without_activating(ns as *mut objc2::runtime::AnyObject); }
+        return;
+    }
+    let _=window.set_focus();
 }
 
 #[tauri::command]
@@ -217,12 +229,182 @@ fn hide_dock_in_fullscreen() -> bool {
     true
 }
 
+// Phase 33 (1.1.0; D45-D47, D57): Stealth Lockdown. One switch turns on both halves, for privacy and so Pebble never
+// interrupts the app you are in:
+//   - Stealth: every Pebble window is left out of screen capture and screen sharing (NSWindowSharingNone), the
+//     workspace drops its shadow, Pebble stays out of the Dock and ⌘Tab (Accessory) and its windows leave Mission
+//     Control (transient). ⌃⌥⌘H hides Pebble at once; the menu-bar icon brings it back.
+//   - Lockdown: Pebble never takes keyboard focus from the app in front. Its windows become non-activating panels, so
+//     typing reaches Pebble while the other app stays the active one, and nothing calls set_focus (which activates).
+// Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and
+// interviews that forbid assistants still forbid it.
+static STEALTH: AtomicBool = AtomicBool::new(false);
+
+fn stealth_on() -> bool { STEALTH.load(Ordering::SeqCst) }
+
+#[cfg(target_os="macos")]
+mod stealth_mac {
+    use objc2::{ffi, msg_send, runtime::{AnyClass, AnyObject, Bool}, sel};
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    const NONACTIVATING_PANEL: usize = 1 << 7; // NSWindowStyleMaskNonactivatingPanel: honoured only by an NSPanel
+    const MANAGED: usize = 1 << 2; // NSWindowCollectionBehaviorManaged: shown in Mission Control
+    const TRANSIENT: usize = 1 << 3; // NSWindowCollectionBehaviorTransient: left out of Mission Control
+    static BEHAVIOR: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
+
+    /// NSPanel carrying TaoWindow's own ivar and methods (tao 0.37.1: `focusable`, canBecomeMainWindow,
+    /// canBecomeKeyWindow, sendEvent:), so a swapped window keeps tao's behaviour. None when the runtime layout does
+    /// not allow a safe swap (NSPanel instances larger than NSWindow's, or the ivar at another offset); lockdown then
+    /// keeps windows as they are and only never calls set_focus.
+    fn panel_class() -> Option<&'static AnyClass> {
+        static CLASS: OnceLock<Option<usize>> = OnceLock::new();
+        let made = *CLASS.get_or_init(|| unsafe {
+            let tao = AnyClass::get(c"TaoWindow")?;
+            let panel = AnyClass::get(c"NSPanel")?;
+            let window = AnyClass::get(c"NSWindow")?;
+            if ffi::class_getInstanceSize(panel) != ffi::class_getInstanceSize(window) { return None; }
+            let cls = ffi::objc_allocateClassPair(panel, c"PebbleStealthPanel".as_ptr(), 0);
+            if cls.is_null() { return None; }
+            if !ffi::class_addIvar(cls, c"focusable".as_ptr(), 1, 0, c"c".as_ptr()).as_bool() { return None; }
+            for name in [sel!(canBecomeMainWindow), sel!(canBecomeKeyWindow), sel!(sendEvent:)] {
+                let method = ffi::class_getInstanceMethod(tao, name);
+                let imp = ffi::method_getImplementation(method)?;
+                if !ffi::class_addMethod(cls, name, imp, ffi::method_getTypeEncoding(method)).as_bool() { return None; }
+            }
+            ffi::objc_registerClassPair(cls);
+            let offset = |c: *const AnyClass| ffi::ivar_getOffset(ffi::class_getInstanceVariable(c, c"focusable".as_ptr()));
+            if offset(cls) != offset(tao) || ffi::class_getInstanceSize(cls) > ffi::class_getInstanceSize(tao) { return None; }
+            Some(cls as usize)
+        });
+        made.map(|ptr| unsafe { &*(ptr as *const AnyClass) })
+    }
+
+    /// Lockdown for one window: a non-activating panel while on, tao's own window class again when off. Returns
+    /// whether the window is a panel now.
+    pub fn set_panel(ns: *mut AnyObject, on: bool) -> bool {
+        let (Some(tao), Some(panel)) = (AnyClass::get(c"TaoWindow"), panel_class()) else { return false };
+        unsafe {
+            let class = ffi::object_getClass(ns);
+            let mask: usize = msg_send![ns, styleMask];
+            if on && class == tao as *const AnyClass {
+                ffi::object_setClass(ns, panel);
+                let _: () = msg_send![ns, setStyleMask: mask | NONACTIVATING_PANEL];
+                let _: () = msg_send![ns, setBecomesKeyOnlyIfNeeded: Bool::NO];
+            } else if !on && class == panel as *const AnyClass {
+                let _: () = msg_send![ns, setStyleMask: mask & !NONACTIVATING_PANEL];
+                ffi::object_setClass(ns, tao);
+            }
+            ffi::object_getClass(ns) == panel as *const AnyClass
+        }
+    }
+
+    /// Mission Control: transient while on; the window's own behaviour restored when off.
+    pub fn set_mission_control(label: &str, ns: *mut AnyObject, on: bool) {
+        let mut saved = BEHAVIOR.lock().unwrap();
+        let saved = saved.get_or_insert_with(HashMap::new);
+        unsafe {
+            let current: usize = msg_send![ns, collectionBehavior];
+            if on {
+                saved.entry(label.to_string()).or_insert(current);
+                let _: () = msg_send![ns, setCollectionBehavior: (current & !MANAGED) | TRANSIENT];
+            } else if let Some(original) = saved.remove(label) {
+                let _: () = msg_send![ns, setCollectionBehavior: original];
+            }
+        }
+    }
+
+    /// Every window the app owns, including AppKit's and plugins' own hidden ones (a probe found an unnamed 500 pt one
+    /// still shareable), so no Pebble window is left capturable; the named windows also get Tauri's own call.
+    pub fn set_sharing_all(on: bool) {
+        unsafe {
+            let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+            let windows: *mut AnyObject = msg_send![app, windows];
+            let count: usize = msg_send![windows, count];
+            for index in 0..count {
+                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+                let _: () = msg_send![window, setSharingType: if on { 0usize } else { 1usize }]; // None, ReadOnly
+            }
+        }
+    }
+
+    /// Bring a window forward and make it key without activating Pebble (a panel becomes key while another app stays
+    /// active); set_focus would activate the app.
+    pub fn front_without_activating(ns: *mut AnyObject) {
+        unsafe { let _: () = msg_send![ns, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()]; }
+    }
+}
+
+/// Apply or lift Stealth Lockdown on every window and the menu-bar icon. Runs on AppKit's main thread.
+fn apply_stealth(app:&tauri::AppHandle, on:bool) {
+    STEALTH.store(on, Ordering::SeqCst);
+    for label in ["pet", "main"] {
+        let Some(window)=app.get_webview_window(label) else { continue };
+        let _=window.set_content_protected(on);
+        if label=="main" {
+            let _=window.set_shadow(!on);
+            if on && window.is_fullscreen().unwrap_or(false) { let _=window.set_fullscreen(false); }
+        }
+        #[cfg(target_os="macos")]
+        if let Ok(ns)=window.ns_window() {
+            let ns=ns as *mut objc2::runtime::AnyObject;
+            stealth_mac::set_mission_control(label, ns, on);
+            let _=stealth_mac::set_panel(ns, on);
+        }
+    }
+    #[cfg(target_os="macos")]
+    {
+        stealth_mac::set_sharing_all(on);
+        let workspace_open=app.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+        let _=app.set_activation_policy(if on || !workspace_open {tauri::ActivationPolicy::Accessory} else {tauri::ActivationPolicy::Regular});
+    }
+    tray_state(app, on);
+}
+
+/// The settings switch (main window only) applies the state the backend now holds.
+#[tauri::command]
+fn stealth_set(window:tauri::WebviewWindow, app:tauri::AppHandle, enabled:bool) -> Result<(),String> {
+    main_only(&window)?;
+    let handle=app.clone();
+    app.run_on_main_thread(move || apply_stealth(&handle, enabled)).map_err(|e|e.to_string())
+}
+
+/// ⌃⌥⌘S and the menu's Stealth Lockdown item: the backend's setting first (every window re-reads it), then the shell.
+fn stealth_toggle(app:&tauri::AppHandle) {
+    let next=!stealth_on();
+    let backend=Arc::clone(&*app.state::<Arc<Backend>>());
+    let handle=app.clone();
+    let _=std::thread::Builder::new().name("pebble-stealth".into()).spawn(move || {
+        if backend.call("setting", json!({"key":"stealth","value":next}), Duration::from_secs(10)).is_ok() {
+            let shown=handle.clone();
+            let _=handle.run_on_main_thread(move || apply_stealth(&shown, next));
+        }
+    });
+}
+
+/// ⌃⌥⌘H and "Hide Pebble now": every Pebble window hidden at once; the menu-bar icon or ⌘⇧Space brings it back.
+fn stealth_panic(app:&tauri::AppHandle) {
+    for label in ["pet", "main"] { if let Some(w)=app.get_webview_window(label) { let _=w.hide(); } }
+}
+
+/// The menu-bar icon: a template glyph (an outline pebble; filled with a ring while on) and the item's check mark.
+fn tray_state(app:&tauri::AppHandle, on:bool) {
+    if let Some(tray)=app.tray_by_id("pebble") {
+        let glyph=if on {include_bytes!("../icons/tray-on.png").as_slice()} else {include_bytes!("../icons/tray-off.png").as_slice()};
+        if let Ok(image)=tauri::image::Image::from_bytes(glyph) { let _=tray.set_icon_with_as_template(Some(image), true); }
+    }
+    if let Some(item)=app.state::<StealthItem>().0.lock().unwrap().as_ref() { let _=item.set_checked(on); }
+}
+struct StealthItem(Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>);
+
 #[tauri::command]
 fn open_workspace(app:tauri::AppHandle, chat_id:Option<String>) -> Result<(),String> {
     reveal(&app);
     if let Some(main)=app.get_webview_window("main") {
         let _=main.set_always_on_top(false); // the floating companion size is always on top; full screen is not
-        if !main.is_fullscreen().unwrap_or(false) { let _=main.set_fullscreen(true); }
+        // Phase 33: under Stealth Lockdown the workspace opens windowed; its own full-screen Space would take over
+        // the screen the person is presenting or sharing.
+        if !stealth_on() && !main.is_fullscreen().unwrap_or(false) { let _=main.set_fullscreen(true); }
     }
     if let Some(id)=chat_id {
         if id.len()!=32 || !id.chars().all(|c|c.is_ascii_hexdigit()) { return Err("Invalid conversation.".into()); }
@@ -684,7 +866,7 @@ fn pet_expand(app:tauri::AppHandle, expanded:bool, sidebar:Option<bool>, status:
     }
     window.set_size(tauri::LogicalSize::new(width,height)).map_err(|e|e.to_string())?;
     window.set_position(tauri::PhysicalPosition::new(x as i32,y as i32)).map_err(|e|e.to_string())?;
-    if expanded { let _=window.set_focus(); }
+    if expanded { focus(&window); }
     Ok(())
 }
 
@@ -759,18 +941,25 @@ fn configure_pet(app:&tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
     let application = tauri::Builder::default()
         .manage(AllowedViews::default())
         .plugin(tauri::plugin::Builder::<tauri::Wry, ()>::new("navigation-guard").on_navigation(|webview,url| {
             host_url(url) || url.as_str()=="about:blank" || webview.app_handle().state::<AllowedViews>().0.lock().unwrap().contains(url.as_str())
         }).build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event| { if event.state==ShortcutState::Pressed { reveal(app); } }).build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event| {
+            if event.state!=ShortcutState::Pressed { return; }
+            // Phase 33: ⌃⌥⌘S toggles Stealth Lockdown, ⌃⌥⌘H hides every Pebble window; ⌘⇧Space opens the workspace.
+            let stealth_keys=Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER;
+            if shortcut.matches(stealth_keys, Code::KeyS) { stealth_toggle(app); }
+            else if shortcut.matches(stealth_keys, Code::KeyH) { stealth_panic(app); }
+            else { reveal(app); }
+        }).build())
         // The app manifest puts custom commands under Tauri's origin-aware ACL,
         // alongside plugin commands. No remote capability grants canvas frames
         // access. Do not register their loopback origin as a local protocol.
-        .invoke_handler(tauri::generate_handler![rpc,compact,open_workspace,pet_expand,pet_gaze,show_pet,login_item_status,login_item_set,notification_authorization,service_restart,export_choose_destination,telemetry_choose_destination])
+        .invoke_handler(tauri::generate_handler![rpc,compact,open_workspace,pet_expand,pet_gaze,show_pet,stealth_set,login_item_status,login_item_set,notification_authorization,service_restart,export_choose_destination,telemetry_choose_destination])
         .setup(|app| {
             let backend = Arc::new(Backend { input:Mutex::new(None), child:Mutex::new(None), pending:Arc::new(Mutex::new(HashMap::new())),
                 sequence:AtomicU64::new(1), restarts:Mutex::new((0, None)), outbox:Mutex::new(None) });
@@ -784,11 +973,21 @@ fn main() {
                 observe_lifecycle(Arc::clone(&backend));
             }
             let _ = app.global_shortcut().register("CommandOrControl+Shift+Space");
-            use tauri::menu::{Menu,MenuItem};
+            let _ = app.global_shortcut().register("Control+Alt+Command+S");
+            let _ = app.global_shortcut().register("Control+Alt+Command+H");
+            use tauri::menu::{CheckMenuItem,Menu,MenuItem,PredefinedMenuItem};
+            // Phase 33: the menu-bar icon is a template glyph (it changes shape while Stealth Lockdown is on) and its
+            // menu carries the switch and Hide Pebble now; with Pebble out of the Dock and ⌘Tab it is the way back in.
+            let stealth=CheckMenuItem::with_id(app,"stealth","Stealth Lockdown",true,false,Some("Control+Alt+Command+S"))?;
+            let hide=MenuItem::with_id(app,"hide","Hide Pebble now",true,Some("Control+Alt+Command+H"))?;
             let show=MenuItem::with_id(app,"show","Open Pebble",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","Quit Pebble",true,None::<&str>)?;
-            let menu=Menu::with_items(app,&[&show,&quit])?;
-            let _tray=tauri::tray::TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Pebble").menu(&menu).on_menu_event(|app,event| match event.id.as_ref() {"show"=>reveal(app),"quit"=>request_quit(app),_=>{}}).build(app)?;
+            let menu=Menu::with_items(app,&[&stealth,&hide,&PredefinedMenuItem::separator(app)?,&show,&quit])?;
+            app.manage(StealthItem(Mutex::new(Some(stealth.clone()))));
+            let glyph=tauri::image::Image::from_bytes(include_bytes!("../icons/tray-off.png"))?;
+            let _tray=tauri::tray::TrayIconBuilder::with_id("pebble").icon(glyph).icon_as_template(true).tooltip("Pebble").menu(&menu).on_menu_event(|app,event| match event.id.as_ref() {
+                "stealth"=>stealth_toggle(app),"hide"=>stealth_panic(app),"show"=>reveal(app),"quit"=>request_quit(app),_=>{}
+            }).build(app)?;
             configure_pet(app.handle())?;
             #[cfg(target_os="macos")]
             let _ = hide_dock_in_fullscreen(); // the windows exist, so tao's delegate class is registered
@@ -799,8 +998,13 @@ fn main() {
             {
                 let (handle, backend) = (app.handle().clone(), Arc::clone(&backend));
                 let _ = std::thread::Builder::new().name("pebble-first-run".into()).spawn(move || {
-                    let configured = backend.call("state", json!({}), Duration::from_secs(60)).ok()
-                        .and_then(|state| state.pointer("/model/configured").and_then(Value::as_bool));
+                    let state = backend.call("state", json!({}), Duration::from_secs(60)).ok();
+                    // Phase 33: Stealth Lockdown survives a restart.
+                    if state.as_ref().and_then(|s| s.pointer("/settings/stealth").and_then(Value::as_bool)) == Some(true) {
+                        let shown = handle.clone();
+                        let _ = handle.run_on_main_thread(move || apply_stealth(&shown, true));
+                    }
+                    let configured = state.as_ref().and_then(|state| state.pointer("/model/configured").and_then(Value::as_bool));
                     if configured != Some(true) {
                         let shown = handle.clone();
                         let _ = handle.run_on_main_thread(move || reveal(&shown));

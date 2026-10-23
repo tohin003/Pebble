@@ -76,6 +76,7 @@ const CodingWorkflows = defineAsyncComponent(() => import("./components/CodingWo
 const ScreenSessions = defineAsyncComponent(() => import("./components/ScreenSessions.vue"));
 const PebbleBrowser = defineAsyncComponent(() => import("./components/PebbleBrowser.vue"));
 import { invoke } from "@tauri-apps/api/core";
+import { STEALTH_HONEST, STEALTH_OFF_TEXT, STEALTH_ON_TEXT } from "./stealthVeil";
 import { listen } from "@tauri-apps/api/event";
 import {
   attachBytes,
@@ -106,6 +107,7 @@ const state = ref<State>({
   settings: {
     theme: "system",
     reduced_motion: false,
+    stealth: false,
     memory_enabled: true,
     permissions: {
       mode: "ask",
@@ -1314,6 +1316,16 @@ async function theme(value: string) {
     await rpc("setting", { key: "theme", value });
   });
 }
+// Phase 33 (1.1.0, D45-D47): Stealth Lockdown. The host keeps the setting and tells every window (the avatars wear the
+// Veil); the shell hides Pebble from capture, the Dock, ⌘Tab and Mission Control and stops it taking focus.
+async function stealth() {
+  const enabled = !state.value.settings.stealth;
+  state.value.settings.stealth = enabled;
+  await safe(async () => {
+    await rpc("setting", { key: "stealth", value: enabled });
+    if (native) await invoke("stealth_set", { enabled });
+  });
+}
 async function motion() {
   state.value.settings.reduced_motion = !state.value.settings.reduced_motion;
   await safe(async () => {
@@ -1395,13 +1407,13 @@ function chooseCommand(text: string) {
 // Phase 24 (V1-135): "What's new" in About. An excerpt of the release's CHANGELOG.md entry (t24-publish keeps the
 // two in step); plain text, bundled with the build, no update check (that is after 1.0).
 const WHATS_NEW = Object.freeze([
-  "Delete moves a conversation to Recently deleted for 30 days, with Undo; Delete now is in Settings → Data & storage.",
-  "Paste a screenshot or a file into the message box to attach it.",
-  "A conversation that ran on this Mac doesn't send its earlier messages to a cloud model unless you review and include them.",
-  "Say “forget …” to see the saved memories it matches and forget them one by one.",
-  "⌘+ and ⌘− change the text size; secondary text is easier to read in both themes.",
-  "Approval cards say first what changes and whether it can be undone; Don't allow replaces Dismiss.",
-  "Search and rename conversations in the sidebar.",
+  "Stealth Lockdown keeps Pebble out of screen shares and recordings and never takes focus from the app you're in.",
+  "While it's on, the pebble wears the Veil: a dusk-blue glass with a light rim, so you can always tell.",
+  "⌃⌥⌘H hides every Pebble window at once; the menu-bar icon brings Pebble back.",
+  "Turn it on in Settings → Privacy and focus, from the menu-bar icon, or with ⌃⌥⌘S.",
+  "A task that stopped right after its answer no longer repeats the answer when you resume it.",
+  "A plugin tool that could not be checked in time now says so, instead of calling your input invalid.",
+  "Tests run in parallel, so each release is proved in about a third of the time.",
 ]);
 // Phase 18 E06: the native Save dialog returns a single-use token; this window never sees or sends a path.
 async function chooseTelemetryDestination(): Promise<string | null> {
@@ -1690,6 +1702,7 @@ onUnmounted(() => {
           :state="avatarState"
           :size="30"
           :reduced="state.settings.reduced_motion"
+          :stealth="!!state.settings.stealth"
           :rank="AVATAR_RANK.brand"
           :gaze="companionSettings.pointer"
         /><span>Pebble<span class="brand-dot">.</span></span>
@@ -1861,7 +1874,7 @@ onUnmounted(() => {
         <main class="conversation" aria-label="Conversation">
           <div ref="scroll" class="conversation-scroll" :inert="sheetOpen">
             <div v-if="booting" class="booting">
-              <Avatar state="loading" :size="76" :rank="AVATAR_RANK.booting" />
+              <Avatar state="loading" :size="76" :rank="AVATAR_RANK.booting" :stealth="!!state.settings.stealth" />
               <p>Getting your space ready…</p>
             </div>
             <div v-else-if="!chat?.messages.length" class="welcome">
@@ -1870,6 +1883,7 @@ onUnmounted(() => {
                   :state="avatarState"
                   :size="compact ? 92 : 130"
                   :reduced="state.settings.reduced_motion"
+                  :stealth="!!state.settings.stealth"
                   :rank="AVATAR_RANK.welcome"
                   :gaze="companionSettings.pointer"
                 />
@@ -1976,6 +1990,7 @@ onUnmounted(() => {
                       "
                       :size="29"
                       :reduced="state.settings.reduced_motion"
+                      :stealth="!!state.settings.stealth"
                       :animate="isWorking && message === chat?.messages.at(-1)"
                       :rank="AVATAR_RANK.message"
                       :gaze="companionSettings.pointer"
@@ -2122,6 +2137,7 @@ onUnmounted(() => {
                       :state="avatarState"
                       :size="24"
                       :reduced="state.settings.reduced_motion"
+                      :stealth="!!state.settings.stealth"
                       :rank="AVATAR_RANK.status"
                       :gaze="companionSettings.pointer"
                   /></template>
@@ -2777,6 +2793,34 @@ onUnmounted(() => {
             <div class="section-label">USAGE TELEMETRY</div>
             <TelemetrySettings :choose-destination="chooseTelemetryDestination" />
           </div>
+          <!-- Phase 33 (1.1.0, D45-D47, D57): Stealth Lockdown, one switch for both halves, with the honest note. -->
+          <div class="settings-section">
+            <div class="section-label">PRIVACY AND FOCUS</div>
+            <div class="stealth-card">
+              <button
+                type="button"
+                class="setting-row"
+                role="switch"
+                :aria-checked="state.settings.stealth ? 'true' : 'false'"
+                aria-describedby="stealth-desc stealth-honest"
+                @click="stealth"
+              >
+                <div>
+                  <strong>Stealth Lockdown</strong
+                  ><small id="stealth-desc">Keeps Pebble out of screen shares and recordings, and never takes focus from the app you're in.</small>
+                </div>
+                <span class="toggle stealth" aria-hidden="true" :class="{ on: state.settings.stealth }" />
+              </button>
+              <p class="stealth-state" :class="{ on: state.settings.stealth }" role="status">
+                {{ state.settings.stealth ? STEALTH_ON_TEXT : STEALTH_OFF_TEXT }}
+              </p>
+            </div>
+            <p id="stealth-honest" class="stealth-honest">{{ STEALTH_HONEST }}</p>
+            <dl class="stealth-halves">
+              <div><dt>Stealth</dt><dd>Hidden from screen capture and screen sharing. No window shadow. Leaves the Dock, ⌘Tab and Mission Control. ⌃⌥⌘H hides Pebble at once; the menu-bar icon brings it back.</dd></div>
+              <div><dt>Lockdown</dt><dd>Pebble never takes keyboard focus from the app in front, so your slides, call or full-screen app keep it.</dd></div>
+            </dl>
+          </div>
           <div class="settings-section">
             <div id="appearance-label" class="section-label">APPEARANCE</div>
             <!-- Phase 24 (V1-041): the theme is a set of pressed buttons; every switch is a role="switch" with
@@ -2897,7 +2941,7 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="about-pebble">
-            <Avatar :size="38" :reduced="true" />
+            <Avatar :size="38" :reduced="true" :stealth="!!state.settings.stealth" />
             <div>
               <strong>Pebble <span v-if="state.version">{{ state.version }}</span></strong
               ><small

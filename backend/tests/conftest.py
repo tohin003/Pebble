@@ -15,6 +15,9 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
+# Phase 32 (T2): --proof-log writes the serial-format log the release finalizers read, with or without xdist.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+pytest_plugins = ('proof_log', 'serial_register')
 
 
 # V1-131 (Phase 24): suite-wide guards. No test reaches the network or the login Keychain unless it arranges that

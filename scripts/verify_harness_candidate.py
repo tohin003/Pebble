@@ -63,12 +63,19 @@ SUITES = {
     'phase29': 'validate_phase29.py',  # the benchmark's Claude Code CLI is pinned; an absent CLI is never an answer (Phase 29)
     'phase30': 'validate_phase30.py',  # 1.0.3 claims only what it does; evaluation never runs the app's identity (Phase 30)
     'phase31': 'validate_phase31.py',  # 1.0.4's full workspace: full screen, no Dock in the way, back to the pebble (Phase 31)
+    'phase32': 'validate_phase32.py',  # faster tests that prove the same; a benchmark harness fair to every product (Phase 32)
+    'phase33': 'validate_phase33.py',  # 1.1.0's Stealth Lockdown: one switch, hidden from capture, never taking focus (Phase 33)
 }
 PHASES = ('phase10', 'phase11', 'phase12', 'phase13', 'phase14', 'phase15', 'phase16', 'phase17', 'phase18', 'phase19',
           'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29',
-          'phase30', 'phase31')
+          'phase30', 'phase31', 'phase32', 'phase33')
 # Historical suites that can no longer pass, kept unchanged as historical evidence, with the phase from
 # which they leave the default campaign and the reason. Each stays runnable with --suite.
+# Phase 32 (T4): suites that measure time or the machine, run alone after the pooled ones under --jobs N.
+# phase18 samples CPU, memory and connections of a live service; phase24 bounds a first request at 1.0 s
+# (Phase 31 trial 1 measured 1.11 s once under load). More join only from a measured flake (serial_register
+# rules apply: a reason each).
+SERIAL_SUITES = frozenset({'phase18', 'phase24'})
 RETIRED = {
     name: ('phase14', 'Its fixture holds a synthetic temporal memory that expired at 2026-10-12 12:48 and that '
                       'Pebble correctly deletes; the grader requires the row forever. Superseded by the '
@@ -122,6 +129,11 @@ def sources():
                   # checked-in copy (backend/tests/fixtures/phase19/) is covered as backend Python.
                   'build/pebble-backend.spec', 'backend/requirements.lock', 'backend/requirements-dev.txt',
                   'rust-toolchain.toml'])
+    # Phase 32: which tests run alone (the serial register) and pytest's own settings decide what a full run executes,
+    # and validate_phase32 reads both; covered wherever they exist, as a clean clone of an older tree has neither.
+    names.update(rel for rel in ('backend/tests/serial_register.json', 'backend/tests/pytest.ini') if (ROOT / rel).is_file())
+    # Phase 33: the menu-bar glyphs the shell compiles in (include_bytes!), which validate_phase33 reads.
+    names.update(rel for rel in ('src-tauri/icons/tray-off.png', 'src-tauri/icons/tray-on.png') if (ROOT / rel).is_file())
     # The private inputs earlier phases' proofs hash: the old absolute-path spec (Phase 10) and the epoch-8 fixture
     # builder whose IDs and rows phase19-upgrade imports and reports (Phase 19). Covered wherever they exist, so the
     # parent's checkout keeps every earlier snapshot and a clean clone, which has no .runtime, still verifies.
@@ -186,9 +198,14 @@ def main():
     parser.add_argument('--snapshot', required=True, type=Path)
     parser.add_argument('--suite', action='append', choices=list(SUITES))
     parser.add_argument('--kind', action='append', choices=['source', 'frozen'])
+    parser.add_argument('--jobs', type=int, default=1, help='Phase 32: suites run this many at a time (1: in order)')
+    parser.add_argument('--serial-suite', action='append', choices=list(SUITES),
+                        help='Phase 32: also run this suite alone, after the pooled ones')
     parser.add_argument('--phase', choices=list(PHASES), default='phase10',
                         help='Choose a fresh proof namespace; existing reports are never overwritten.')
     args = parser.parse_args()
+    if not 1 <= args.jobs <= 8:
+        parser.error('--jobs must be 1-8')
     candidate = args.candidate.resolve(strict=True)
     snapshot = json.loads(args.snapshot.read_text())
     if sources() != snapshot:
@@ -206,51 +223,74 @@ def main():
         newer = next((phase for phase in later if name.startswith(phase)), None)
         if newer:
             raise RuntimeError('Phase ' + newer[5:] + ' proof requires its own namespace.')
-    for suite in suites:
+    jobs = [(suite, kind) for suite in suites for kind in (args.kind or ['source', 'frozen'])]
+
+    def run_job(suite, kind):
         validator = ROOT / 'scripts' / SUITES[suite]
-        for kind in args.kind or ['source', 'frozen']:
-            name = 'harness-' + args.phase + '-' + suite + '-' + kind + '.json'
-            raw = raw_root / name
-            log = log_root / (name[:-5] + '.log')
-            output = ROOT / 'reports' / name
-            for path in (raw, log, output):
-                if path.is_symlink():
-                    raise RuntimeError('Refused symbolic verification output.')
-            if output.exists():
-                raise RuntimeError('Verification output already exists; preserve it or select a new phase.')
-            if sources() != snapshot or candidate_manifest(candidate) != bundle:
-                raise RuntimeError('Verification inputs changed before a service invocation.')
-            command = [sys.executable, str(validator), '--report', str(raw)]
-            if kind == 'frozen':
-                command += ['--backend', str(candidate)]
-            exit_code = run_validator(command, log)
-            if exit_code:
-                raise RuntimeError('Validator failed: ' + suite + '/' + kind + '; see owned log ' + str(log))
-            if sources() != snapshot or candidate_manifest(candidate) != bundle:
-                raise RuntimeError('Verification inputs changed during a service invocation.')
-            from pebble.release_readiness import parse_json
-            report = parse_json(raw.read_bytes(), 'raw_service_report')
-            checks = report.get('checks')
-            if (report.get('passed') is not True or report.get('kind') != kind or
-                    not isinstance(checks, list) or not checks or
-                    not all(isinstance(c, str) and c.strip() for c in checks) or len(set(checks)) != len(checks)):
-                raise RuntimeError('Validator evidence is incomplete: ' + suite + '/' + kind)
-            if kind == 'frozen' and report.get('backend_sha256') != executable_sha:
-                raise RuntimeError('Validator ran a different frozen executable.')
-            if any(snapshot.get(p) != digest for p, digest in report.get('source_sha256', {}).items()):
-                raise RuntimeError('Validator reported stale source.')
-            report['source_sha256'] = snapshot
-            report['parent_invocation'] = {
-                'schema': 1, 'suite': suite, 'kind': kind,
-                'driver_sha256': sha(Path(__file__)), 'validator_sha256': sha(validator),
-                'raw_report_sha256': sha(raw), 'snapshot_sha256': sha(args.snapshot),
-                'candidate_bundle_sha256': bundle['bundle_sha256'], 'exit_code': exit_code,
-                'inputs_unchanged_before_and_after': True,
-                'completed_at': datetime.now(timezone.utc).isoformat(),
-            }
-            output.write_text(json.dumps(report, indent=2) + '\n')
-            produced.append({'suite': suite, 'kind': kind, 'checks': len(checks), 'report': name, 'sha256': sha(output)})
-            print(json.dumps(produced[-1]), flush=True)
+        name = 'harness-' + args.phase + '-' + suite + '-' + kind + '.json'
+        raw = raw_root / name
+        log = log_root / (name[:-5] + '.log')
+        output = ROOT / 'reports' / name
+        for path in (raw, log, output):
+            if path.is_symlink():
+                raise RuntimeError('Refused symbolic verification output.')
+        if output.exists():
+            raise RuntimeError('Verification output already exists; preserve it or select a new phase.')
+        if sources() != snapshot or candidate_manifest(candidate) != bundle:
+            raise RuntimeError('Verification inputs changed before a service invocation.')
+        command = [sys.executable, str(validator), '--report', str(raw)]
+        if kind == 'frozen':
+            command += ['--backend', str(candidate)]
+        exit_code = run_validator(command, log)
+        if exit_code:
+            raise RuntimeError('Validator failed: ' + suite + '/' + kind + '; see owned log ' + str(log))
+        if sources() != snapshot or candidate_manifest(candidate) != bundle:
+            raise RuntimeError('Verification inputs changed during a service invocation.')
+        from pebble.release_readiness import parse_json
+        report = parse_json(raw.read_bytes(), 'raw_service_report')
+        checks = report.get('checks')
+        if (report.get('passed') is not True or report.get('kind') != kind or
+                not isinstance(checks, list) or not checks or
+                not all(isinstance(c, str) and c.strip() for c in checks) or len(set(checks)) != len(checks)):
+            raise RuntimeError('Validator evidence is incomplete: ' + suite + '/' + kind)
+        if kind == 'frozen' and report.get('backend_sha256') != executable_sha:
+            raise RuntimeError('Validator ran a different frozen executable.')
+        if any(snapshot.get(p) != digest for p, digest in report.get('source_sha256', {}).items()):
+            raise RuntimeError('Validator reported stale source.')
+        report['source_sha256'] = snapshot
+        report['parent_invocation'] = {
+            'schema': 1, 'suite': suite, 'kind': kind,
+            'driver_sha256': sha(Path(__file__)), 'validator_sha256': sha(validator),
+            'raw_report_sha256': sha(raw), 'snapshot_sha256': sha(args.snapshot),
+            'candidate_bundle_sha256': bundle['bundle_sha256'], 'exit_code': exit_code,
+            'inputs_unchanged_before_and_after': True,
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+        }
+        output.write_text(json.dumps(report, indent=2) + '\n')
+        done = {'suite': suite, 'kind': kind, 'checks': len(checks), 'report': name, 'sha256': sha(output)}
+        print(json.dumps(done), flush=True)
+        return done
+
+    # Phase 32 (T4): with --jobs N the suites outside SERIAL_SUITES run N at a time; the suites in it (and any named
+    # with --serial-suite) run afterwards, one at a time, with nothing beside them. Each job keeps every check above.
+    # The first failure stops new jobs; the ones already running finish, and the failure is raised.
+    serial = SERIAL_SUITES | set(args.serial_suite or ())
+    pooled = [job for job in jobs if job[0] not in serial] if args.jobs > 1 else []
+    alone = [job for job in jobs if job not in pooled]
+    if pooled:
+        from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            futures = [pool.submit(run_job, *job) for job in pooled]
+            finished, pending = wait(futures, return_when=FIRST_EXCEPTION)
+            failed = [f for f in finished if f.exception()]
+            if failed:
+                for future in pending:
+                    future.cancel()
+                wait(pending)
+                raise failed[0].exception()
+            produced.extend(f.result() for f in futures)
+    for job in alone:
+        produced.append(run_job(*job))
     print(json.dumps({'reports': len(produced), 'checks': sum(p['checks'] for p in produced)}), flush=True)
 
 

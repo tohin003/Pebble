@@ -68,6 +68,9 @@ APPROVAL_NOTE = ('Staged, not applied: the person decides after this turn and yo
 #   the next turn-end, checked on its own, is the reply; when repairs run out it is presented with the host's notice.
 # A held or withdrawn turn stays in the private checkpoint (the model's context and the run's audit records); it is
 # never sent as tokens or stored as the chat's message. A 4K window keeps the Phase 19 path and prompts.
+# Phase 32: the states a resume after a stop or restart starts from (app.run_resume passes resumed_from); a resume after
+# an approval or an answer (waiting_*) never takes the finished-reply path.
+RESUMED_AFTER_STOP = frozenset({'interrupted', 'paused', 'stopped'})
 HELD_RESUME = (' Your previous message was not shown to the person. The outcome is now known: write your complete '
                'reply; it is the answer they see.')
 WITHHELD_NOTE = ('\nYour last message was not shown to the person. When you have fixed this, write your complete reply; '
@@ -749,6 +752,7 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
     outcome = "completed"
     failure = None
     gate_checked = False
+    resumed_finished = False  # Phase 32: set when a resume after a stop finds the reply already finished
     waiting_model = False  # F21: a model request is in flight (TIME_LIMIT names it)
     usage = {
         "input_tokens": 0,
@@ -1336,8 +1340,18 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
                 # Phase 19 H1c: one reply spans the approval; the person already sees its first part (pilot 3: the final
                 # line was written before the approval and again after it).
                 resume_line += ' The person already sees your reply so far; continue it without repeating it.'
-            messages.append({'role': 'user', 'content': resume_line})
-            progress('Resumed committed context', 'done')
+            last = messages[-1] if messages else {}
+            if (resume.get('resumed_from') in RESUMED_AFTER_STOP and not unshown and answer.strip()
+                    and last.get('role') == 'assistant' and not last.get('tool_calls')):
+                # Phase 32: the checkpoint ends in a turn-end the person already sees; the run stopped (a restart, a
+                # quit) before it was marked complete. Asking the model to continue repeated the reply (the bench's
+                # recovery drill, under load: "Done. FINAL: done" twice). It finishes through the completion gate
+                # instead, with no new model request. A held reply (H20) and a resume after a decision still continue.
+                resumed_finished = True
+                progress('Resumed a finished reply', 'done')
+            else:
+                messages.append({'role': 'user', 'content': resume_line})
+                progress('Resumed committed context', 'done')
             if budget <= 4096:
                 # Reconciliation restores full receipts. Keep the same bounded
                 # tree view used on first delivery; native receipts retain the ledger.
@@ -1537,6 +1551,8 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
             pass  # display only, like every activity record
         publish()
         for turn in range(run['steps'], limits.max_steps):
+            if resumed_finished:
+                break  # Phase 32: nothing left for the model; the completion gate below settles the run
             if app.cancel.is_set():
                 raise InterruptedError("Stopped by you.")
             if time.monotonic() >= deadline or ledger is not None and ledger.remaining(run_id) <= 0:
