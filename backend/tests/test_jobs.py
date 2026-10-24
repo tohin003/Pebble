@@ -61,7 +61,16 @@ def utc(*parts):
 
 def harness(home, resources, now=T0):
     events = []
-    app = App(home, resources, lambda *args: events.append(args))
+    # Phase 34 (trial 2): the App's own scheduler never starts here. Started, its thread ticked on the real clock before
+    # close() and, after a restart, fired the long-overdue slot of a job these tests created on their own clock (a
+    # second fire in test_claim_without_a_bound_run_needs_review_after_restart under parallel load; reproduced every
+    # time with 0.3 s before close()). These tests drive their own Jobs, whose start() runs the same recovery.
+    real_start = Jobs.start
+    Jobs.start = lambda self, thread=True: None
+    try:
+        app = App(home, resources, lambda *args: events.append(args))
+    finally:
+        Jobs.start = real_start
     wired = getattr(app, 'jobs', None)
     if wired is not None:
         assert wired.close()  # the parent-wired scheduler; these tests drive their own clock

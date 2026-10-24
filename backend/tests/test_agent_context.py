@@ -219,6 +219,8 @@ def exact_schemas(record):
     for spec in record['body']['tools']:
         fn = spec['function']
         expected = copy.deepcopy(SPECS[fn['name']]['parameters'])
+        if fn['name'] == 'RunTests':
+            expected['properties'].pop('check')  # Phase 34 (W1): a check is offered above 8K only (without_check)
         if fn['name'] in AGENT_BRIEF or fn['name'] in SMALL_BRIEF:
             for field in expected.get('properties', {}).values():
                 if isinstance(field, dict):

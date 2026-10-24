@@ -591,6 +591,8 @@ def failure_signatures(receipt, action):
     payload = action.get('payload') if isinstance(action, dict) and isinstance(action.get('payload'), dict) else {}
     if name in ('RunTests', 'RunRecipe') and action and action.get('kind') == 'tests' and action.get('status') == 'applied':
         outcome = payload.get('result') if isinstance(payload.get('result'), dict) else {}
+        if outcome.get('kind') == 'check':
+            return []  # Phase 34 (W1): an ad hoc check's failures are the model's own probe, not the project's tests
         code = outcome.get('exit_code')
         if type(code) is int and code != 0 and outcome.get('cancelled') is not True:
             return [('test_failure', test) for test in failing_tests(outcome.get('output'))]
@@ -622,7 +624,9 @@ def failure_observations(state, receipts, actions, limit=MAX_LESSONS):
         if name == 'RunTests' and action and action.get('kind') == 'tests' and action.get('status') == 'applied':
             outcome = payload.get('result') if isinstance(payload.get('result'), dict) else {}
             code = outcome.get('exit_code')
-            if outcome.get('cancelled') is True or type(code) is int and code != 0:
+            if outcome.get('kind') == 'check':
+                pass  # Phase 34 (W1): an ad hoc check is not a test failure to learn from
+            elif outcome.get('cancelled') is True or type(code) is int and code != 0:
                 names = failing_tests(outcome.get('output'))
                 text = (f'Isolated {target} tests ' + ('were cancelled' if outcome.get('cancelled') is True
                         else f'exited with code {code}')

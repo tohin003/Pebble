@@ -56,9 +56,10 @@ let veilAt = -Infinity,
   veilFrom: Veil = props.stealth ? ON : OFF;
 const veilFrame = shallowRef<Veil>(props.stealth ? ON : OFF);
 const shine = shallowRef<{ x: number; opacity: number } | null>(null);
-function veilAtTime(t: number): Veil {
-  if (still.value || veilAt === -Infinity) return props.stealth ? { ...ON, fade: motionReduced.value } : { ...OFF, fade: motionReduced.value };
-  return veil(props.stealth, t - veilAt, veilFrom, motionReduced.value);
+// `on` is the switch the frame is drawn for: the current one, or (Phase 34) the one just before a flip.
+function veilAtTime(t: number, on = props.stealth): Veil {
+  if (still.value || veilAt === -Infinity) return on ? { ...ON, fade: motionReduced.value } : { ...OFF, fade: motionReduced.value };
+  return veil(on, t - veilAt, veilFrom, motionReduced.value);
 }
 function paintVeil(t: number) {
   veilFrame.value = veilAtTime(t);
@@ -166,9 +167,11 @@ watch(still, () => {
 // The switch changed: start from wherever the Veil is now and keep frames coming until the cast or release ends.
 watch(
   () => props.stealth,
-  (on) => {
+  (on, wasOn) => {
     const t = now();
-    veilFrom = veilAtTime(t);
+    // Phase 34: the frame just before the flip, drawn for the old value. 1.1.0 drew it for the new one, so every cast
+    // started from ON and every release from OFF: the dusk wipe never played (reported from the landing page's build).
+    veilFrom = veilAtTime(t, !!wasOn);
     veilAt = t;
     if (!still.value) holdUntil = Math.max(holdUntil, t + (on ? ACTIVATE : RELEASE) + 0.1);
     paintVeil(t);

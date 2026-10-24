@@ -1730,6 +1730,9 @@ class App:
         execution = self.controller.current()
         if not execution:
             return projection
+        committed = self._committed_compaction(execution, messages, tools, context, reserve, counter, method)
+        if committed is not None:
+            return committed
         packet, budget = self.context_evidence(execution.run_id)
         try:
             compacted = compact_window(messages, projection, self.runs.get(execution.run_id),
@@ -1749,6 +1752,33 @@ class App:
             except Exception as exc:
                 self.runs.note(execution.run_id, 'hook_observer_failed', {'event': 'compaction', 'type': type(exc).__name__})
         execution.projected_messages = projection.messages
+        return projection
+
+    def _committed_compaction(self, execution, messages, tools, context, reserve, counter, method):
+        """Phase 34 (the Phase 33 trial 1 race): a transport retry regenerates from the same pre-compaction messages
+        (recovery.complete_with_retry). Compacting them again would build a new evidence spine with the time left now,
+        so a retry in a later second differed from the committed generation and compact_checkpoint failed the run
+        ("The model checkpoint changed during compaction"). When these messages are exactly the newest compaction's
+        input and the checkpoint is still its output, the retry sends what was committed: the same generation, the
+        same archive, no new spine. Anything else compacts as before."""
+        from .compaction import fingerprint
+        from .context_manifest import ContextBudgetExceeded, assemble_context
+        latest = self.runs.latest_compaction(execution.run_id)
+        if latest is None or fingerprint(messages) != latest[1].get('before_fingerprint'):
+            return None
+        snapshot = self.runs.get(execution.run_id).get('checkpoint') or {}
+        committed = snapshot.get('messages')
+        if not committed or fingerprint(committed) != latest[1].get('after_fingerprint'):
+            return None
+        try:
+            projection = assemble_context(committed, tools, context, reserve, counter=counter, counter_method=method)
+        except ContextBudgetExceeded:
+            return None
+        if projection.manifest['omitted']['messages']:
+            return None  # the committed window no longer fits whole: compact as before
+        execution.compaction_generation = latest[0]
+        execution.projected_messages = projection.messages
+        self.runs.note(execution.run_id, 'compaction_reused', {'generation': latest[0]})
         return projection
 
     def run_context_archive(self, id, run_id, generation):
@@ -3078,6 +3108,14 @@ class App:
             if self.active_run and self.active == cid:
                 self.provenance.observe(self.active_run, self.current_tool_call, ws, data['path'], content)
             data["requires_review"] = hook_review
+            if self.active_run and self.active == cid and policy['mode'] != 'full':
+                # Phase 34 (W1): a test file the request did not ask to change waits for the person, in Auto mode too
+                # (Full access is the person's choice to let every supported action run without review).
+                from .edit_scope import review_reason
+                scope = review_reason(path, self.current_text)
+                if scope:
+                    data['requires_review'] = True
+                    data['scope_review'] = scope
             self.guard.stage(ws.root, self.guard_session(cid), path, content)
             # Replace only this run's earlier draft in this exact project.
             # A same-named foreign/unbound action is not ours to invalidate.
@@ -3099,6 +3137,9 @@ class App:
                         (action["id"],),
                     )
             result = self.propose(cid, "edit", data)
+            if data.get('scope_review') and result.get('status') == 'awaiting_user_approval':
+                from .edit_scope import MODEL_NOTE
+                result['scope_review'] = MODEL_NOTE  # Phase 34 (W1): why it waits, and the way to check instead
             if result.get('status') == 'applied':
                 ws.drafts.pop(path, None)
         elif name in ("RunTests", 'RunRecipe'):
@@ -3109,6 +3150,10 @@ class App:
             mount = self.environments.mount_for(cid, ws, REGISTRY[plan['recipe']].needs)
             if mount is not None:
                 plan = resolve(plan['recipe'], ws, mount=mount)
+            check = None
+            if name == 'RunTests' and args.get('check') is not None:
+                from .testing import check_payload
+                check = check_payload(plan['recipe'], args['check'])  # Phase 34 (W1): the isolated copy only
             try:
                 # Manifests and lockfiles under review (Phase 20 G20-recipes): learning data only. An unbindable
                 # file (a link, or above the 2 MB snapshot limit) leaves the run reviewable but teaches nothing.
@@ -3128,6 +3173,7 @@ class App:
                     'bound_files': bound,
                     'reviewed_files': review_bindings(plan['recipe'], ws),  # X20 F20-03: checked per file before launch
                     "requires_review": hook_review,
+                    **({'check': check} if check is not None else {}),
                 },
             )
         else:
@@ -3397,9 +3443,10 @@ class App:
         # Phase 20 G20-diag: run_tests offers hash-bound diagnostics only inside this capture; the result is unchanged.
         with diagnostics.capture() as captured:
             result = run_tests(action["payload"], self.cancel)
-        self.guard.test_result(
-            action["payload"]["root"], self.guard_session(cid), action["payload"]["recipe"], result
-        )
+        if result.get('kind') != 'check':  # Phase 34 (W1): an ad hoc check is never AgentGuard test evidence
+            self.guard.test_result(
+                action["payload"]["root"], self.guard_session(cid), action["payload"]["recipe"], result
+            )
         diagnostics.commit(self.runs, self.active_run, captured, action['id'])  # one run event; never raises
         return result
 

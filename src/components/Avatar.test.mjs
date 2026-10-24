@@ -452,13 +452,19 @@ eq(avatarMotion("__proto__", 0).cue, "");
   const [svg, other] = view.svgs();
   eq([svg.props["data-stealth"], svg.props["data-animated"], other.props["data-animated"]], ["off", "true", "false"]);
   ok(!veilOf(svg) && !rimOf(svg), "off: no Veil layers at all");
+  const cloak = (el) => all(el).find((n) => n.type === "rect" && n.parent?.type === "clipPath" && String(n.parent.props.id).startsWith("veil-cloak"));
+  // Phase 34: how far down the dusk colour reaches (32 = none, 188 = all); no Veil drawn yet is the plain pebble.
+  const cloakHeight = (el) => cloak(el)?.props.height ?? 32;
   props.stealth = true;
   quiet.stealth = true;
   await settle();
-  await frames(24); // 0.4 s: the cloak is under way
+  await frames(6); // 0.1 s: the squash and blink, before the colour moves
+  ok(cloakHeight(svg) < 60, `Phase 34: the cast starts from the plain pebble (1.1.0 drew it fully cloaked at once): ${cloakHeight(svg)}`);
+  await frames(18); // 0.4 s: the cloak is under way
   const mid = veilOf(svg);
   ok(mid && mid.props["clip-path"] && pingOf(svg), "the cast wipes the dusk colour down and sends one ping");
-  const cloak = (el) => all(el).find((n) => n.type === "rect" && n.parent?.type === "clipPath" && String(n.parent.props.id).startsWith("veil-cloak"));
+  const sweeping = cloakHeight(svg);
+  ok(sweeping > 60 && sweeping < 180, `Phase 34: mid-cast the dusk colour covers part of the pebble: ${sweeping}`);
   ok(veilOf(other) && !pingOf(other) && rimOf(other).props.opacity > 0.9 && cloak(other).props.height >= 188,
     "an avatar that does not animate shows the end state at once: fully cloaked, rim on, no cast");
   await frames(60); // past 1.25 s
@@ -470,7 +476,10 @@ eq(avatarMotion("__proto__", 0).cue, "");
   ok(veilOf(svg) && rimOf(svg).props.opacity > 0.9, "a held frame keeps the tint and the rim");
   props.stealth = false;
   await settle();
-  await frames(45); // past 0.65 s
+  await frames(18); // 0.3 s: the colour lifts
+  const lifting = cloakHeight(svg);
+  ok(lifting > 60 && lifting < 180, `Phase 34: mid-release the colour has partly lifted (1.1.0 dropped it at once): ${lifting}`);
+  await frames(27); // past 0.65 s
   ok(!veilOf(svg) && !rimOf(svg), "the release leaves the plain pebble");
   view.app.unmount();
 }

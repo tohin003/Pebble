@@ -967,7 +967,10 @@ def test_search_cursor_is_bound_to_root_scope_query_and_content(host, tmp_path):
         lambda: search(app, ws, 'retry', ('chat-b', 'run-a'), limit=2, cursor=cursor),      # another chat
         lambda: search(app, ws, 'retry', ('chat-a', 'run-b'), limit=2, cursor=cursor),      # another run
         lambda: search(app, ws, 'budget', ('chat-a', 'run-a'), limit=2, cursor=cursor),     # another query
-        lambda: search(app, ws, 'retry', ('chat-a', 'run-a'), limit=2, cursor=cursor[:-2] + 'xx'),  # forged
+        # forged: a changed full-data character (Phase 34: the last base64url character of the 32-byte tag holds only
+        # 4 data bits, so replacing the last two with 'xx' left the tag unchanged about once in 1,024 runs)
+        lambda: search(app, ws, 'retry', ('chat-a', 'run-a'), limit=2,
+                       cursor=cursor[:-3] + ('A' if cursor[-3] != 'A' else 'B') + cursor[-2:]),
     ):
         with pytest.raises(PolicyError):
             attempt()

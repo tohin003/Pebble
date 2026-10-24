@@ -4,6 +4,63 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.2.0]
+
+Precision: Pebble checks its work without touching your tests, leaves test changes to you unless you ask for them, and
+follows a few plain writing rules. The rules are instructions to the model; whether they change results is measured in
+the next benchmark, on a held-out set sealed before this work began, and is not claimed here.
+
+### Highlights
+
+- Pebble can check a case your tests don't cover in a temporary copy, without adding a test file to your project.
+- A change to a test file you didn't ask for waits for your approval, in Auto mode too.
+- New writing rule: keep to the reply shape you ask for, such as three lines or a required last line.
+- New writing rule: cite only the source relied on, and say plainly when an answer can't be found.
+- A long task no longer fails when a request is retried right after Pebble archived older context.
+
+### Added
+
+- **Checks that never touch your project.** RunTests takes a check: one extra test module, in your project's own test
+  framework (unittest or node:test), that Pebble writes to probe a case your tests don't cover. It is added only to
+  the temporary copy the tests run in, under a name Pebble chooses (`test_pebble_check.py` or `pebble-check.test.mjs`),
+  and it never counts as your project's tests: it can't satisfy the completion check, and its failures are not
+  remembered as test failures. The approval card says it's Pebble's own check and shows its text. Projects whose
+  tests use another runner (pytest, npm, Go, Cargo or make) are told that a check isn't available there.
+- **Test files are yours.** When Pebble wants to create or change a test file and your request didn't ask for test
+  changes, the change waits for your approval, in Auto mode too, and the card says why. "Add a test for the empty
+  case" or "update test_parser.py" lets it through; "fix it so the tests pass" doesn't. Full access is unchanged.
+- **Writing rules** (above 8K tokens of context):
+  - When two instructions seem to conflict, Pebble is told to take the reading that satisfies both, and to ask only
+    when none does.
+  - When you set the shape of the reply (a number of lines, only a value, a required last line), it is told to give
+    exactly that shape; a required last line ends the reply, not a file, unless you name the file.
+  - When you ask it to cite the source it relied on, it is told to cite only that one and to describe any source it set
+    aside without its path or link. When an answer can't be determined, it is told to say so without quoting a figure
+    that could be taken for the answer.
+
+### Fixed
+
+- **A retried request after compaction no longer fails the task.** When a request was retried (a dropped stream, for
+  example) right after Pebble had archived older context to make room, the retry built the archive again with the
+  time left at that moment. A retry in a later second didn't match the archive already saved, and the task failed
+  with "The model checkpoint changed during compaction". A retry now sends exactly what was saved. This is the failure
+  seen once while proving 1.1.0; a test reproduces it with the fix switched off.
+- **Stopping a connector's worker no longer fails when it has just exited.** If a plugin (MCP) worker, a hook worker or
+  an image-decoding worker exited at the moment Pebble stopped it, macOS refused the stop signal and Pebble reported an
+  error instead of finishing. Pebble now treats that refusal as the worker being gone only when it really has exited,
+  and still stops a running one. Found while proving 1.2.0.
+- **The Veil sweeps on and off as designed.** In 1.1.0 the dusk colour, rim and glass arrived, and left, in a single
+  frame: each change started from where it was meant to end, so only the squash, blink and ring played. The README's
+  renders of the Veil showed the same, although their description said the colour sweeps over the pebble. Both are
+  corrected, and a test now measures the sweep part-way through. Found while building Pebble's landing page.
+- **The Keyboard settings caption names the right keys.** It said only ⌘⇧Space works from other apps, while ⌃⌥⌘S and
+  ⌃⌥⌘H do too; it now points to the table's "Any app" column.
+
+### For contributors
+
+- `backend/tests/test_precision_34.py` and `backend/tests/test_compaction_retry_34.py`; `scripts/validate_phase34.py`
+  checks that the new rules name no task, fixture or grader of the development benchmark set.
+
 ## [1.1.0]
 
 **Stealth Lockdown**: one switch that keeps Pebble out of screen capture and screen sharing, and stops it taking focus

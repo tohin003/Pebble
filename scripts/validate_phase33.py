@@ -260,7 +260,9 @@ class Campaign:
 
         def version():
             current = checkout_version()
-            assert current == '1.1.0', current
+            # D62 (Phase 34): the release that ships Stealth Lockdown is 1.1.0 and this check reads its entry; a later
+            # checkout (1.2.0) keeps that entry and every assertion on it, as D60 did for validate_phase30 and 31.
+            assert tuple(int(x) for x in current.split('.')) >= (1, 1, 0), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
             entry = changelog_entry('1.1.0')

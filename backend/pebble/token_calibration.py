@@ -167,11 +167,13 @@ def schema_cost(tools):
 
 
 def profile_tools(names, tools=None):
-    """The catalogue schemas for ``names``; a missing name is an error, not a skip."""
+    """The catalogue schemas for ``names`` as a window of 8K or less is offered them (Phase 34: RunTests without its
+    check, tool_catalogue.without_check); a missing name is an error, not a skip."""
+    from .tool_catalogue import without_check
     if tools is None:
         from .tool_catalogue import TOOLS as tools
     by_name = {t['function']['name']: t for t in tools}
     missing = [n for n in names if n not in by_name]
     if missing:
         raise KeyError('Catalogue lacks profile tools: ' + ', '.join(missing))
-    return [by_name[n] for n in names]
+    return [without_check(by_name[n]) for n in names]

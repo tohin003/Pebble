@@ -17,6 +17,19 @@ def tool(name, description, properties, required):
 
 
 STR = {"type": "string"}
+# Phase 34 (W1): RunTests' check is offered above 8K only; 4K and 8K windows get this schema exactly as before
+# (without_check), so their requests stay byte-identical to the pinned golden fixtures.
+RUN_TESTS = "Request approval to run isolated tests. auto picks the detected test recipe. Only counted passing tests verify work."
+
+
+def without_check(spec):
+    """A RunTests schema as offered at 8K and below: no check property, the pre-1.2.0 description. Others unchanged."""
+    if spec['function']['name'] != 'RunTests' or 'check' not in spec['function']['parameters']['properties']:
+        return spec
+    function = {**spec['function'], 'description': RUN_TESTS}
+    properties = {k: v for k, v in spec['function']['parameters']['properties'].items() if k != 'check'}
+    function['parameters'] = {**spec['function']['parameters'], 'properties': properties}
+    return {**spec, 'function': function}
 from .recipes import REGISTRY
 from .agent_effects import SCHEMAS as AGENT_EFFECT_SCHEMAS, ROOT_EFFECT_TOOLS
 CORE_TOOLS = {'AskUserQuestion', 'UpdatePlan', 'ReadRunEvidence', 'MemoryPropose'}
@@ -107,8 +120,11 @@ TOOLS = [
     ),
     tool(
         "RunTests",
-        "Request approval to run isolated tests. auto picks the detected test recipe. Only counted passing tests verify work.",
-        {"recipe": {"type": "string", "enum": ["auto", "python-unittest", "node-test"]}},
+        RUN_TESTS + " check: the source of one extra test module (unittest for python-unittest, node:test for node-test) "
+        "to probe a case the tests do not cover; it runs once in the isolated copy only, never changes the project and "
+        "never counts as the project's tests.",
+        {"recipe": {"type": "string", "enum": ["auto", "python-unittest", "node-test"]},
+         "check": {"type": "string", "maxLength": 16000}},
         ["recipe"],
     ),
     tool('RunRecipe', 'Request approval to run one named host recipe from ListProjectRecipes in an isolated snapshot. Test recipes verify only with counted passing tests; build, lint and typecheck report exit status.',

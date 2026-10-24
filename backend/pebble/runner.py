@@ -29,7 +29,7 @@ from .recovery import StreamBudget, StreamStalled, complete_with_retry, retry_la
 from .stats import add_report, attempt_report
 import hashlib
 from .runtime import RunLimits
-from .tool_catalogue import TOOLS, CORE_TOOLS, SYSTEM, AGENT_ROOT_TOOLS
+from .tool_catalogue import TOOLS, CORE_TOOLS, SYSTEM, AGENT_ROOT_TOOLS, without_check
 from .web import weather_intent, weather
 from .workflows import website_phase
 from .agent_manager import AgentBudgetExhausted
@@ -313,6 +313,27 @@ TOOL_SENTENCES = (
 FORGET_WORDS = re.compile(r'\b(?:forget\w*|forgot(?:ten)?|memor(?:y|ies)|erase|delete what you know|remember\w*)\b', re.I)
 FORGET_SENTENCE = ('Saved memories are forgotten only when the person chooses Forget (in this chat or in Settings → '
                    'Memory); you cannot delete them, so never say that something was forgotten or deleted.')
+
+
+# Phase 34 (beat plan W2-W4, 1.2.0): general writing rules above 8K. They name no task, fixture or grader; they are
+# judged on the sealed corpus 25, never tuned to corpus 24a's checks.
+PRECISION = (
+    # W2: instructions that seem to conflict
+    '\nWhen two instructions seem to conflict, follow the reading that satisfies both: a limit on how to write the code '
+    'you were asked for does not stop you doing what another part of the request needs in order to work. Ask only when '
+    'no reading satisfies both.'
+    # W3: the reply's requested shape
+    '\nWhen the request sets the shape of your reply (a number of lines, only a value, a required last line), give '
+    'exactly that shape with nothing added. A required last line ends your reply, not a file, unless the request names '
+    'the file.'
+    # W4: citations and unknown answers
+    '\nWhen asked to cite the source you relied on, cite only that source; describe any source you set aside without '
+    'its path or link. When the answer cannot be determined, say so plainly and do not quote a figure that could be '
+    'taken for the answer.')
+# Phase 34 (W1): the coding rule, said with the completion rule it qualifies.
+TEST_SCOPE = (" Leave the project's tests as they are unless the request asks for test changes, and create only the "
+              'files it asks for. To probe a case the tests do not cover, pass a small test module to RunTests as check '
+              'instead of writing one into the project.')
 
 
 def large_system(system):
@@ -952,6 +973,7 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
                 if ws else "\nNo project selected. Answer questions; app launches need an explicit opening request.")
             system += ("\nPermission mode: " + app.task_policy["mode"]
                        + ". The broker enforces this independently. Disabled tools are unavailable. " + now_line())
+            system += PRECISION
         # Chat records without `/` command transcripts (V1-091): the model's history and the human constraints.
         conversation = chat['messages']
         commands = command_transcripts(conversation)
@@ -978,6 +1000,8 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
             # Phase 19 H1d (Phase 18 pilot 4): Pebble's own completion rule, said before the work, so the model runs a
             # project's tests before its final answer instead of claiming completion and being held by the completion check.
             system += '\nAfter changing code in a project with tests, run them with RunTests before your final answer.'
+            if large:
+                system += TEST_SCOPE  # Phase 34 (W1): with the check it names, above 8K only
         messages = [{"role": "system", "content": system}]
         recall = app.memory.recall(text, cid, chat["workspace"], window=budget)  # Phase 15 M09: budget scales with the window
         recalled = app.recall_for_route(cid, recall['items'], run_id) if hasattr(app, 'recall_for_route') else recall['items']
@@ -1637,6 +1661,8 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
                 names = app.agents.root_tools(cid, run_id)
                 available = [t for t in available if t['function']['name'] not in AGENT_ROOT_TOOLS]
                 available.extend(t for t in TOOLS if t['function']['name'] in names)
+            if not large:
+                available = [without_check(t) for t in available]  # Phase 34 (W1): checks are offered above 8K only
             if budget <= 4096:
                 # Discovery also shares ordinary small windows. Compact every
                 # offered copy, including tasks without delegation.

@@ -494,6 +494,12 @@ class RunJournal:
                 self.event(db, rid, 'context_compacted', {'generation': generation, 'manifest': compacted.manifest})
             return generation
 
+    def latest_compaction(self, rid):
+        """(generation, manifest) of the run's newest committed compaction, or None."""
+        rows = self.store.query('SELECT generation,manifest FROM run_compactions WHERE run_id=? '
+                                'ORDER BY generation DESC LIMIT 1', (rid,))
+        return (rows[0]['generation'], json.loads(rows[0]['manifest'])) if rows else None
+
     def compactions(self, rid):
         return self.store.query('SELECT generation,length(CAST(manifest AS BLOB)) AS manifest_bytes,created FROM run_compactions WHERE run_id=? ORDER BY generation', (rid,))
 

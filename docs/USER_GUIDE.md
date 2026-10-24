@@ -89,7 +89,7 @@ and you can review and release them yourself.
 | Mode | Runs without asking | Always asks |
 | --- | --- | --- |
 | **Ask for approval** (the default) | Nothing that changes your project or your Mac. | Every edit, test run, terminal command, app launch, Git change and connector call. |
-| **Auto in project** | Edits to project files, test runs, and a short list of read-only commands (ls, cat, rg, head, tail, wc and a few more) in this project. | Other terminal commands (including grep and builds), app launches, Git changes, connector calls, installs, and network or dangerous commands. |
+| **Auto in project** | Edits to project files, test runs, and a short list of read-only commands (ls, cat, rg, head, tail, wc and a few more) in this project. | Changes to test files your request didn't ask for, other terminal commands (including grep and builds), app launches, Git changes, connector calls, installs, and network or dangerous commands. |
 | **Full access** | Everything Auto runs, plus app launches and Git changes that neither delete work nor publish it. | Other terminal commands (including grep and builds), connector calls, installs, presses in a Chrome tab, network or dangerous commands, and Git changes that delete work or publish it. |
 
 In every mode, reading project files, searching and reading the web, and creating views run without asking while their switches below are on. Connector calls, installs and every press in a Chrome tab you granted always ask; looking, typing and choosing in that tab run under your grant. Protected credentials stay blocked.
@@ -116,6 +116,11 @@ Good to know:
 - **Tests** run in a filtered temporary copy of the project, without network access and without writing to your
   folder. Pebble recognises common test setups (Python, Node, Go, Cargo and others) and asks before preparing their
   dependencies.
+- **Checks**: to try a case your tests don't cover, Pebble can add one test module of its own to that temporary copy
+  (`test_pebble_check.py` for unittest, `pebble-check.test.mjs` for node:test) for that run only. It never reaches your
+  folder and never counts as your tests; the card says it's Pebble's own check and shows it.
+- **Your tests stay yours**: when Pebble wants to create or change a test file and your request didn't ask for test
+  changes ("add a test for…", "update the tests…"), that change waits for your approval, in Auto mode too.
 - **Terminal commands** run without a shell (no pipes or redirects), confined to the project by macOS's sandbox, with a
   time and output limit; network access needs your approval for that exact command.
 - **Git**: Pebble reads status, diffs and history, and prepares commits and other changes as a plan you approve.

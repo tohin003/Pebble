@@ -117,8 +117,13 @@ def test_the_pebble_arm_spends_most_of_its_input_on_schemas_and_fixed_context(me
     assert max(shares, key=shares.get) == 'tool_schemas', shares
     assert pebble['parts']['tool_schemas'] > baseline['parts']['tool_schemas']
     first = {r['task']: r['first'] for r in measured.summary['runs'] if r['arm'] == 'pebble'}
+    # Phase 34: the writing rules (runner.PRECISION, above 8K) are new system text. The measured fact these reductions
+    # rest on is unchanged and still checked: each first request's schemas cost at least its system prompt without
+    # them. (With them, the two chats without a project, offered the fewest tools, now spend more on the prompt.)
+    from pebble.token_budget import TokenBudget
+    rules = len(TokenBudget.encoding().encode(runner.PRECISION, disallowed_special=()))
     for task, request in first.items():
-        assert request['parts']['tool_schemas'] >= request['parts']['system'], (task, request)
+        assert request['parts']['tool_schemas'] >= request['parts']['system'] - rules, (task, request, rules)
     # Most offered schemas are never called in the run. Phase 20 H20 changed which group is largest: it staged the
     # coordination tools, MemoryPropose and ReadRunEvidence above 8K (runner.large_needs), so the task tools now lead
     # (the agent set led on the Phase 19 source; test_context_reductions_20 measures before and after).

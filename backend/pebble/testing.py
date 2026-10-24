@@ -34,6 +34,39 @@ ISOLATION = "macOS sandbox · temporary project snapshot · network denied"
 STOPPED = "Test stopped, timed out, or exceeded the output limit."
 _waitid = getattr(os, "waitid", None)
 
+# Phase 34 (W1): an ad hoc check is one extra test module the model writes, added to the isolated snapshot only, under
+# a name the recipe's own discovery runs. The project never sees it, and its run is kind 'check': never test evidence
+# for the completion gate, AgentGuard, diagnostics or memory lessons.
+CHECK_FILES = {"python-unittest": "test_pebble_check.py", "node-test": "pebble-check.test.mjs"}
+CHECK_LIMIT = 16_000
+CHECK_NOTE = ("Ad hoc check: {path} was added to an isolated copy for this run only. The project did not change, and "
+              "this run does not count as the project's tests; run RunTests without check to verify the project.")
+
+
+def check_payload(recipe, content):
+    """The reviewed check for a proposal, or PolicyError. The host names the file; the model supplies only text."""
+    if recipe not in CHECK_FILES:
+        raise PolicyError("An ad hoc check runs with the python-unittest or node-test recipe; this project's tests use "
+                          f"{recipe}. Check with the project's tests instead.")
+    if not isinstance(content, str) or not content.strip():
+        raise PolicyError("An ad hoc check needs the test module's source text.")
+    if len(content) > CHECK_LIMIT or "\x00" in content:
+        raise PolicyError(f"An ad hoc check is limited to {CHECK_LIMIT} characters of text.")
+    return {"path": CHECK_FILES[recipe], "content": content, "sha256": digest(content.encode("utf-8"))}
+
+
+def _check(payload, recipe):
+    """The approved payload's check, re-validated against its recipe at run time, or None."""
+    check = payload.get("check")
+    if check is None:
+        return None
+    if not isinstance(check, dict) or set(check) != {"path", "content", "sha256"}:
+        raise PolicyError("The reviewed check is malformed.")
+    fresh = check_payload(recipe, check["content"])
+    if fresh != check:
+        raise PolicyError("The reviewed check does not match its recipe or its text.")
+    return check
+
 
 def _read(ws, name):
     """Bounded no-follow read of one inventoried file; data is None over the size bound."""
@@ -239,6 +272,14 @@ def run_tests(payload, cancel):
         elif isinstance(bound, dict) and recipes.bindings(plan['recipe'], Workspace(snapshot))[0] != bound:
             raise PolicyError('A project manifest or lockfile changed after review. Propose the recipe again.')
         mount = recipes.matches(plan, Workspace(snapshot), mount, ws.root)
+        check = _check(payload, plan["recipe"])
+        if check is not None:
+            # Added after the plan was re-derived, so the reviewed plan is exactly the project's own.
+            target = snapshot / check["path"]
+            if target.exists() or target.is_symlink():
+                raise PolicyError(f"The project already has {check['path']}, so the check could not be added. "
+                                  "Nothing ran.")
+            target.write_text(check["content"], encoding="utf-8")
         for name, target in (mount["links"] if mount else {}).items():
             try:
                 (snapshot / name).symlink_to(target, target_is_directory=True)
@@ -254,7 +295,8 @@ def run_tests(payload, cancel):
         code, data, size = _launch(plan, profile, snapshot, env, Path(logs) / "output.log", cancel)
         # Phase 20 G20-diag: hash-bound diagnostics for the host broker's open capture only; the result is unchanged
         # and offer never raises. A stopped launch raised above, so it records nothing.
-        diagnostics.offer(plan, code, data, snapshot, file_hashes, ws)
+        if check is None:  # a check's failures are the model's own probe, not the project's diagnostics
+            diagnostics.offer(plan, code, data, snapshot, file_hashes, ws)
     text = data.decode("utf-8", errors="replace")
     outcome, tests = recipes.classify(plan["kind"], plan["recipe"], code, text)
     shown, removed, _ = sanitize_terminal(data, final=True)
@@ -269,7 +311,9 @@ def run_tests(payload, cancel):
         "outcome": outcome,
         "tests": tests,
         "recipe": plan["recipe"],
-        "kind": plan["kind"],
+        "kind": "check" if check is not None else plan["kind"],
+        **({"check": {"path": check["path"], "sha256": check["sha256"],
+                      "note": CHECK_NOTE.format(path=check["path"])}} if check is not None else {}),
         **manifest,
         "executable_sha256": plan["executable"]["sha256"],
         "pinned": pinned,

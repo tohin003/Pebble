@@ -721,13 +721,22 @@ const ACTION_STATES: Record<string, string> = {
   failed: "Failed", expired: "Expired", superseded: "Replaced", approved: "Approved",
 };
 const actionState = (status: string) => (Object.hasOwn(ACTION_STATES, status) ? ACTION_STATES[status] : String(status).replace(/_/g, " "));
+// Phase 34 (W1): an ad hoc check RunTests added to the isolated copy (testing.CHECK_FILES), never the project's tests.
+function isCheck(p: Record<string, any>): boolean {
+  return !!p.check && typeof p.check === "object" && typeof p.check.content === "string";
+}
 function actionLead(action: Action): string {
   const p = action.payload || {};
   switch (action.kind) {
-    case "edit":
-      return p.baseline ? "Changes this file in your project. You can undo it afterwards." : "Creates this file in your project. You can undo it afterwards.";
+    case "edit": {
+      const lead = p.baseline ? "Changes this file in your project. You can undo it afterwards." : "Creates this file in your project. You can undo it afterwards.";
+      // Phase 34 (W1): the host's reason a test file change waits for the person.
+      return typeof p.scope_review === "string" ? `${p.scope_review} ${lead}` : lead;
+    }
     case "tests":
-      return "Runs the project's tests in a temporary copy. Your project files don't change.";
+      return isCheck(p)
+        ? "Runs Pebble's own check, added to a temporary copy for this run only. Your project files don't change."
+        : "Runs the project's tests in a temporary copy. Your project files don't change.";
     case "command":
       return p.writable
         ? "Runs this command in your project, where it can change files. Pebble can't undo a command."
@@ -1407,13 +1416,11 @@ function chooseCommand(text: string) {
 // Phase 24 (V1-135): "What's new" in About. An excerpt of the release's CHANGELOG.md entry (t24-publish keeps the
 // two in step); plain text, bundled with the build, no update check (that is after 1.0).
 const WHATS_NEW = Object.freeze([
-  "Stealth Lockdown keeps Pebble out of screen shares and recordings and never takes focus from the app you're in.",
-  "While it's on, the pebble wears the Veil: a dusk-blue glass with a light rim, so you can always tell.",
-  "⌃⌥⌘H hides every Pebble window at once; the menu-bar icon brings Pebble back.",
-  "Turn it on in Settings → Privacy and focus, from the menu-bar icon, or with ⌃⌥⌘S.",
-  "A task that stopped right after its answer no longer repeats the answer when you resume it.",
-  "A plugin tool that could not be checked in time now says so, instead of calling your input invalid.",
-  "Tests run in parallel, so each release is proved in about a third of the time.",
+  "Pebble can check a case your tests don't cover in a temporary copy, without adding a test file to your project.",
+  "A change to a test file you didn't ask for waits for your approval, in Auto mode too.",
+  "New writing rule: keep to the reply shape you ask for, such as three lines or a required last line.",
+  "New writing rule: cite only the source relied on, and say plainly when an answer can't be found.",
+  "A long task no longer fails when a request is retried right after Pebble archived older context.",
 ]);
 // Phase 18 E06: the native Save dialog returns a single-use token; this window never sees or sends a path.
 async function chooseTelemetryDestination(): Promise<string | null> {
@@ -2489,7 +2496,7 @@ onUnmounted(() => {
                   action.kind === "edit"
                     ? action.payload.path
                     : action.kind === "tests"
-                      ? "Run isolated tests"
+                      ? (isCheck(action.payload || {}) ? "Run an ad hoc check" : "Run isolated tests")
                       : action.kind === "command"
                         ? action.payload.command
                         : action.kind === "plugin"
@@ -2520,6 +2527,17 @@ onUnmounted(() => {
                     class="diff"
                   ><span v-for="(line,i) in (action.payload.diff||'No changes').split('\n')" :key="i" :class="{added:line.startsWith('+'),removed:line.startsWith('-'),hunk:line.startsWith('@@')}">{{line}}<br/></span></pre></details
               ></template>
+              <template v-else-if="action.kind === 'tests' && isCheck(action.payload || {})"
+                ><p class="action-description">
+                  {{ action.payload.recipe }} with {{ action.payload.check.path }}
+                  added to a temporary project copy. It doesn't count as your
+                  project's tests. Network and original project writes are blocked.
+                </p>
+                <details :open="action.status === 'pending'">
+                  <summary>View the check</summary>
+                  <pre class="command-preview">{{ action.payload.check.content }}</pre>
+                </details></template
+              >
               <p v-else-if="action.kind === 'tests'" class="action-description">
                 {{ action.payload.recipe }} in a temporary project copy. Network
                 and original project writes are blocked.
@@ -2901,7 +2919,7 @@ onUnmounted(() => {
           <div class="settings-section">
             <div class="section-label">KEYBOARD</div>
             <table class="shortcut-table">
-              <caption class="setting-note">Only ⌘⇧Space works from other apps; the rest work in Pebble's windows.</caption>
+              <caption class="setting-note">Keys marked Any app work from other apps; the rest work in Pebble's windows.</caption>
               <tbody>
                 <tr v-for="item in shortcutsFor('main')" :key="item.id">
                   <th scope="row">{{ item.label }}</th>

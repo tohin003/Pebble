@@ -13,7 +13,7 @@ keep memory you control and build interactive views, with the model you choose. 
 [![Release](https://img.shields.io/github/v/release/tohin003/Pebble?label=release&color=506e54)](https://github.com/tohin003/Pebble/releases/latest)
 [![macOS 12+ on Apple silicon](https://img.shields.io/badge/macOS-12%2B%20%C2%B7%20Apple%20silicon-191e1b?logo=apple&logoColor=white)](#install)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-a6c795)](LICENSE)
-[![8,793 tests at v1.1.0](https://img.shields.io/badge/tests-8%2C793%20at%20v1.1.0-506e54)](#built-like-infrastructure)
+[![8,905 tests at v1.2.0](https://img.shields.io/badge/tests-8%2C905%20at%20v1.2.0-506e54)](#built-like-infrastructure)
 [![AgentGuard built in](https://img.shields.io/badge/AgentGuard-built%20in-23351f)](#agentguard-evidence-before-done)
 
 [**Download for macOS**](https://github.com/tohin003/Pebble/releases/latest/download/Pebble-macos-arm64.zip) ·
@@ -95,7 +95,7 @@ Keychain. A local conversation reaches a cloud model only after you review it.
 
 ### 🧪 Built like infrastructure
 
-1.1.0 passed 8,793 tests and 1,874 service checks, on source and on the frozen app. Its backend build is reproducible,
+1.2.0 passed 8,905 tests and 1,890 service checks, on source and on the frozen app. Its backend build is reproducible,
 and the release passed a full licence inventory and a secret scan.
 
 </td>
@@ -140,7 +140,7 @@ own interface.</sub>
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/07-stealth-veil.gif"><img src="https://raw.githubusercontent.com/tohin003/Pebble/media/readme/07-stealth-veil-light.gif" width="300" alt="The pebble turning Stealth Lockdown on: it gathers, a dusk colour sweeps over it and it settles as dusk-blue glass with a light rim, then turns back"></picture>
 
-<sub>The Veil, rendered frame by frame from Pebble 1.1's own avatar code (a protected window can't be screen-recorded).</sub>
+<sub>The Veil, rendered frame by frame from Pebble 1.2's own avatar code (a protected window can't be screen-recorded).</sub>
 
 </div>
 
@@ -378,8 +378,8 @@ Pebble is built to the standard of software that people trust with their project
 
 | | |
 |---|---|
-| **Tests** | 8,793 automated tests at v1.1.0, none skipped. They never call a model or the network. |
-| **Service checks** | 1,874 checks across 47 validator suites, each run against the source *and* the frozen, signed app |
+| **Tests** | 8,905 automated tests at v1.2.0, none skipped. They never call a model or the network. |
+| **Service checks** | 1,890 checks across 48 validator suites, each run against the source *and* the frozen, signed app |
 | **Reproducible build** | The shipped backend is byte-identical to the tested one, apart from its signature |
 | **Release gates** | Secret scan, licence inventory (366 components, every notice present), a scan for personal paths, and every published test run in a fresh clone |
 | **Safe updates** | The installer keeps the previous app. Database upgrades back up first. Every release is rehearsed on a copy of real data and drilled with a rollback before it ships. |

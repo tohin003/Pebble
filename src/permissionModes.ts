@@ -23,11 +23,12 @@ export const MODES: Readonly<Record<PermissionMode, ModeCopy>> = Object.freeze({
     "Nothing that changes your project or your Mac.",
     "Every edit, test run, terminal command, app launch, Git change and connector call.",
   ),
+  // Phase 34 (W1): edit_scope.review_reason holds a test-file change the request didn't ask for, in Auto mode too.
   auto: mode(
     "auto",
     "Auto in project",
     "Edits to project files, test runs, and a short list of read-only commands (ls, cat, rg, head, tail, wc and a few more) in this project.",
-    "Other terminal commands (including grep and builds), app launches, Git changes, connector calls, installs, and network or dangerous commands.",
+    "Changes to test files your request didn't ask for, other terminal commands (including grep and builds), app launches, Git changes, connector calls, installs, and network or dangerous commands.",
   ),
   full: mode(
     "full",

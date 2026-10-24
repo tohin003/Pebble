@@ -110,6 +110,12 @@ def run_worker(worker, event, cancel, timeout):
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except PermissionError:
+                    # Phase 34 (trial 1): the leader can exit between poll() and the signal, and macOS answers a
+                    # group of zombies with EPERM. An exited leader needs no signal (the wait reaps it); a live one
+                    # is still killed directly.
+                    if process.poll() is None:
+                        process.kill()
                 process.wait(timeout=2)
                 if process.stdin and not process.stdin.closed:
                     process.stdin.close()

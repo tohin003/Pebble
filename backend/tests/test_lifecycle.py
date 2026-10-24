@@ -78,7 +78,14 @@ def bare(tmp_path, machine, **extra):
 
 def harness(home, resources, now):
     events = []
-    app = App(home, resources, lambda *args: events.append(args))
+    # Phase 34: the App's own scheduler never starts here; started, its thread could tick on the real clock before
+    # close() and fire a job these tests created on their own clock after a restart (test_jobs.harness, measured).
+    real_start = Jobs.start
+    Jobs.start = lambda self, thread=True: None
+    try:
+        app = App(home, resources, lambda *args: events.append(args))
+    finally:
+        Jobs.start = real_start
     wired = getattr(app, 'jobs', None)
     if wired is not None:
         assert wired.close()  # the parent-wired scheduler; these tests drive their own machine

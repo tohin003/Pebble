@@ -188,6 +188,12 @@ def terminate(proc):
                 os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Phase 34 (trial 1): the leader can exit between poll() and the signal, and macOS answers a
+            # group of zombies with EPERM. An exited leader needs no signal (the wait reaps it); a live one
+            # is still killed directly.
+            if proc.poll() is None:
+                proc.kill()
     try:
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
