@@ -275,7 +275,9 @@ class Campaign:
 
         def version():
             current = checkout_version()
-            assert current == '1.3.0', current
+            # D66 (Phase 36): the release that ships cache-first requests is 1.3.0 and this check reads its entry; a
+            # later checkout keeps that entry and every assertion on it (as D65 did for validate_phase34).
+            assert tuple(int(x) for x in current.split('.')) >= (1, 3, 0), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
             entry = changelog_entry('1.3.0')

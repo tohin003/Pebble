@@ -168,8 +168,12 @@ def large_needs(app, run_id, text, messages, budget, compacted=False):
     FIRST_CHILD_TOOLS, so one request's tool list changes at most once (at its first child). MemoryPropose: for
     learning words; host maintenance learns without it. ReadRunEvidence: when a host message names it (constraints
     unit, evidence spine, summary), after a compaction, or once the window is half full, before anything retires.
+    Phase 36 (W6): where older results are sealed (context_seal), a seal is a compaction, so the offer joins in the
+    seal's step (one change to the request, not two); the fallback for a window with nothing to seal waits until three
+    quarters, still before anything retires.
     """
     from .context_manifest import ContextError, estimate_tokens
+    from .context_seal import past_offer, sealing
     names = set(FIRST_CHILD_TOOLS)
     if LARGE_AGENT_WORDS.search(text) or app.store.query('SELECT 1 FROM agent_nodes WHERE run_id=? LIMIT 1', (run_id,)):
         names |= AGENT_ROOT_TOOLS
@@ -179,6 +183,9 @@ def large_needs(app, run_id, text, messages, budget, compacted=False):
                 and any(key.startswith('_pebble_') for key in m) for m in messages)
     if named or compacted:
         names.add('ReadRunEvidence')
+    elif sealing(app, budget):
+        if past_offer(messages, budget):
+            names.add('ReadRunEvidence')
     else:
         try:
             if estimate_tokens(messages) > budget // 2:
@@ -1742,6 +1749,21 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
                 goal_message['content'] = goal_text
             elif goal_message is not None:
                 messages.remove(goal_message)
+            from .context_seal import sealing
+            if large and sealing(app, budget):
+                # Phase 36 (W6): a long task's older tool results are sealed in one large chunk once the window passes
+                # its soft size (context_seal); before the tools are offered, so ReadRunEvidence joins in the same step.
+                # The sealed list shares every other message object (the checkpoint reference stays current).
+                from .context_seal import past_offer, plan as seal_plan, seal as seal_window
+                chosen = seal_plan(messages, budget, pressing=past_offer(messages, budget))
+                if chosen:
+                    generation = app.runs.next_generation(run_id)
+                    sealed, archive, seal_manifest = seal_window(messages, chosen, generation)
+                    app.runs.seal(run_id, archive, seal_manifest, generation)
+                    messages = sealed
+                    execution.compaction_generation = generation
+                    progress('Sealed older tool results to keep this task in its window; ReadRunEvidence returns them',
+                             'done')
             progress(
                 "Thinking with your model"
                 if deliberate not in {False, None, 'quick', 'none', 'default'}

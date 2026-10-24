@@ -4,6 +4,45 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.4.0]
+
+Long tasks keep a smaller window. Above a 32K budget, once a task has read a lot, Pebble seals the results of its older
+tool calls in one large chunk: each becomes a short stub with the result's facts and a handle, and ReadRunEvidence
+returns the full result exactly as it was. Whether this lowers what long tasks cost, without losing quality, is
+measured in the next benchmark; no saving is claimed here.
+
+### Highlights
+
+- A long task's older tool results are sealed into short stubs; the newest stay word for word.
+- ReadRunEvidence returns any sealed result exactly as it was, page by page.
+- Seals are rare and large, so the requests between them still extend each other for prompt caching.
+
+### Changed
+
+- **Older tool results of a long task are sealed.** Above a 32K working budget, once a task's window passes 32K
+  estimated tokens (or a quarter of a smaller budget), the results of its older tool calls are replaced, in one chunk,
+  by stubs. A stub keeps the tool, the result's facts (path, file hash, line counts, status, exit code, its receipt)
+  and a `page:` handle; ReadRunEvidence with that handle returns the full result exactly as it was, from the run's
+  archive. Every tool call stays in the window, so the model still sees what it did.
+- **What is never sealed:** the newest three to eight tool exchanges (eight when they are small), a result that
+  reports an error, test and recipe results, pages read back with ReadRunEvidence, the request, your inputs, the plan,
+  the goal and Pebble's own notes.
+- **Seals are rare and large.** A seal rewrites earlier context, so a provider reads what follows it fresh once. Pebble
+  seals only when the chunk is at least 20K tokens and at least twice that part, or, once the window passes three
+  quarters of the budget (where the 100 % compaction, which rewrites more, is near), whenever a 20K-token chunk is
+  there. ReadRunEvidence joins the tools in the first seal's step, or at three quarters of the window if nothing can
+  be sealed (where sealing is on, it no longer joins at half the window), so a request changes once per seal.
+- At 32K and below nothing changes. Above it, a task is unchanged until its window reaches the size at which a seal
+  starts; a task that reads several large files can reach it within ten steps.
+
+### For contributors
+
+- `PEBBLE_CONTEXT_SEAL=0` keeps 1.3.0's requests, for comparisons such as the next benchmark's control arm.
+- Each seal is recorded as a `context_sealed` run event and an archive generation (`run_compactions`), the same
+  records the 100 % compaction uses, so the context inspector and ReadRunEvidence read it unchanged.
+- `backend/pebble/context_seal.py`; `backend/tests/test_context_seal_36.py`; `scripts/validate_phase36.py`. D66:
+  validate_phase35 accepts a checkout past 1.3.0; its checks are unchanged.
+
 ## [1.3.0]
 
 Requests that a model provider can cache, and fewer round trips. Above 8K tokens of context, every request of a task

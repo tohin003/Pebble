@@ -213,6 +213,9 @@ class App:
         self.extensions.publish_media = self.publish_plugin_media
         self.model.context_observer = self.observe_context
         self.model.context_transform = self.compact_context
+        # Phase 36 (W6): long-task sealing (context_seal) is on; PEBBLE_CONTEXT_SEAL=0 turns it off, for the 2.0.0
+        # re-benchmark's registered control arm (D55).
+        self.context_seal_enabled = os.environ.get('PEBBLE_CONTEXT_SEAL', '1') != '0'
         from .agent_manager import Agents
         self.agents = Agents(self)
         from .git_workflows import GitWorkflows

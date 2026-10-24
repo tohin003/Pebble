@@ -1416,9 +1416,9 @@ function chooseCommand(text: string) {
 // Phase 24 (V1-135): "What's new" in About. An excerpt of the release's CHANGELOG.md entry (t24-publish keeps the
 // two in step); plain text, bundled with the build, no update check (that is after 1.0).
 const WHATS_NEW = Object.freeze([
-  "Above 8K, each request of a task now extends the previous one, so prompt caching can reuse it.",
-  "The ChatGPT route can ask for several tool calls in one step; Pebble still performs them one at a time.",
-  "On the Anthropic route the model's earlier reasoning stays valid between steps, since nothing before it changes.",
+  "A long task's older tool results are sealed into short stubs; the newest stay word for word.",
+  "ReadRunEvidence returns any sealed result exactly as it was, page by page.",
+  "Seals are rare and large, so the requests between them still extend each other for prompt caching.",
 ]);
 // Phase 18 E06: the native Save dialog returns a single-use token; this window never sees or sends a path.
 async function chooseTelemetryDestination(): Promise<string | null> {

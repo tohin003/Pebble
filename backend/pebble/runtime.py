@@ -494,6 +494,27 @@ class RunJournal:
                 self.event(db, rid, 'context_compacted', {'generation': generation, 'manifest': compacted.manifest})
             return generation
 
+    def seal(self, rid, archive, manifest, generation):
+        """Phase 36 (W6): commit one seal's archive as the run's next compaction generation, so ReadRunEvidence pages it
+        like any other archived result. The caller built its stubs for `generation`; a stale one is refused."""
+        archive_text = encoded(archive, 32_000_000)
+        manifest_text = encoded(manifest, 8_000_000)
+        with self.store.lock, self.store.db as db:
+            latest = db.execute('SELECT max(generation) FROM run_compactions WHERE run_id=?', (rid,)).fetchone()[0] or 0
+            if generation != latest + 1:
+                raise ValueError('The seal was built for another archive generation. Nothing was sealed.')
+            used = db.execute('SELECT coalesce(sum(length(CAST(archive AS BLOB))),0) FROM run_compactions WHERE run_id=?',
+                              (rid,)).fetchone()[0]
+            if generation > 256 or used + len(archive_text.encode()) > 128_000_000:
+                raise ValueError('This run reached its context archive budget. Nothing was sealed.')
+            db.execute('INSERT INTO run_compactions VALUES(?,?,?,?,?)', (rid, generation, archive_text, manifest_text, time.time()))
+            self.event(db, rid, 'context_sealed', {'generation': generation, 'manifest': manifest})
+        return generation
+
+    def next_generation(self, rid):
+        rows = self.store.query('SELECT max(generation) AS g FROM run_compactions WHERE run_id=?', (rid,))
+        return (rows[0]['g'] or 0) + 1
+
     def latest_compaction(self, rid):
         """(generation, manifest) of the run's newest committed compaction, or None."""
         rows = self.store.query('SELECT generation,manifest FROM run_compactions WHERE run_id=? '

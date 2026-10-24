@@ -159,7 +159,7 @@ def test_the_embedded_plan_matches_the_track_notes_when_they_are_present():
 def test_the_campaign_registers_phase24_and_keeps_phase22_retired():
     verify = load('verify_harness_candidate', 'verify_for_phase24_test')
     # Phase 25 (the release build) follows phase24 in the campaign; phase24 stays registered and runs in it.
-    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-12:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35')
+    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-13:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36')
     suites = verify.default_suites('phase24')
     assert {'phase23', 'phase24'} <= set(suites) and 'phase22' not in suites
     assert 'phase24' not in verify.default_suites('phase23')
