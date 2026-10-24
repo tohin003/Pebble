@@ -38,6 +38,10 @@ import json, os, shutil, sys, zipfile
 tool, args = sys.argv[1], sys.argv[2:]
 with open(os.environ['FAKE_LOG'], 'a') as log:
     log.write(json.dumps({'tool': tool, 'argv': args}) + '\n')
+# Phase 35 (trial 1): each call also marks its end in a separate file (calls() reads only FAKE_LOG), so a run that
+# hangs shows whether a fake tool finished: trial 1 stopped after uname -m was logged and before sw_vers was.
+import atexit
+atexit.register(lambda: open(os.environ['FAKE_LOG'] + '.done', 'a').write(json.dumps({'tool': tool}) + '\n'))
 env = os.environ.get
 if tool == 'uname':
     print(env('FAKE_UNAME_M', 'arm64') if args == ['-m'] else env('FAKE_UNAME_S', 'Darwin'))

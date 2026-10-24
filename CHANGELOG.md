@@ -4,6 +4,43 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.3.0]
+
+Requests that a model provider can cache, and fewer round trips. Above 8K tokens of context, every request of a task
+now extends the previous one instead of rewriting its start, so a provider's prompt cache can reuse what it has
+already read. On the ChatGPT route the model may also ask for several tool calls at once. How much this lowers cost
+and time on real tasks is measured in the next benchmark and is not claimed here.
+
+### Highlights
+
+- Above 8K, each request of a task now extends the previous one, so prompt caching can reuse it.
+- The ChatGPT route can ask for several tool calls in one step; Pebble still performs them one at a time.
+- On the Anthropic route the model's earlier reasoning stays valid between steps, since nothing before it changes.
+
+### Changed
+
+- **Requests above 8K extend each other.** Measured on 1.2.0 in a scripted coding task, every request from the
+  second on kept only the system prompt the same: the task checkpoint was rewritten after each tool result, and the
+  file audit, the plan and the diagnostics were inserted near the top and rewritten. Now, above 8K:
+  - the task checkpoint is written once, with the local time the task started;
+  - the file audit and a changed plan are added after the newest tool results, listing only what changed; earlier
+    ones stay where they were, and only the newest plan is protected when older context is archived;
+  - pinned skills, plugin schemas and connector routes stay where they were first added;
+  - the system prompt carries the date only, so it is the same for a whole day's tasks.
+  In the same scripted tasks every request now extends the previous one. Two events still change the start of a
+  request, on purpose: diagnostics are added and removed as they come and go (one that no longer matches its file is
+  removed, so the model never acts on it), and ReadSource joins the tools once a web page has been read. At 8K and
+  below nothing changes.
+- **Several tool calls per step on the ChatGPT route** (above 8K). Pebble 1.0.4's kept benchmark runs spent 99 % of
+  their time waiting on the model, and the slowest ones read three files in three separate requests. The model may
+  now ask for independent calls together; Pebble performs them in order, each under its own permission and approval.
+
+### For contributors
+
+- Each model request above 8K records how much of the previous request it kept (`model_attempt.prefix`), content-free.
+- `backend/tests/test_cache_first_35.py`; `scripts/validate_phase35.py`. D64: validate_phase28 records, rather than
+  asserts, that the first message changes per step; every check on the stale-block binding is unchanged.
+
 ## [1.2.0]
 
 Precision: Pebble checks its work without touching your tests, leaves test changes to you unless you ask for them, and

@@ -404,7 +404,9 @@ class Campaign:
 
         def version():
             current = checkout_version()
-            assert current == '1.2.0', current
+            # D65 (Phase 35): the release that ships the precision work is 1.2.0 and this check reads its entry; a later
+            # checkout keeps that entry and every assertion on it (as D62 did for validate_phase33).
+            assert tuple(int(x) for x in current.split('.')) >= (1, 2, 0), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
             entry = changelog_entry('1.2.0')

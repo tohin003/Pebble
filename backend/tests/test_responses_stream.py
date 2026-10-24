@@ -148,6 +148,15 @@ def test_ambiguous_or_nonfinite_tool_arguments_are_refused(arguments):
     refused(start() + [done(0, call(arguments=arguments)), completed()])
 
 
+# -- Phase 35 (W7): parallel tool calls above 8K only -------
+
+@pytest.mark.parametrize('budget, parallel', [(32768, True), (8193, True), (8192, False), (4096, False)])
+def test_parallel_tool_calls_are_allowed_above_8k_only(budget, parallel):
+    provider, tokens = Provider(start() + call_events(0, call()) + [completed()]), []
+    complete_responses(provider, {**PROFILE, 'budget': budget}, MESSAGES, TOOLS, threading.Event(), tokens.append, 'medium')
+    assert provider.requests[0][1]['parallel_tool_calls'] is parallel
+
+
 # -- the live failure: completed output is empty, the call exists only as done -------
 
 def test_empty_terminal_output_returns_the_finalized_call_for_replay():
@@ -158,7 +167,7 @@ def test_empty_terminal_output_returns_the_finalized_call_for_replay():
     assert provider.last_usage['input_tokens'] == 40 and provider.last_usage['output_tokens'] == 8
     assert provider.response is None and provider.stream.closed
     body = provider.requests[0][1]
-    assert body['store'] is False and body['parallel_tool_calls'] is False
+    assert body['store'] is False and body['parallel_tool_calls'] is True  # Phase 35 (W7): above 8K
     # Stateless replay: the finalized call precedes its result with the same identity.
     replay = input_items([result, {'role': 'tool', 'tool_call_id': 'call_1', 'content': '{"ok": true}'}])
     assert [i['type'] for i in replay] == ['function_call', 'function_call_output']

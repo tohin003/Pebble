@@ -176,14 +176,17 @@ class Campaign:
             sent = self.in_process('https://api.anthropic.com/v1', MODEL, tool_turns=2)
             assert len(sent) >= 3, ('a three-request tool loop', len(sent))
             first = sent[0][1]['messages'][0]
-            assert any(body['messages'][0] != first for _, body in sent[1:]), 'the first message no longer changes'
+            # D64 (Phase 35): the first message changing per step was this fixture's premise (why the binding was
+            # needed), not a guarantee; W5 made requests above 8K extend each other, so it is recorded, not asserted.
+            # Every assertion on the binding, the beta header, the cache marker and the replay below is unchanged.
+            changes = any(body['messages'][0] != first for _, body in sent[1:])
             for headers, body in sent:
                 assert body['thinking'] == {'type': 'adaptive', 'block_binding': BINDING}, body.get('thinking')
                 assert headers.get('anthropic-beta') == BETA, headers.get('anthropic-beta')
                 assert body.get('cache_control') == {'type': 'ephemeral'}
             assert sent[1][1]['messages'][1]['content'][0] == {'type': 'thinking', 'thinking': '', 'signature': 'SIG'}, \
                 'the earlier assistant turn is not echoed as received'
-            evidence = {'requests': len(sent), 'binding': BINDING, 'beta': BETA, 'first_message_changes': True}
+            evidence = {'requests': len(sent), 'binding': BINDING, 'beta': BETA, 'first_message_changes': changes}
             if self.backend is not None:
                 raw = frozen_module(self.backend, 'pebble.providers')
                 for needle in (b'block_binding', b'prefix_mismatch_behavior', b'drop_block', BETA.encode()):

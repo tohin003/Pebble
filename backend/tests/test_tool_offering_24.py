@@ -286,8 +286,11 @@ def test_the_large_route_prompt_names_only_offered_tools_and_gives_the_time_zone
                  'ui.render views', 'OpenApp only opens'):
         assert gone not in system, gone
     assert 'fix the cause and try again' in system
-    # The date line stays exactly as both evaluation arms get it (test_corpus_18a3); the time and zone follow it.
-    assert re.search(r'Current date: \d{4}-\d{2}-\d{2}\. Local time: \d{2}:\d{2}.*\(UTC[+-]\d{2}:\d{2}\)\.', system), system
+    # The date line stays exactly as both evaluation arms get it (test_corpus_18a3). Phase 35 (W5): the time and zone
+    # are in the run's task checkpoint, fixed for the run, so the system prompt is the same for a whole day's tasks.
+    assert re.search(r'Current date: \d{4}-\d{2}-\d{2}\.', system) and 'Local time' not in system, system
+    checkpoint = next(m['content'] for m in messages if m.get('_pebble_checkpoint'))
+    assert re.search(r'Local time when this task started: \d{2}:\d{2}.*\(UTC[+-]\d{2}:\d{2}\)\.', checkpoint), checkpoint
     # (Not "Open …" at the start: that shape is the host's own app route, which reads the installed apps.)
     opened = system_of(first(tmp_path / 'open', budget=LARGE, text='Could you open the calculator for me?')[0])
     assert 'OpenApp only opens an app on an explicit request' in opened

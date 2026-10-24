@@ -72,7 +72,9 @@ def test_every_request_with_thinking_asks_the_api_to_drop_a_stale_block(tmp_path
     sent = run(tmp_path, monkeypatch, 'https://api.anthropic.com/v1', tool_turns=2)
     assert len(sent) >= 3, 'a tool loop of three requests, as in the pilot'
     first = sent[0][1]['messages'][0]
-    assert any(body['messages'][0] != first for _, body in sent[1:]), 'the first message still changes per step'
+    # Phase 35 (W5): above 8K the first message is now the same in every request (the checkpoint is written once), so
+    # each request extends the previous one; the binding stays requested as a safety net for any prefix change.
+    assert all(body['messages'][0] == first for _, body in sent[1:]), 'the first message changes per step again'
     for headers, body in sent:
         assert body['thinking'] == {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
         assert headers['anthropic-beta'] == THINKING_BINDING_BETA == 'thinking-binding-controls-2026-08-01'

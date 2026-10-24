@@ -130,9 +130,13 @@ def test_the_t9_package_lowers_pebbles_input_without_removing_a_called_tool(arms
             assert {name for name, _ in entry['tools']} <= offered[entry['case']], entry['case']
 
 
-def test_the_tail_layout_raises_the_prefix_reuse_share(arms):
+def test_the_shipped_layout_now_reuses_more_of_each_prefix_than_the_tail_layout(arms):
+    """V1-078's tail layout (off) raised the measured prefix reuse share from 0.525 to 0.718 when this test was written.
+    Phase 35 (W5) made the shipped layout append-only above 8K instead (the checkpoint written once; the audit, plan
+    and diagnostics appended), which measured 0.789 against the tail layout's 0.757 on this plan. The shipped layout
+    must stay above what the tail layout first reached, and not below the tail layout now."""
     shipped, tail = arms['shipped'].reuse, arms['tail'].reuse
-    assert tail > shipped + 0.15, (shipped, tail)  # measured 0.525 -> 0.718 when this test was written
+    assert shipped > 0.718 and shipped >= tail, (shipped, tail)
     # Counted tokens (T9) stay about the same: the same text moves, nothing is added but one framing message.
     totals = {name: sum(r['input_tokens'] for r in arms[name].summary['runs'] if r['arm'] == 'pebble')
               for name in ('shipped', 'tail')}

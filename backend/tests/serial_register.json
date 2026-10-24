@@ -28,5 +28,8 @@
  },
  "test_validate_phase24.py::test_the_whole_source_campaign_runs_within_the_verifier_budget": {
   "reason": "Runs validate_phase24's whole campaign, whose first_request_not_blocked_by_index check bounds a first request at 1.0 s. Phase 32 T3, 6 workers: 2.25 s (run 1), 1.75 s (run 2), 1.89 s (run 3). Phase 31 trial 1 measured 1.11 s once under load too."
+ },
+ "test_install_sh_24.py": {
+  "reason": "Each test runs install.sh under sandbox-exec, with fake tools that are bash shims starting a Python process. Under 6 workers one run hung until the 120 s timeout twice in Phase 35 (development suite 1 and trial 1, both test_a_download_that_is_not_the_expected_app_installs_nothing): the trial 1 log stops after uname -m and before sw_vers, with nothing in install.sh between them. Alone it passed 20 of 20 (2-5 s), and the whole file 20 of 20 four at a time under six CPU burners. Each fake tool now also marks its end (calls.jsonl.done), so a recurrence shows which process stopped."
  }
 }

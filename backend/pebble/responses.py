@@ -39,6 +39,7 @@ MAX_OUTPUT_ITEMS = 256
 FINISHED = (None, 'completed')
 SUMMARY = 'auto'       # the Responses API's own choice of summary detail
 SUMMARY_ABOVE = 4096   # request bodies at or below this working budget are unchanged
+PARALLEL_ABOVE = 8192  # Phase 35 (W7): parallel tool calls above this working budget only
 LOOPBACK = {'localhost', '127.0.0.1', '::1'}
 CONNECT_NOTICE = 1.0   # seconds still connecting before the activity timeline shows "Connecting to …"
 CACHE_KEY = re.compile(r'[A-Za-z0-9_.:-]{1,64}')  # prompt_cache_key: an opaque run id, never task content
@@ -458,7 +459,10 @@ def complete_responses(provider, profile, messages, tools, cancel, token, effort
     if tools:
         body['tools'] = [{'type': 'function', **t['function'], 'strict': False} for t in tools]
         body['tool_choice'] = 'auto'
-        body['parallel_tool_calls'] = False
+        # Phase 35 (W7): above 8K the model may ask for several tool calls in one response; the runner still performs
+        # them one at a time, in order, each under its own policy and approval. Measured on the sol claim run, 99 % of a
+        # task's time was model requests and the slowest runs sent one call per request (three reads, three requests).
+        body['parallel_tool_calls'] = profile.get('budget', profile['context']) > PARALLEL_ABOVE
     cache_key = getattr(provider, 'prompt_cache_key', None)
     if (profile.get('kind') == 'chatgpt' and isinstance(cache_key, str) and CACHE_KEY.fullmatch(cache_key)
             and profile.get('budget', profile['context']) > SUMMARY_ABOVE):

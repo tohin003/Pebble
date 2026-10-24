@@ -332,6 +332,6 @@ test("About's What's new lines are the newest CHANGELOG.md highlights, in order 
   const section = changelog.slice(start, changelog.indexOf("\n## ", start + 1));
   const highlights = section.slice(section.indexOf("### Highlights"), section.indexOf("\n### ", section.indexOf("### Highlights") + 1));
   const bullets = [...highlights.matchAll(/^- (.+)$/gm)].map((m) => m[1].trim());
-  assert.equal(lines.length, 5);  // Phase 34 (1.2.0): five highlights
+  assert.equal(lines.length, 3);  // Phase 35 (1.3.0): three highlights
   assert.deepEqual(bullets, lines);
 });

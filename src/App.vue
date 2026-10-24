@@ -1416,11 +1416,9 @@ function chooseCommand(text: string) {
 // Phase 24 (V1-135): "What's new" in About. An excerpt of the release's CHANGELOG.md entry (t24-publish keeps the
 // two in step); plain text, bundled with the build, no update check (that is after 1.0).
 const WHATS_NEW = Object.freeze([
-  "Pebble can check a case your tests don't cover in a temporary copy, without adding a test file to your project.",
-  "A change to a test file you didn't ask for waits for your approval, in Auto mode too.",
-  "New writing rule: keep to the reply shape you ask for, such as three lines or a required last line.",
-  "New writing rule: cite only the source relied on, and say plainly when an answer can't be found.",
-  "A long task no longer fails when a request is retried right after Pebble archived older context.",
+  "Above 8K, each request of a task now extends the previous one, so prompt caching can reuse it.",
+  "The ChatGPT route can ask for several tool calls in one step; Pebble still performs them one at a time.",
+  "On the Anthropic route the model's earlier reasoning stays valid between steps, since nothing before it changes.",
 ]);
 // Phase 18 E06: the native Save dialog returns a single-use token; this window never sees or sends a path.
 async function chooseTelemetryDestination(): Promise<string | null> {
