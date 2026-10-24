@@ -336,20 +336,33 @@ mod stealth_mac {
 }
 
 /// Apply or lift Stealth Lockdown on every window and the menu-bar icon. Runs on AppKit's main thread.
+///
+/// Phase 37 (1.5.0, the person's report on 1.4.0): a full-screen workspace that turned stealthy came out of full
+/// screen still screen-sized, the Dock showing and its red, yellow and green buttons gone, because it became a panel
+/// while macOS was still animating it out of its Space. Capture protection, the Dock and ⌘Tab still change at once;
+/// only that window's panel switch waits for the exit to end (windowed_after_full_screen), and it then becomes an
+/// ordinary-sized window, centred. Turning stealth off returns it to full screen.
 fn apply_stealth(app:&tauri::AppHandle, on:bool) {
     STEALTH.store(on, Ordering::SeqCst);
     for label in ["pet", "main"] {
         let Some(window)=app.get_webview_window(label) else { continue };
         let _=window.set_content_protected(on);
+        let mut leaving=false;
         if label=="main" {
             let _=window.set_shadow(!on);
+            #[cfg(target_os="macos")]
+            { leaving=on && appkit_fullscreen(window.ns_window()); }
             if on && window.is_fullscreen().unwrap_or(false) { let _=window.set_fullscreen(false); }
+            if !on && LEFT_FULL_SCREEN.swap(false, Ordering::SeqCst) && window.is_visible().unwrap_or(false) {
+                RETURN_TO_FULL_SCREEN.store(true, Ordering::SeqCst);
+            }
         }
         #[cfg(target_os="macos")]
         if let Ok(ns)=window.ns_window() {
             let ns=ns as *mut objc2::runtime::AnyObject;
             stealth_mac::set_mission_control(label, ns, on);
-            let _=stealth_mac::set_panel(ns, on);
+            if leaving { LEFT_FULL_SCREEN.store(true, Ordering::SeqCst); windowed_after_full_screen(app); }
+            else { let _=stealth_mac::set_panel(ns, on); }
         }
     }
     #[cfg(target_os="macos")]
@@ -358,8 +371,50 @@ fn apply_stealth(app:&tauri::AppHandle, on:bool) {
         let workspace_open=app.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
         let _=app.set_activation_policy(if on || !workspace_open {tauri::ActivationPolicy::Accessory} else {tauri::ActivationPolicy::Regular});
     }
+    // Back to full screen once Pebble is an ordinary app again (Dock and ⌘Tab), as the workspace was before stealth.
+    if let Some(main)=app.get_webview_window("main") {
+        if RETURN_TO_FULL_SCREEN.swap(false, Ordering::SeqCst) { let _=main.set_fullscreen(true); }
+    }
     tray_state(app, on);
 }
+
+static LEFT_FULL_SCREEN: AtomicBool = AtomicBool::new(false); // stealth took the workspace out of full screen
+static RETURN_TO_FULL_SCREEN: AtomicBool = AtomicBool::new(false);
+
+/// Once the workspace has left its full-screen Space (as to_pet waits for it), and only if stealth is still on: an
+/// ordinary window, the configured size within 80 % of the screen, centred, then the non-activating panel.
+#[cfg(target_os="macos")]
+fn windowed_after_full_screen(app:&tauri::AppHandle) {
+    let handle=app.clone();
+    let _=std::thread::Builder::new().name("pebble-stealth-windowed".into()).spawn(move || {
+        let deadline=Instant::now()+Duration::from_secs(5);
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            let (tx, rx) = mpsc::channel();
+            let probe=handle.clone();
+            let _=handle.run_on_main_thread(move || { let _=tx.send(main_fullscreen(&probe)); });
+            if !rx.recv_timeout(Duration::from_secs(1)).unwrap_or(true) || Instant::now()>deadline { break; }
+        }
+        std::thread::sleep(Duration::from_millis(400)); // the desktop's slide-in after the transition
+        let shown=handle.clone();
+        let _=handle.run_on_main_thread(move || {
+            if !stealth_on() { return; }
+            let Some(main)=shown.get_webview_window("main") else { return };
+            let (mut width, mut height)=(WINDOWED_SIZE.0, WINDOWED_SIZE.1);
+            if let Ok(Some(monitor))=main.current_monitor() {
+                let screen=monitor.size().to_logical::<f64>(monitor.scale_factor());
+                width=width.min(screen.width*0.8);
+                height=height.min(screen.height*0.8);
+            }
+            let _=main.set_size(tauri::LogicalSize::new(width, height));
+            let _=main.center();
+            if let Ok(ns)=main.ns_window() { let _=stealth_mac::set_panel(ns as *mut objc2::runtime::AnyObject, true); }
+        });
+    });
+}
+#[cfg(not(target_os="macos"))]
+fn windowed_after_full_screen(_app:&tauri::AppHandle) {}
+const WINDOWED_SIZE: (f64, f64) = (1160.0, 800.0); // the workspace's configured size (tauri.conf.json)
 
 /// The settings switch (main window only) applies the state the backend now holds.
 #[tauri::command]

@@ -103,7 +103,7 @@ from pathlib import Path
 from validate_runtime import ROOT
 from validate_phase13 import bounded, owned_backend, sha
 from validate_phase14 import ENV_ALLOWLIST
-from validate_phase19 import LAYERS, PHASE18_TOOLS, shell, tool_name
+from validate_phase19 import LATER_TOOLS, LAYERS, PHASE18_TOOLS, shell, tool_name
 from validate_phase20 import Service as Phase20Service, backend_path, write_new
 from validate_phase21 import checkout_version, declared_versions
 from measure_resources import EgressTrap
@@ -1416,7 +1416,8 @@ class Campaign:
             from pebble.memory import KINDS
             from pebble.tool_catalogue import TOOLS
             names = [tool_name(t) for t in TOOLS]
-            assert len(names) == len(set(names)) and set(names) == PHASE18_TOOLS, sorted(set(names) ^ PHASE18_TOOLS)
+            catalogue = PHASE18_TOOLS | LATER_TOOLS  # D72: tools added after Phase 18, each named with its phase
+            assert len(names) == len(set(names)) and set(names) == catalogue, sorted(set(names) ^ catalogue)
             assert tuple(KINDS) == LAYERS, ('memory layers', list(KINDS))
             return {'model_tools': len(names), 'memory_layers': list(LAYERS)}
         self.check('c1_no_model_tool_is_added_and_the_six_memory_layers_are_exact', catalogue)

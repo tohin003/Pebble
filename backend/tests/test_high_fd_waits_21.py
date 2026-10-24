@@ -82,9 +82,14 @@ def describe_socket(fd):
             state = 'connected'
         except OSError:
             state = 'unconnected'
-        if sock.family in (socket.AF_INET, socket.AF_INET6) and state == 'unconnected':
-            state = 'listening' if sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) else state
-        return f'{sock.family.name} {state}'
+        # Phase 37: only a stream socket can be listening; asking a UDP socket (one an earlier file in the same
+        # worker left open, found in the Phase 37 pre-trials) raises ENOPROTOOPT, and this census is only reported.
+        if sock.family in (socket.AF_INET, socket.AF_INET6) and state == 'unconnected' and sock.type == socket.SOCK_STREAM:
+            try:
+                state = 'listening' if sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) else state
+            except OSError:
+                state = 'unknown'
+        return f'{sock.family.name} {sock.type.name} {state}'
 
 
 def descriptor_path(fd):

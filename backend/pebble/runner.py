@@ -1122,6 +1122,11 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
         # Phase 15 C07: read-only Python cross-references; never at 4K, where the schema has no margin.
         if ws and code_references.offer(budget, text):
             relevant.add('CodeReferences')
+        # Phase 37 (1.5.0, Pebble's Workshop): RunCode above 8K with a project, from the run's first step (so a run keeps
+        # one tool list); PEBBLE_CODE_MODE=0 keeps 1.4.0's requests.
+        from .code_mode import enabled as code_mode_enabled
+        if ws and large and code_mode_enabled(app):
+            relevant.add('RunCode')
         if ws and re.search(r'\b(git|diff|commit|branch|staged|history|worktree)\b', text, re.I):
             relevant |= {'ReadGitStatus', 'ReadGitDiff', 'ReadGitHistory'}
         if ws and re.search(r'\b(worktree|export)\b', text, re.I):
@@ -2053,6 +2058,7 @@ def run(app, chat, text, deliberate, sources, run_id=None, resume=None, app_inve
             skill_changed = False
             looping = None  # V1-083: (tool, count) once a call failed the same way LOOP_STOP_AT times
             observed_screen = None  # Phase 22 (b22 P8): the session of this batch's last active ScreenObserve
+            app.step_tools = step_tools  # Phase 37: RunCode's inner calls are checked against this step's offer
             for call in calls:
                 if app.cancel.is_set():
                     raise InterruptedError("Stopped by you.")

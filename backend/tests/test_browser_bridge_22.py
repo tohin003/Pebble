@@ -794,11 +794,20 @@ def test_shares_are_validated_and_ended_shares_end_their_sessions(stack):
     assert stack.sessions.observe(sid, stack.run)['state'] == 'active'
     stack.ext.share(row(share_id='b' * 32))  # shared again: a new share, so the old grant ends
     until(lambda: stack.bridge.share('5')['share_id'] == 'b' * 32)
+    # Phase 37 (development suite 1, under load): the bridge revokes the old session in the background; until that
+    # lands, observe refuses through its own reshare check ('session_expired'). Wait for the recorded revocation.
+    until(lambda: session_revoked(stack, sid))
     refused('session_revoked', stack.sessions.observe, sid, stack.run)
     sid = grant(stack)
     stack.ext.share()
     until(lambda: stack.bridge.share('5') is None)
+    until(lambda: session_revoked(stack, sid))
     refused('session_revoked', stack.sessions.observe, sid, stack.run)
+
+
+def session_revoked(stack, sid):
+    rows = stack.store.query('SELECT state FROM screen_sessions WHERE session_id=?', (sid,))
+    return bool(rows) and rows[0]['state'] == 'revoked'
 
 
 # ---- grants (7.4 checks 1 and 2) -----------------------------------------------------------------------

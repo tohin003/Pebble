@@ -33,6 +33,7 @@ GROUP = {
     "Grep": "files",
     'SearchFiles': 'files',
     'CodeReferences': 'files',
+    'RunCode': 'files',  # Phase 37: each call a script makes is checked against its own group as well
     "Write": "edits",
     "Append": "edits",
     "Edit": "edits",

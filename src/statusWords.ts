@@ -36,7 +36,7 @@ const TOOL_CLASS_TABLE: Record<string, readonly string[]> = {
   searching: ["Glob", "Grep", "SearchFiles", "CodeReferences", "WebSearch", "Weather", "SearchPluginTools", "SearchPluginData", "ResearchPlan"],
   editing: ["Write", "Append", "Edit", "ProposePatch", "IntegrateAgentPatch", "ProposeGitChange", "PreviewWorktreeExport", "IntegrateWorktreeFile"],
   testing: ["RunTests", "RunRecipe"],
-  running: ["RunCommand", "StartCommand", "WaitProcess", "StopProcess", "WriteProcessInput", "RunPlan", "StartPreview", "PrepareEnvironment"],
+  running: ["RunCommand", "StartCommand", "WaitProcess", "StopProcess", "WriteProcessInput", "RunPlan", "StartPreview", "PrepareEnvironment", "RunCode"],
   delegating: ["SpawnAgent", "SpawnWorktreeAgent", "ReadAgentTree", "SendAgentMessage", "WaitForAgents", "DelegateAgentTask", "StopAgent", "RetryAgent", "AskParentQuestion", "AnswerAgentQuestion", "PromoteAgentQuestion", "ReviewAgentResult", "ReadAgentMessage", "ReadAgentPatch", "RequestAgentEffect", "ReadAgentEffect", "ReadAgentEffects", "ExecuteAgentEffect", "DismissAgentEffect"],
   viewing: ["UIRender", "UIUpdate", "RenderMod"],
   thinking: ["AskUserQuestion", "UpdatePlan", "UpdateGoal", "MemoryPropose"],

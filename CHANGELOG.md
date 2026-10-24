@@ -4,6 +4,59 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [1.5.0]
+
+Pebble's Workshop, part 1: Code Mode. Above 8K, with a project open, Pebble can now write a short Python script that
+calls its own tools, and only what the script prints comes back. A task that reads, searches and filters many things
+can do it in one step instead of carrying every intermediate result through the conversation. Whether this lowers what
+tasks cost or how long they take is measured in the next benchmark; no saving is claimed here.
+
+### Highlights
+
+- Pebble's Workshop, part 1: Pebble can run a short script that calls its tools; only what it prints comes back.
+- Every call a script makes is checked, approved and recorded exactly like a direct call.
+- Turning on Stealth Lockdown in the full-screen workspace now gives an ordinary, centred window with its buttons.
+
+### Added
+
+- **RunCode (Code Mode).** The model writes one Python script that calls this run's tools through a `pebble` module:
+  read, grep, glob and file search, Python references, git status, diff and history, run evidence and attachments,
+  web search and pages (with the web permission), writes and edits, and plugin calls. Only what the script prints
+  returns to the model, as untrusted data; the tools' results stay out of the conversation.
+- **The same rules as direct calls.** Each call a script makes goes back to Pebble and is validated, authorised and
+  recorded with its own receipt, so file protection, edit review and approvals apply to it: in Ask mode an edit waits
+  for your approval, and plugin calls wait for review as they always do. A refused call raises an error in the script
+  with Pebble's reason. Commands, tests, helper agents, questions and memory are not callable from a script.
+- **A sealed sandbox.** The script runs in a separate process with no network, no access to your files except through
+  those calls, no other processes, and writes only to its own temporary folder. It stops after 60 seconds or 200
+  calls, and at most 16,000 printed characters come back.
+- Offered from a task's first step above 8K with a project, so the tool list never changes mid-task; not offered at 8K
+  and below, without a project, or to helper agents.
+
+### Fixed
+
+- **Stealth Lockdown in the full-screen workspace** (reported on 1.4.0): turning it on left the workspace screen-sized
+  with the Dock showing and its red, yellow and green buttons gone. It now leaves full screen into an ordinary window
+  (its usual size, within 80 % of the screen, centred); capture protection still applies at once, and turning Stealth
+  Lockdown off returns the workspace to full screen.
+
+### Changed
+
+- **The ChatGPT route names its run in a `session_id` header,** as that route's own client does, beside the cache key
+  it already sent. On the earlier benchmark none of Pebble's input there was served from the provider's prompt cache,
+  while most of Codex's was, although Pebble's requests extend each other. Whether this header changes that is
+  measured in the next check; nothing else in the request changes.
+
+### For contributors
+
+- `PEBBLE_CODE_MODE=0` keeps 1.4.0's requests (RunCode never offered).
+- `backend/pebble/code_mode.py` (the host side), `backend/pebble/code_worker.py` (the child, `main.py --code-worker`);
+  `backend/tests/test_code_mode_37.py`; `backend/tests/test_chatgpt_session_header_37.py`; `src/Phase37Shell.test.mjs`;
+  `scripts/validate_phase37.py`.
+- D72: RunCode is the first model tool added since Phase 18. validate_phase19, validate_phase20, validate_phase22,
+  validate_phase24 and test_phase19_security compare the catalogue with Phase 18's tools plus the tools later phases
+  added, each named with its phase; any other addition still fails. D73: validate_phase36 accepts a checkout past 1.4.0.
+
 ## [1.4.0]
 
 Long tasks keep a smaller window. Above a 32K budget, once a task has read a lot, Pebble seals the results of its older

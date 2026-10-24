@@ -126,6 +126,7 @@ def main():
     parser.add_argument("--extract-image")
     parser.add_argument("--extract-file")
     parser.add_argument('--hook-worker', action='store_true')
+    parser.add_argument('--code-worker', action='store_true')  # Phase 37: RunCode's sandboxed child (code_mode.py)
     parser.add_argument('--mod-worker', action='store_true')
     parser.add_argument('--mcp-http-worker', action='store_true')
     parser.add_argument('--mcp-stdio-worker', action='store_true')
@@ -166,6 +167,10 @@ def main():
         # Phase 16 D04: serves only the blocked backend until experiment E-N2.
         from pebble.ax_worker import worker_main as ax_main
         ax_main()
+        return
+    if args.code_worker:
+        from pebble.code_worker import main as code_main
+        code_main()
         return
     if args.hook_worker:
         from pebble.hook_worker import main as hook_main

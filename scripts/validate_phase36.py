@@ -376,7 +376,9 @@ class Campaign:
 
         def version():
             current = checkout_version()
-            assert current == '1.4.0', current
+            # D73 (Phase 37): the release that ships long-task sealing is 1.4.0 and this check reads its entry; a later
+            # checkout keeps that entry and every assertion on it (as D66 did for validate_phase35).
+            assert tuple(int(x) for x in current.split('.')) >= (1, 4, 0), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
             entry = changelog_entry('1.4.0')

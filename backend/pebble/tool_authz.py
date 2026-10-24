@@ -54,7 +54,8 @@ ROOT_ONLY = frozenset({
     'SpawnWorktreeAgent', 'ReadProcess', 'WaitProcess', 'AskUserQuestion', 'UpdatePlan', 'MemoryPropose',
     'ReviewAgentResult', 'RetryAgent', 'PromoteAgentQuestion', 'ReadAgentPatch', 'ReadAgentMessage',
     'ReadAgentEffects', 'DismissAgentEffect', 'LoadPluginTool', 'LoadPluginData', 'RunPlan', 'WriteProcessInput',
-    'ScreenObserve', 'ScreenAct', 'ResearchPlan', 'ResearchStatus', 'UpdateGoal'})
+    'ScreenObserve', 'ScreenAct', 'ResearchPlan', 'ResearchStatus', 'UpdateGoal',
+    'RunCode'})  # Phase 37: a script calls tools as the root run; child agents are not offered it
 # Trusted main-window routes. None is a model tool; a catalogue entry with one
 # of these names (compared case-insensitively) is refused for every model actor.
 NATIVE_ONLY = frozenset({

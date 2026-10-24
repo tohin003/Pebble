@@ -327,7 +327,7 @@ def _stream_pass(provider, profile, body, key, cancel, token, reasoning, budget,
 
     def request():
         try:
-            return provider.request(profile['url'] + '/responses', provider.headers('responses', key), body,
+            return provider.request(profile['url'] + '/responses', request_headers(provider, profile, key, body), body,
                                     timeout=REQUEST_TIMEOUT)
         except ProviderFailure as exc:
             if profile.get('kind') == 'chatgpt' and getattr(exc, 'code', None) is not None and exc.status is None:
@@ -437,6 +437,19 @@ def _stream_pass(provider, profile, body, key, cancel, token, reasoning, budget,
         timing['total'] = round(time.monotonic() - sent, 4)
         timing['stall'] = watchdog.expired
     return state
+
+
+def request_headers(provider, profile, key, body):
+    """The request's headers. Phase 37: on the ChatGPT route a run that sends prompt_cache_key (its opaque run id) also
+    names it in a session_id header, as the route's own client (Codex) does. Measured first: on the sol claim run's
+    ChatGPT backend, Codex's input was 89.7 % cached and Pebble's 0.0 % (1.0.4 and 1.4.0 alike), although Pebble's
+    requests above 8K extend each other (model_attempt.prefix append_only). Whether the header is what the backend's
+    cache routes by is measured on the next live check; nothing else in the request changes."""
+    headers = provider.headers('responses', key)
+    cache_key = body.get('prompt_cache_key')
+    if profile.get('kind') == 'chatgpt' and isinstance(cache_key, str) and CACHE_KEY.fullmatch(cache_key):
+        headers['session_id'] = cache_key
+    return headers
 
 
 def complete_responses(provider, profile, messages, tools, cancel, token, effort):

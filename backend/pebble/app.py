@@ -216,6 +216,9 @@ class App:
         # Phase 36 (W6): long-task sealing (context_seal) is on; PEBBLE_CONTEXT_SEAL=0 turns it off, for the 2.0.0
         # re-benchmark's registered control arm (D55).
         self.context_seal_enabled = os.environ.get('PEBBLE_CONTEXT_SEAL', '1') != '0'
+        # Phase 37 (1.5.0, Pebble's Workshop): RunCode above 8K; PEBBLE_CODE_MODE=0 keeps 1.4.0's requests.
+        self.code_mode_enabled = os.environ.get('PEBBLE_CODE_MODE', '1') != '0'
+        self.step_tools = None  # the runner's offered schemas for the step being executed (RunCode's inner calls)
         from .agent_manager import Agents
         self.agents = Agents(self)
         from .git_workflows import GitWorkflows
@@ -2487,6 +2490,7 @@ class App:
             "Grep": "Searching project source",
             'SearchFiles': 'Finding relevant source',
             'CodeReferences': 'Following Python definitions and references',
+            'RunCode': 'Running a script: ' + str(args.get('purpose', ''))[:120],
             'ResearchPlan': 'Planning research',
             'ResearchStatus': 'Checking research progress',
             'ReadSource': 'Reading a recorded source',
@@ -2623,7 +2627,9 @@ class App:
         except Exception as exc:
             if rid and not any(t['call_id'] == call_id and t['state'] == 'completed' for t in self.runs.tools(rid)):
                 self.runs.end_tool(rid, call_id, {'error': str(exc)},
-                    uncertain=name in EFFECTS and not isinstance(exc, (PolicyError, HookInterrupted)))
+                    # Phase 37: a script that failed mid-way may have made edits (each in its own receipt), so its
+                    # own receipt is uncertain too; RunCode stays out of EFFECTS, which names effects by tool.
+                    uncertain=(name in EFFECTS or name == 'RunCode') and not isinstance(exc, (PolicyError, HookInterrupted)))
             raise
         finally:
             self.current_tool_call = previous_call
@@ -2765,6 +2771,15 @@ class App:
         if name not in GROUP or not policy["tools"].get(GROUP[name], False):
             raise PolicyError("This tool is disabled in Permissions.")
         hook_review = self.tool_hook(name, args)
+        if name == 'RunCode':
+            # Phase 37 (1.5.0): each call the script makes goes back through validate, authorize and execute with its
+            # own nested receipt (code_mode.run), so the guard, edit_scope and approvals apply to it as to a direct call.
+            if not self.active_run or self.active != cid:
+                raise PolicyError('RunCode runs only inside its owning root run.')
+            if hook_review:
+                raise PolicyError('A hook requires review for this script; it did not run.')
+            from . import code_mode
+            return code_mode.run(self, args, ws, cid, self.current_tool_call, self.step_tools or [])
         if name in {'ReadProcess', 'WaitProcess', 'StopProcess', 'WriteProcessInput'}:
             if not self.active_run or self.active != cid or not policy['tools']['files']:
                 raise PolicyError('Process tools require their owning root run and project access.')

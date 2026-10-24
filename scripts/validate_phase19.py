@@ -98,6 +98,10 @@ PHASE18_TOOLS = frozenset((
     'SpawnAgent', 'SpawnWorktreeAgent', 'StartCommand', 'StartPreview', 'StopAgent', 'StopProcess', 'UIRender',
     'UIUpdate', 'UpdateGoal', 'UpdatePlan', 'WaitForAgents', 'WaitProcess', 'Weather', 'WebSearch', 'Write',
     'WriteProcessInput'))
+# D72 (Phase 37): model tools added after Phase 18, each named with its phase. The whole-catalogue checks compare the
+# current catalogue with PHASE18_TOOLS plus these, so any other addition still fails; PHASE18_TOOLS itself is unchanged,
+# and the 4K offers are still checked against it alone.
+LATER_TOOLS = frozenset({'RunCode'})  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
 UI_SCHEMA_BYTES_18 = {'UIRender': 1108, 'UIUpdate': 702}
 LEGACY_KINDS = ('quiz', 'diagram', 'html', 'form', 'table', 'chart', 'plan', 'evidence')
 LAYERS = ('working', 'episodic', 'semantic', 'procedural', 'temporal', 'profile')
@@ -595,7 +599,8 @@ class Campaign:
             from pebble import tool_authz
             from pebble.tool_catalogue import TOOLS
             names = [tool_name(t) for t in TOOLS]
-            assert len(names) == len(set(names)) and set(names) == PHASE18_TOOLS, sorted(set(names) ^ PHASE18_TOOLS)
+            catalogue = PHASE18_TOOLS | LATER_TOOLS  # D72
+            assert len(names) == len(set(names)) and set(names) == catalogue, sorted(set(names) ^ catalogue)
             folded = {n.casefold() for n in names}
             routes = set(PHASE19_ROUTES) | {'artifact_submit', 'artifact_stop', 'pet_gaze', 'companion'}
             assert not folded & {r.casefold() for r in routes}
@@ -1080,7 +1085,7 @@ def test_pinned_catalogue_kinds_layers_and_sources_match_this_checkout():
     from pebble import artifact_schema, memory, view_bindings
     from pebble.runner import SMALL_BRIEF
     from pebble.tool_catalogue import TOOLS
-    assert {tool_name(t) for t in TOOLS} == PHASE18_TOOLS
+    assert {tool_name(t) for t in TOOLS} == PHASE18_TOOLS | LATER_TOOLS  # D72
     if not {'UIRender', 'UIUpdate'} & set(SMALL_BRIEF):  # until a view brief lands, 4K offers the full copies
         views = {tool_name(t): len(compact(t).encode()) for t in TOOLS if tool_name(t) in UI_SCHEMA_BYTES_18}
         assert all(views[n] <= UI_SCHEMA_BYTES_18[n] for n in views), views

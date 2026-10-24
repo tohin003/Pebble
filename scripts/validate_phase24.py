@@ -74,7 +74,7 @@ if str(HERE) not in sys.path:
 from validate_runtime import ROOT  # noqa: E402
 from validate_phase13 import bounded, owned_backend, sha  # noqa: E402
 from validate_phase14 import ENV_ALLOWLIST  # noqa: E402
-from validate_phase19 import LAYERS, PHASE18_TOOLS, shell, tool_name  # noqa: E402
+from validate_phase19 import LATER_TOOLS, LAYERS, PHASE18_TOOLS, shell, tool_name  # noqa: E402
 from validate_phase20 import backend_path, write_new  # noqa: E402
 from validate_phase21 import checkout_version, declared_versions  # noqa: E402
 from measure_resources import EgressTrap  # noqa: E402
@@ -1467,7 +1467,8 @@ class Campaign:
             from pebble.memory import KINDS
             from pebble.tool_catalogue import TOOLS
             found = [tool_name(t) for t in TOOLS]
-            assert len(found) == len(set(found)) and set(found) == PHASE18_TOOLS, sorted(set(found) ^ PHASE18_TOOLS)
+            catalogue = PHASE18_TOOLS | LATER_TOOLS  # D72: tools added after Phase 18, each named with its phase
+            assert len(found) == len(set(found)) and set(found) == catalogue, sorted(set(found) ^ catalogue)
             assert tuple(KINDS) == LAYERS, ('memory layers', list(KINDS))
             return {'model_tools': len(found), 'memory_layers': list(LAYERS)}
         self.check('no_model_tool_added_and_six_memory_layers_exact', catalogue)

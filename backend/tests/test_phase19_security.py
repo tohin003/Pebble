@@ -822,7 +822,9 @@ def test_g23_the_companion_setting_is_validated_and_announced_to_every_window(ap
 def test_g24_no_model_tool_is_added_and_no_route_is_a_tool():
     from pebble.tool_catalogue import TOOLS
     names = [t['function']['name'] for t in TOOLS]
-    assert len(names) == len(set(names)) and set(names) == PHASE18_TOOLS, sorted(set(names) ^ PHASE18_TOOLS)
+    # D72 (Phase 37): the catalogue is Phase 18's plus the tools later phases added, each named with its phase.
+    catalogue = PHASE18_TOOLS | {'RunCode'}  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
+    assert len(names) == len(set(names)) and set(names) == catalogue, sorted(set(names) ^ catalogue)
     folded = {n.casefold() for n in names}
     assert not folded & {r.casefold() for r in (*PHASE19_ROUTES, 'artifact_submit', 'artifact_stop', 'pet_gaze',
                                                  'companion', 'approve', 'reject')}

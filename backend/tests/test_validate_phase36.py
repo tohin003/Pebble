@@ -148,7 +148,9 @@ def test_a_journal_that_accepts_a_stale_generation_fails(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('old, new', [
-    ('no saving is claimed here', 'it is 40 % cheaper'),
+    # The 1.4.0 entry's own sentence (the 1.5.0 entry, above it, repeats the closing words; Phase 37).
+    ('without losing quality, is\nmeasured in the next benchmark; no saving is claimed here.',
+     'without losing quality, is\nmeasured: it is 40 % cheaper.'),
     ('Long tasks keep a smaller window', 'Context Warping: long tasks keep a smaller window'),
 ])
 def test_notes_that_overclaim_fail(tmp_path, monkeypatch, old, new):

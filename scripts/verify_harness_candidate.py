@@ -68,10 +68,11 @@ SUITES = {
     'phase34': 'validate_phase34.py',  # 1.2.0's precision: checks off the project, tests stay yours, the retry race (Phase 34)
     'phase35': 'validate_phase35.py',  # 1.3.0: requests above 8K extend each other; parallel tool calls (Phase 35)
     'phase36': 'validate_phase36.py',  # 1.4.0: a long task's older results sealed in chunks, read back exactly (Phase 36)
+    'phase37': 'validate_phase37.py',  # 1.5.0: Pebble's Workshop part 1, Code Mode; the Stealth full-screen fix (Phase 37)
 }
 PHASES = ('phase10', 'phase11', 'phase12', 'phase13', 'phase14', 'phase15', 'phase16', 'phase17', 'phase18', 'phase19',
           'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29',
-          'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36')
+          'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37')
 # Historical suites that can no longer pass, kept unchanged as historical evidence, with the phase from
 # which they leave the default campaign and the reason. Each stays runnable with --suite.
 # Phase 32 (T4): suites that measure time or the machine, run alone after the pooled ones under --jobs N.

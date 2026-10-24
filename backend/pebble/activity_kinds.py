@@ -30,7 +30,7 @@ _CLASSES = {
                 'PreviewWorktreeExport', 'IntegrateWorktreeFile'),
     'testing': ('RunTests', 'RunRecipe'),
     'running': ('RunCommand', 'StartCommand', 'WaitProcess', 'StopProcess', 'WriteProcessInput', 'RunPlan',
-                'StartPreview', 'PrepareEnvironment'),
+                'StartPreview', 'PrepareEnvironment', 'RunCode'),
     'delegating': ('SpawnAgent', 'SpawnWorktreeAgent', 'ReadAgentTree', 'SendAgentMessage', 'WaitForAgents',
                    'DelegateAgentTask', 'StopAgent', 'RetryAgent', 'AskParentQuestion', 'AnswerAgentQuestion',
                    'PromoteAgentQuestion', 'ReviewAgentResult', 'ReadAgentMessage', 'ReadAgentPatch',
