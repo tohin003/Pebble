@@ -82,7 +82,12 @@ def test_a_coding_task_extends_every_request_above_8k(tmp_path):
         v34.call('Write', {'file_path': 'stats.py', 'content': v34.FIXED}, 'w1'),
         v34.call('RunTests', {'recipe': 'python-unittest', 'check': v34.CHECK}, 'c1'),
         v34.call('RunTests', {'recipe': 'python-unittest'}, 't1')], 'Make mean return 0.0 for an empty list.')
-    assert reports[0] == {'messages': 5, 'first': True}
+    # Phase 46 (runner.PREFETCH): the host reads the tiny project's stats.py and test_stats.py before the first request,
+    # shown in one HOST PREFETCH message appended after the request (5 messages without it; its views are current, so
+    # no audit lists them until one changes); every later request still extends the one before.
+    extra = ['pebble_prefetch'] if runner.PREFETCH else []
+    assert reports[0] == {'messages': 5 + len(extra), 'first': True}
+    assert [m.get('name') for m in requests[0][5:]] == extra
     assert len(reports) >= 6 and all(r['append_only'] for r in reports[1:]), reports
     # The audit is appended, listing only changed views; the earlier ones stay where they were.
     audits = [m for m in requests[-1] if m.get('name') == 'pebble_source_status']

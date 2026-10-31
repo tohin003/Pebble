@@ -101,6 +101,19 @@ test("measured: each changed text token, 0.6.1 and now, with its worst pair", ()
   console.log(rows.join("; "));
 });
 
+// Phase 46 (1.9.29, the work view): its status colours are words and marks too, so they meet the same bar on every
+// surface in both themes (the app's own; the Chrome popup has no work view).
+test("the work view's status colours reach 4.5:1 on every surface (both themes)", () => {
+  const failing = [];
+  for (const [name, theme] of THEMES)
+    for (const text of ["ok", "warn"])
+      for (const surface of SURFACES) {
+        const ratio = contrast(hex(theme, text), hex(theme, surface));
+        if (ratio < 4.5) failing.push(`${name} --${text} on --${surface}: ${ratio.toFixed(2)}`);
+      }
+  assert.deepEqual(failing, [], failing.join("\n"));
+});
+
 test("the inspection's three corrections are in place", () => {
   // i5-ux-01 proposed #646d65 and computed #636b63 as the minimum that passes on every light surface; #646d65 is
   // 4.41:1 on --selected (#e5ebe0), so the computed minimum is used.
@@ -131,4 +144,21 @@ test("the Chrome extension's popup text tokens reach 4.5:1 on its surfaces (both
     }
   assert.deepEqual(failing, [], failing.join("\n"));
   console.log("popup lowest: " + lowest.join("; "));
+});
+
+// Phase 46 (1.9.29, w25-genui-b): chart series are graphical objects (WCAG 1.4.11): each reaches 3:1 on every surface
+// a chart sits on, in both themes, and the six are distinct so a legend can be told apart.
+test("chart series colours reach 3:1 on every surface and differ from each other (both themes)", () => {
+  const failing = [];
+  for (const [name, theme] of THEMES) {
+    const series = [1, 2, 3, 4, 5, 6].map((i) => hex(theme, "chart-" + i));
+    assert.equal(new Set(series).size, 6, name + ": six distinct colours");
+    assert.equal(series[0], hex(theme, "accent"), name + ": the first series is the accent");
+    for (const [i, colour] of series.entries())
+      for (const surface of SURFACES) {
+        const ratio = contrast(colour, hex(theme, surface));
+        if (ratio < 3) failing.push(`${name} --chart-${i + 1} ${colour} on --${surface}: ${ratio.toFixed(2)}`);
+      }
+  }
+  assert.deepEqual(failing, [], failing.join("\n"));
 });

@@ -2214,8 +2214,11 @@ class Campaign:
             shapes, models = 0, 0
             for tag, run in sorted(runs.items()):
                 found = self.activity(service, run['rid'])
-                assert set(found) == {'run_id', 'state', 'started', 'elapsed', 'items', 'reasoning', 'usage', 'next'}, (
-                    tag, sorted(found))
+                # Phase 46 (1.9.29, D206): the reply adds the work view's header and, once settled, its summary
+                # (pebble-ui-spec v1); the contract's other keys and every check below are unchanged
+                assert set(found) == {'run_id', 'state', 'started', 'elapsed', 'items', 'reasoning', 'usage', 'next',
+                                      'header', 'summary'}, (tag, sorted(found))
+                assert isinstance(found['header'], dict) and (found['summary'] is None or isinstance(found['summary'], dict))
                 assert found['run_id'] == run['rid'] and isinstance(found['started'], (int, float))
                 assert isinstance(found['elapsed'], (int, float)) and found['elapsed'] >= 0
                 reasoning = found['reasoning']
@@ -2227,7 +2230,9 @@ class Campaign:
                 assert seqs == sorted(set(seqs)) and found['next'] == max([0] + seqs), (tag, seqs, found['next'])
                 for item in found['items']:
                     extra = {'headers_ms', 'first_event_ms'} if item['kind'] == 'model' else set()
-                    assert set(item) == ITEM_KEYS | extra, (tag, sorted(item))
+                    # Phase 46 (1.9.29): an item may carry its work view, a typed object (test_work_view_46 checks it)
+                    assert set(item) - {'view'} == ITEM_KEYS | extra and isinstance(item.get('view', {}), dict), (
+                        tag, sorted(item))
                     assert item['kind'] in ACTIVITY_KINDS and item['status'] in ('running', 'done', 'failed'), (tag, item)
                     assert isinstance(item['label'], str) and 0 < len(item['label']) <= LABEL_CAP, (tag, item['label'])
                     assert item['detail'] is None or isinstance(item['detail'], str) and len(item['detail']) <= DETAIL_CAP

@@ -9,6 +9,7 @@ shell/native effects or raw permission/credential inheritance are exposed here.
 import copy
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -20,7 +21,7 @@ from .agent_provider import InferenceLane, PinnedProvider, attempt_usage, usage_
 from .agent_tree import Tree, ACTIVE, TERMINAL, ROOT_LIVE, WORKTREE_TOOLS, ordinary, text, normalized_path, ToolBudgetExhausted
 from .delegation_history import DelegationHistory
 from .delegation_policy import DelegationRefused, UnfitLimits, json_ids, ping_pong_refusal, refuse, schema_note, task_kind
-from .policy import Workspace, PolicyError, digest, MAX_FILE
+from .policy import Workspace, PolicyError, binary_note, digest, MAX_FILE
 from .recovery import complete_with_retry
 from .token_budget import TokenBudget
 from .tool_catalogue import TOOLS
@@ -818,7 +819,10 @@ class Agents:
             raise PolicyError('AgentGuard requires parent review for this read.')
         if name == 'Read':
             data = ws.snapshot(args['file_path'])
-            source = data.decode('utf-8')
+            try:
+                source = data.decode('utf-8')
+            except UnicodeDecodeError:
+                raise PolicyError(binary_note(args['file_path'], data)) from None
             offset, limit, char = args.get('offset', 1), args.get('limit', 100), args.get('char_offset', 0)
             if type(offset) is not int or offset < 1 or type(limit) is not int or not 1 <= limit <= 2000 or type(char) is not int or not 0 <= char <= MAX_FILE:
                 raise PolicyError('Use bounded line and character offsets.')
@@ -1273,7 +1277,7 @@ class Agents:
             db.execute("UPDATE agent_patches SET status='broker_proposed' WHERE id=? AND status='proposed'", (patch_id,))
         return {**result, 'patch_id': patch_id, 'agent_id': node['id'], 'generation': node['generation']}
 
-    def completion(self, cid, rid):
+    def completion(self, cid, rid, answer=None):
         nodes = self.tree.list(cid, rid)
         pending = [n['id'] for n in nodes if n['status'] in ACTIVE]
         if pending:
@@ -1289,7 +1293,46 @@ class Agents:
             unread = self.store.db.execute('SELECT 1 FROM agent_messages WHERE run_id=? AND target=? AND acked=0 AND revoked=0 LIMIT 1', (rid, rid)).fetchone()
         if unread:
             issues.append('Unread delegated mail remains. Read it in full with ReadAgentMessage before completing.')
+        issues += self._unsettled_once(rid, nodes, answer)
         return {'state': 'verification_required' if issues else 'completed', 'issues': issues, 'repairable': bool(issues)}
+
+    # Phase 46 (the lead, impact run 62: validate_phase20_faults f6 and validate_phase8): a reply that already says a
+    # delegated part failed or is not done needs no repair turn for it, and a child that was stopped was stopped on
+    # purpose (by the person or the parent); only a failed or exhausted child, or an unapplied accepted proposal, that
+    # the reply passes over in silence is named.
+    UNSETTLED_SAID = re.compile(
+        r"\b(?:child|children|agents?|sub-?agents?|delegat\w*|helpers?|workers?)\b[^.\n]{0,100}?\b(?:failed|did\s+not|"
+        r"didn'?t|was\s+not|wasn'?t|were\s+not|weren'?t|is\s+not|isn'?t|not\s+(?:done|finished|completed|applied|"
+        r"integrated|used)|could\s*n[o']t|couldn'?t|dismissed|no\s+(?:result|evidence|output))\b", re.I)
+    NOT_APPLIED = re.compile(r"\bnot\s+(?:applied|integrated|merged)\b|\bunapplied\b", re.I)
+
+    def _unsettled_once(self, rid, nodes, answer=None):
+        """Phase 46 (1.9.27, golden held-out parallel_work: Opus 4 and sol 3 false completions of 15): a child that
+        failed, was stopped or ran out of budget can be dismissed, and an accepted child's proposal can stay unintegrated,
+        while the reply counts that part as done (MAST's "premature termination" and "no or incomplete verification",
+        https://arxiv.org/abs/2503.13657). Each is named once, as one repair turn, so the reply says what became of it;
+        the run is not held for it afterwards."""
+        with self.store.lock:
+            patches = self.store.db.execute(
+                "SELECT p.id,p.path,n.name FROM agent_patches p JOIN agent_nodes n ON n.id=p.agent_id AND "
+                "n.generation=p.generation WHERE p.run_id=? AND p.status='proposed' AND n.review='accepted' "
+                "ORDER BY p.created", (rid,)).fetchall()
+            named = [json.loads(row[0]) for row in self.store.db.execute(
+                "SELECT payload FROM run_events WHERE run_id=? AND kind='agents_unsettled'", (rid,)).fetchall()]
+        said = answer if isinstance(answer, str) else ''
+        cut = [n for n in nodes if n['review'] == 'dismissed' and n['status'] not in ('completed', 'stopped')
+               and n['id'] not in {i for p in named for i in p.get('children', [])} and not self.UNSETTLED_SAID.search(said)]
+        patches = [p for p in patches if p[0] not in {i for e in named for i in e.get('patches', [])}
+                   and not (p[1] in said and self.NOT_APPLIED.search(said))]
+        if not (cut or patches):
+            return []
+        self.app.runs.note(rid, 'agents_unsettled', {'children': [n['id'] for n in cut], 'patches': [p[0] for p in patches]})
+        return (['Child ' + n['name'] + ' ended ' + n['status'] + ' and its result was dismissed, so its task has no '
+                 'accepted result (' + ' '.join(str(n['task']).split())[:160] + '). Do that part yourself now, or say '
+                 'in your reply that it is not done; never count it as done.' for n in cut]
+                + ['Child ' + name + "'s accepted proposal for " + path + ' was never integrated, so the project does '
+                   'not have it. Integrate it with IntegrateAgentPatch, or say in your reply that it is not applied.'
+                   for _, path, name in patches])
 
     def forget(self, cid):
         with self.tree._transaction() as db:

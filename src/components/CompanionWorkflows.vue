@@ -98,7 +98,70 @@ function compact(value: unknown) {
   try { return (JSON.stringify(value) ?? String(value)).slice(0, 2000); } catch { return 'Display data is unavailable.'; }
 }
 function configRows(config: Record<string, unknown>) {
-  return configFields.map(([label, key]) => [label, key in config ? compact(config[key]) : 'not reported'] as [string, string]);
+  return configFields.map(([label, key]) => [label, key in config ? plain(key, config[key]) : 'not reported'] as [string, string]);
+}
+// Phase 45 (F143, audit round R4): the review named the model, permissions and limits as raw JSON
+// (Model {"id":"82dca904…","kind":"chatgpt",…}); they read as words, and the exact summary stays under Technical details.
+const KIND_WORDS: Record<string, string> = { chatgpt: 'ChatGPT', local: 'on this Mac', openai: 'OpenAI', anthropic: 'Anthropic',
+  openrouter: 'OpenRouter', ollama: 'Ollama', gemini: 'Gemini' };
+const MODE_WORDS: Record<string, string> = { full: 'Full access', ask: 'Ask before acting', auto: 'Auto', plan: 'Plan only',
+  read: 'Read only', readonly: 'Read only', custom: 'Custom' };
+const TOOL_WORDS: Record<string, string> = { apps: 'apps', screen: 'screen', files: 'files', file_write: 'writing files',
+  file_read: 'reading files', shell: 'commands', terminal: 'terminal', network: 'network', web: 'web', browser: 'browser' };
+const ACCESS_WORDS: Record<string, string> = { ask: 'asks first', allow: 'allowed', deny: 'off', true: 'on', false: 'off' };
+function seconds(value: number) {
+  if (value >= 3600 && value % 3600 === 0) return value / 3600 + (value === 3600 ? ' hour' : ' hours');
+  if (value >= 60 && value % 60 === 0) return value / 60 + (value === 60 ? ' minute' : ' minutes');
+  return value + (value === 1 ? ' second' : ' seconds');
+}
+function plain(key: string, value: unknown): string {
+  if (value == null) return key === 'workspace' ? 'None' : 'not reported';
+  if (typeof value === 'string') return key === 'effort' && value ? value[0].toUpperCase() + value.slice(1) : value;
+  if (typeof value !== 'object' || Array.isArray(value)) return compact(value);
+  const v = value as Record<string, unknown>;
+  if (key === 'model') {
+    const name = typeof v.model === 'string' && v.model ? v.model : typeof v.id === 'string' ? v.id : '';
+    const kind = typeof v.kind === 'string' && v.kind ? KIND_WORDS[v.kind] || v.kind : '';
+    if (name) return kind ? name + ' (' + kind + ')' : name;
+  } else if (key === 'limits') {
+    const parts = [typeof v.max_steps === 'number' ? v.max_steps + ' steps' : '',
+      typeof v.max_seconds === 'number' && Number.isFinite(v.max_seconds) ? seconds(v.max_seconds) + ' per run' : ''].filter(Boolean);
+    if (parts.length) return parts.join(', ');
+  } else if (key === 'permissions') {
+    const parts: string[] = [];
+    const tools = v.tools && typeof v.tools === 'object' && !Array.isArray(v.tools) ? v.tools as Record<string, unknown> : null;
+    const on = tools ? Object.entries(tools).filter(([, x]) => x === true).map(([k]) => TOOL_WORDS[k] || k.replaceAll('_', ' ')) : [];
+    if (typeof v.mode === 'string') parts.push((MODE_WORDS[v.mode] || v.mode) + (tools ? ' (' + (on.join(', ') || 'no tools') + ')' : ''));
+    else if (tools) parts.push(on.join(', ') || 'no tools');
+    for (const [k, x] of Object.entries(v))
+      if (k !== 'mode' && k !== 'tools' && (typeof x === 'string' || typeof x === 'boolean'))
+        parts.push((TOOL_WORDS[k] || k.replaceAll('_', ' ')) + ': ' + (ACCESS_WORDS[String(x)] || String(x)));
+    if (parts.length) return parts.join(' · ');
+  }
+  return compact(value);
+}
+// F142: the review card takes the keyboard without scrolling the window; only the drawer scrolls to it.
+function reveal(card: HTMLElement | null | undefined) {
+  card?.focus?.({ preventScroll: true });
+  card?.scrollIntoView?.({ block: 'nearest' });
+}
+// Phase 45 (F144, audit round R4): Once showed WebKit's grey placeholder date, which looked chosen and was refused as
+// "Choose a future date and time"; it starts at a real time, the next whole hour. F173 (R5): at least five minutes away
+// (at 10:43 it gave 12:00, not 11:00).
+function local(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+function inAnHour() {
+  const date = new Date(Date.now() + 65 * 60_000);
+  date.setMinutes(0, 0, 0);
+  return local(date);
+}
+function tomorrowAtNine() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  date.setHours(9, 0, 0, 0);
+  return local(date);
 }
 // Only the native fingerprint and summary are kept; any other reply field is ignored.
 function configReview(value: unknown): ConfigReview {
@@ -308,7 +371,7 @@ function reviewSchedule() {
   return perform('preview-schedule', formError, chat => rpc<unknown>('job_preview', { id: chat, schedule: payload.schedule, limits: payload.limits }), result => {
     if (edition !== formVersion) { formError.value = 'The schedule changed while it was being reviewed. Review it again.'; return; }
     draft.value = { version: scopeVersion, payload, ...configReview(result) };
-    void nextTick(() => scheduleCard.value?.focus());
+    void nextTick(() => reveal(scheduleCard.value));
   });
 }
 function createSchedule() {
@@ -328,14 +391,14 @@ function reviewResume(job: Job) {
     const review = configReview(result), listed = jobs.value?.find(item => item.id === job.id);
     if (!listed || listed.revision !== job.revision || !resumable.has(listed.state)) throw new Error(changedMessage);
     pending.value = { action: 'resume', job, review }; shown = true;
-    void nextTick(() => pendingCard.value?.focus());
+    void nextTick(() => reveal(pendingCard.value));
   }, () => shown ? undefined : loadJobs());
 }
 function openDelete(job: Job) {
   if (busy.value) return;
   jobsActionError.value = ''; jobsNotice.value = '';
   pending.value = { action: 'delete', job, review: null };
-  void nextTick(() => pendingCard.value?.focus());
+  void nextTick(() => reveal(pendingCard.value));
 }
 function confirmPending() {
   const reviewed = pending.value;
@@ -420,6 +483,7 @@ function reset() {
 watch(scopeKey, reset, { flush: 'sync' });
 watch(() => props.refreshKey, () => queueRefresh(false));
 watch(form, () => { formVersion++; draft.value = null; }, { flush: 'sync' });
+watch(() => form.kind, (kind) => { if (kind === 'once' && !form.at) form.at = inAnHour(); });  // F144
 onMounted(() => { mounted = true; void loadJobs(); void loadGit(); });
 onUnmounted(() => { mounted = false; queued = null; scopeVersion++; });
 </script>
@@ -464,9 +528,8 @@ onUnmounted(() => { mounted = false; queued = null; scopeVersion++; });
           <template v-if="pending.review">
             <dl class="workflow-facts" aria-label="Configuration to re-pin">
               <template v-for="[label, value] in configRows(pending.review.config)" :key="label"><dt>{{ label }}</dt><dd>{{ value }}</dd></template>
-              <dt>Configuration fingerprint</dt><dd>{{ pending.review.config_fingerprint }}</dd>
             </dl>
-            <details open><summary>Exact configuration summary</summary><pre>{{ display(pending.review.config) }}</pre></details>
+            <details><summary>Technical details</summary><dl class="workflow-facts"><dt>Configuration fingerprint</dt><dd>{{ pending.review.config_fingerprint }}</dd></dl><pre>{{ display(pending.review.config) }}</pre></details>
           </template>
           <p class="workflow-note">{{ pendingText.note }}</p>
           <div class="workflow-actions"><button :class="pendingText.style" :disabled="!!busy" @click="confirmPending">{{ pendingText.confirm }}</button><button class="secondary-button" :disabled="!!busy" @click="pending = null">{{ pendingText.cancel }}</button></div>
@@ -483,6 +546,7 @@ onUnmounted(() => { mounted = false; queued = null; scopeVersion++; });
               <label><input v-model="form.kind" type="radio" value="daily" />Daily</label>
             </fieldset>
             <label v-if="form.kind === 'once'">Date and time<input v-model="form.at" type="datetime-local" /></label>
+            <div v-if="form.kind === 'once'" class="workflow-actions" aria-label="Quick times"><button type="button" class="secondary-button" @click="form.at = inAnHour()">Next hour</button><button type="button" class="secondary-button" @click="form.at = tomorrowAtNine()">Tomorrow at 9:00</button></div>
             <label v-if="form.kind === 'interval'">Interval in minutes<input v-model="form.minutes" type="number" min="1" max="43200" step="1" /></label>
             <div v-if="form.kind === 'daily'" class="workflow-limits">
               <label>Time<input v-model="form.time" type="time" /></label>
@@ -509,15 +573,15 @@ onUnmounted(() => { mounted = false; queued = null; scopeVersion++; });
           <dl class="workflow-facts">
             <dt>Schedule</dt><dd>{{ describe(draft.payload.schedule, true) }}</dd>
             <dt>If a time is missed</dt><dd>{{ catchUp(draft.payload.schedule) }}</dd>
-            <dt>Limits</dt><dd>{{ draft.payload.limits.max_steps }} steps · {{ draft.payload.limits.max_seconds }} seconds per run</dd>
-            <dt>Notifications</dt><dd>{{ draft.payload.monitor ? 'Failures, requests for action, and successful results only when they change' : 'Every completion, failure or request for action' }}</dd>
+            <!-- Phase 45 (F174, audit round R5): Limits once (in the configuration below, in words); the notifications are
+                 Pebble's own list here, and macOS banners follow their own switch -->
+            <dt>Notifications</dt><dd>{{ draft.payload.monitor ? 'Failures, requests for action, and successful results only when they change' : 'Every completion, failure or request for action' }}, listed here. macOS notifications follow Settings › General › Notifications.</dd>
             <template v-if="draft.next_times.length"><dt>Next fires</dt><dd>{{ draft.next_times.join(' · ') }}</dd></template>
           </dl>
           <dl class="workflow-facts" aria-label="Configuration to pin">
             <template v-for="[label, value] in configRows(draft.config)" :key="label"><dt>{{ label }}</dt><dd>{{ value }}</dd></template>
-            <dt>Configuration fingerprint</dt><dd>{{ draft.config_fingerprint }}</dd>
           </dl>
-          <details open><summary>Exact configuration summary</summary><pre>{{ display(draft.config) }}</pre></details>
+          <details><summary>Technical details</summary><dl class="workflow-facts"><dt>Configuration fingerprint</dt><dd>{{ draft.config_fingerprint }}</dd></dl><pre>{{ display(draft.config) }}</pre></details>
           <p class="workflow-note">Creating pins exactly this configuration. If it changes before you create, the service refuses and asks for a fresh review; if it changes later, the schedule waits for your review before it runs again. Permissions still apply on each run; nothing is approved in advance. It fires only while the Pebble service is running.</p>
           <div class="workflow-actions"><button class="primary-button" :disabled="!!busy" @click="createSchedule">{{ busy === 'create' ? 'Creating…' : 'Create reviewed schedule' }}</button><button class="secondary-button" :disabled="!!busy" @click="draft = null">Edit schedule</button></div>
         </article>

@@ -102,6 +102,12 @@ MODEL = 'phase14-integration-fixture'
 CONTEXT = 32768
 MARK = '\N{SECTION SIGN}'
 TAG = re.compile(MARK + '([a-z][0-9])')
+# Phase 45 (D141, the person, 2026-10-26): in Full access Pebble's own check of a step that would wait for review is a
+# separate request (no tools; the person's messages and the step only). The fixture answers it "not asked", so a typed
+# plan still waits for native review here, and records it apart from the task's own requests.
+# Phase 46 (1.9.28, D185, the person: "Send it back; ask if stuck"): a plan the check holds goes back to the model
+# instead of a card, and after 3 holds in a row the next one waits for native review (p1 tries the plan four times).
+JUDGE_OPENING = 'You check one step that Pebble, an assistant on the person'
 PID = re.compile(r'"process_id":\s*"([0-9a-f]{32})"')
 TRANSIENT = frozenset({'queued', 'running', 'retry_wait', 'waiting_input'})
 TERMINAL = frozenset({'succeeded', 'failed', 'cancelled', 'timed_out', 'output_limited', 'unknown', 'refused'})
@@ -110,7 +116,9 @@ HOLD_SECONDS = 60
 QUIET_SECONDS = 1.2
 VERIFIER_SECONDS = 240
 ENV_ALLOWLIST = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR',
-                 '__CF_USER_TEXT_ENCODING')  # exactly src-tauri/src/main.rs
+                 '__CF_USER_TEXT_ENCODING',
+                 # Phase 45 (F164): layer 4's two switches, Pebble's own and secret-free
+                 'PEBBLE_SCREEN_CAPTURE', 'PEBBLE_FOREGROUND_INPUT')  # exactly src-tauri/src/main.rs
 CANARY_NAME = 'PEBBLE_E14_CANARY_' + uuid.uuid4().hex[:16].upper()
 HEARTBEATS = ('leader-beat.txt', 'member-beat.txt', 'escapee-beat.txt', 'nohup-beat.txt')
 BEAT = '''import sys, time
@@ -247,6 +255,7 @@ class Fixture:
     def __init__(self):
         self.lock = threading.RLock()
         self.records, self.errors, self.anomalies = [], [], []
+        self.judged = []  # Phase 45 (D141): Pebble's own checks of steps, apart from the task's requests
         self.seen, self.shared = {}, {}
         self.holding = {tag: threading.Event() for tag in ('t1', 'i1')}
         self.release = {tag: threading.Event() for tag in ('t1', 'i1')}
@@ -310,6 +319,13 @@ class Fixture:
             raise AssertionError('Host-private message fields reached the provider.')
         messages = body.get('messages') or []
         tools = body.get('tools', [])
+        if messages and messages[0].get('role') == 'system' \
+                and str(messages[0].get('content') or '').startswith(JUDGE_OPENING):
+            text = user_text(messages[-1]) or ''
+            with self.lock:
+                self.judged.append({'scenario': TAG.search(text).group(1) if TAG.search(text) else None,
+                                    'tools': len(tools), 'roles': [m.get('role') for m in messages]})
+            return Reply(final('{"asked": false, "quote": ""}'))
         names = sorted(t['function']['name'] for t in tools)
         tag = None
         for message in messages:
@@ -414,7 +430,14 @@ class Fixture:
         if step == 0:
             with self.lock:
                 seen['offered'] = sorted({'RunPlan', 'WriteProcessInput'} & set(names))
-            return Reply(calls(('RunPlan', 'p1-plan', {'plan': json.dumps(PIPELINE)})), usage(step))
+        # Phase 46 (1.9.28, D185): each held plan comes back as a result, never a card; the model tries again with a
+        # different first step (the same step again is not checked again), and the fourth waits
+        held = [d for d in history(messages) if d['name'] == 'RunPlan' and (d['result'] or {}).get('status') == 'held']
+        with self.lock:
+            seen['held'] = len(held)
+        if step == len(held) <= 3:
+            plan = {**PIPELINE, 'steps': [{'argv': ['python3', 'gen.py', f'try-{step}']}, PIPELINE['steps'][1]]}
+            return Reply(calls(('RunPlan', f'p1-plan-{step}', {'plan': json.dumps(plan)})), usage(step))
         return Reply(final('The typed plan awaits native review.' if admitted_pid(messages) is None
                            else 'The pipeline is running under supervision.'), usage(step))
 
@@ -845,17 +868,29 @@ class Campaign:
             fact = self.start(service, 'p1', mode='full')
             self.settle(service, fact['cid'], fact['rid'], 'p1')
             assert self.seen('p1').get('offered') == ['RunPlan', 'WriteProcessInput'], self.seen('p1').get('offered')
+            # Phase 46 (1.9.28, D185, the person: "Send it back; ask if stuck"): the first three plans went back to the
+            # model with the host's reason and never ran or showed a card; the fourth waits for the person
+            assert self.seen('p1').get('held') == 3, self.seen('p1').get('held')
+            commands = [a for a in service.rpc('get_chat', id=fact['cid'])['actions'] if a['kind'] == 'command']
+            assert [a['status'] for a in commands] == ['held', 'held', 'held', 'pending'], [a['status'] for a in commands]
             [action] = self.pending(service, fact['cid'], 'command')
             assert action['payload'].get('typed') is True and action['payload']['command'].startswith('plan ')
             assert not service.rpc('process_list', id=fact['cid']), 'The plan ran before native review in Full mode.'
+            # D141: Pebble's own check came first, with no tools and only the person's messages and the step; it found
+            # each plan not asked for
+            with self.fixture.lock:
+                checks = [j for j in self.fixture.judged if j['scenario'] == 'p1']
+            assert len(checks) == 4 and all(j['tools'] == 0 and j['roles'] == ['system', 'user'] for j in checks), checks
             self.approve_command(service, fact)
             page = self.terminal(service, fact)
             text = self.read(service, fact).get('untrusted_process_output') or ''
             row = self.job_row(fact['pid'])
             assert page['state'] == 'succeeded' and text.split() == ['ALPHA', 'BETA', 'GAMMA'], (page['state'], text[:200])
             assert row['contained'] == 1, row['contained']
-            return {'state': page['state'], 'contained': row['contained'], 'steps': 2}
-        self.check('p1_typed_pipeline_waits_for_native_review_in_full_mode_then_runs_contained', pipeline)
+            return {'state': page['state'], 'contained': row['contained'], 'steps': 2, 'held_first': 3}
+        # Phase 46 (1.9.28, D185): renamed from p1_typed_pipeline_waits_for_native_review_in_full_mode_then_runs_contained
+        self.check('p1_typed_pipeline_held_three_times_then_waits_for_native_review_in_full_mode_then_runs_contained',
+                   pipeline)
 
     def scenario_i1(self, service):
         def interactive():

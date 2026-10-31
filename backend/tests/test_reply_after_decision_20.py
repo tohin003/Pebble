@@ -41,7 +41,7 @@ PASSED = {'exit_code': 0, 'output': 'test_add (test_calc.AddTest.test_add) ... o
 NOTES = '# Notes\n\n`add(a, b)` returns the sum of a and b.\n'
 ITEMS = [{'id': 'style', 'title': 'Which note style?', 'options': [{'id': 'short', 'label': 'One line'}]}]
 H1C = ' The person already sees your reply so far; continue it without repeating it.'
-FALLBACK = 'I prepared the actions shown below. Review them before they run.'
+FALLBACK = 'I prepared the actions waiting for your review; nothing runs until you allow it.'  # Phase 45 (F127): the card is not always below
 NOTICE = '> Verification remains incomplete: '
 SCHEDULE, DUES_NOTICE = GOV + '/docs/schedule-of-dues-2026', GOV + '/notices/2026-14-dues'
 DUES_GOAL = 'Search the web for the current Port Ellery harbour dues for cargo vessels. End with `FINAL: <answer>`.'
@@ -467,8 +467,10 @@ def test_exhausted_repairs_present_the_last_attempt_with_the_hosts_notice(env):
     run = settled(env, app, rid, 'verification_required', 4)
     draft, last = (r['content'] for r in committed_responses(app, rid)[-2:])
     answer = reply(app, rid, cid)
-    assert answer.startswith('Searching the web.\nReading the two official pages.\n' + last + '\n\n' + NOTICE)
-    assert 'have no [S<n>] citation' in answer.split(NOTICE, 1)[1] and run['error']
+    # Phase 46: the host's notice comes above the reply, so the requested FINAL line stays the reply's last line.
+    assert answer.startswith('Searching the web.\nReading the two official pages.\n\n' + NOTICE)
+    assert answer.endswith('\n\n' + last) and last.endswith(ev.FINAL_LINE.findall(answer)[-1])
+    assert 'have no [S<n>] citation' in answer.split(NOTICE, 1)[1].split(last, 1)[0] and run['error']
     assert len(ev.FINAL_LINE.findall(answer)) == 1 and draft not in answer and draft not in shown(env)
     assert [w['reason'] for w in withheld(app, rid)] == ['completion_check']
     assert 'held_reply' not in run['checkpoint']
@@ -547,10 +549,11 @@ def dropped_answer(env, app, cid, rid, requests):
     assert run['state'] != 'completed' and run['error']
     draft = committed_responses(app, rid)[-2]['content']
     answer = reply(app, rid, cid)
-    assert CLAIM_FREE in answer and NOTICE in answer and answer.index(CLAIM_FREE) < answer.index(NOTICE)
+    # Phase 46: the host's notice comes above the checked reply, which keeps its own last line.
+    assert NOTICE in answer and answer.endswith('\n\n' + CLAIM_FREE) and answer.index(NOTICE) < answer.index(CLAIM_FREE)
     assert draft not in answer and draft not in shown(env)
     assert [w['reason'] for w in withheld(app, rid)] == ['completion_check']
-    return answer.split(NOTICE, 1)[1]
+    return answer.split(NOTICE, 1)[1].rsplit('\n\n' + CLAIM_FREE, 1)[0]
 
 
 def test_a_planned_research_run_whose_repair_drops_the_answer_ends_verification_required(env):

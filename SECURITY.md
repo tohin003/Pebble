@@ -22,8 +22,9 @@ not to be.
 
 | Version | Supported |
 | --- | --- |
-| 1.0.x (the latest release) | Yes |
-| Earlier versions (local previews, never published) | No |
+| 2.0.x (the latest release) | Yes |
+| 1.0.1 to 1.5.0 (earlier releases) | No: run the installer to update |
+| Other versions (local previews, never published) | No |
 
 Security fixes ship as a new release; update by running the installer again.
 

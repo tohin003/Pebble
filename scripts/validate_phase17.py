@@ -195,7 +195,8 @@ TYPED_EXAMPLES = ('/criteria check c1', '  /Criteria UNCHECK c2', '/criteria acc
 # Notification settings (notifications.DEFAULT_SETTINGS) and the categories they name.
 CATEGORIES = ('completed', 'failed', 'action_needed', 'monitor_changed')
 DEFAULT_NOTIFICATIONS = {'enabled': False, 'kinds': dict.fromkeys(CATEGORIES, True), 'preview': 'title',
-                         'quiet_hours': None}
+                         'quiet_hours': None,
+                         'replies': True}  # Phase 45 (D134, the person): banners for replies and cards, under enabled
 SETTINGS_ON = {**DEFAULT_NOTIFICATIONS, 'enabled': True}
 DAILY_ZONE = 'Asia/Kolkata'
 

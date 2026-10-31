@@ -3030,9 +3030,10 @@ def cmd_backups(run):
                             "keychain's password).")
 
 
-# Everything a full removal touches (V1-061). Chrome's native host manifest folders mirror
-# backend/pebble/browser_bridge.py HOST_FOLDERS and HOST_NAME (a test keeps them equal).
-HOST_NAME, HOST_FOLDERS = 'com.pebble.browser', ('Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Canary', 'Chromium')
+# Everything a full removal touches (V1-061). The native host manifest folders mirror backend/pebble/browser_bridge.py
+# BROWSER_FOLDERS and HOST_NAME (a test keeps them equal; D113, Phase 43: every browser Connect a browser can write).
+HOST_NAME, HOST_FOLDERS = 'com.pebble.browser', ('Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Canary', 'Chromium',
+                                                 'Comet', 'BraveSoftware/Brave-Browser', 'Microsoft Edge', 'Arc/User Data')
 LIBRARY_ITEMS = (('Caches/' + IDENTIFIER, 'caches'), ('HTTPStorages/' + IDENTIFIER, 'web storage'),
                  ('HTTPStorages/' + IDENTIFIER + '.binarycookies', 'web cookies'),
                  ('Saved Application State/' + IDENTIFIER + '.savedState', 'window state'),

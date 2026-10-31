@@ -1075,7 +1075,7 @@ def test_child_admission_refuses_at_the_real_child_loop(host, name, args, layer)
 
 def test_the_real_runner_refuses_a_strict_schema_violation_before_execute(host, monkeypatch):
     """F5: App.validate admits a NUL-bearing path; the runner's strict-schema layer
-    refuses it before App.execute, so no tool receipt or file read exists."""
+    refuses it before App.execute, so the call has no tool receipt and read no file."""
     app = host.app
     requests = []
 
@@ -1092,8 +1092,9 @@ def test_the_real_runner_refuses_a_strict_schema_violation_before_execute(host, 
     refused = events_of(app, run['id'], 'tool_refused')
     assert refused and (refused[-1]['refusal_layer'], refused[-1]['field']) == ('schema', 'file_path')
     assert refused[-1]['actor']['kind'] == 'root'
-    # The runner journals the planned call first; execute never began it, so it has no result.
-    [read] = [t for t in app.runs.tools(run['id']) if t['name'] == 'Read']
+    # The runner journals the planned call first; execute never began it, so it has no result. (Above 8K the host's
+    # prefetch reads the named job.py first, through execute under its own call id host:prefetch_1: Phase 46.)
+    [read] = [t for t in app.runs.tools(run['id']) if t['name'] == 'Read' and not t['call_id'].startswith('host:')]
     assert (read['state'], read['result']) == ('planned', None), read
     tool_messages = [m for m in requests[1][0] if m.get('role') == 'tool']
     assert tool_messages and 'must not contain NUL' in tool_messages[-1]['content']

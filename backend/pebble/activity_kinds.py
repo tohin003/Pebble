@@ -23,14 +23,15 @@ _CLASSES = {
     'reading': ('Read', 'ReadAttachment', 'ReadURL', 'ReadSource', 'ReadProcess', 'ReadRunEvidence',
                 'LoadSkill', 'LoadPluginTool', 'LoadPluginData', 'ReadPluginData', 'ReadPluginMedia',
                 'ReadGitStatus', 'ReadGitDiff', 'ReadGitHistory', 'ReadGitPlanReceipt', 'ReadGitWorktrees',
-                'ReadWorktreeExport', 'ListProjectRecipes', 'ScreenObserve', 'ResearchStatus'),
+                'ReadWorktreeExport', 'ListProjectRecipes', 'ScreenObserve', 'ResearchStatus',
+                'ReadFile', 'Screenshot'),  # Phase 40
     'searching': ('Glob', 'Grep', 'SearchFiles', 'CodeReferences', 'WebSearch', 'Weather',
-                  'SearchPluginTools', 'SearchPluginData', 'ResearchPlan'),
+                  'SearchPluginTools', 'SearchPluginData', 'ResearchPlan', 'FindTool'),  # Phase 40: FindTool
     'editing': ('Write', 'Append', 'Edit', 'ProposePatch', 'IntegrateAgentPatch', 'ProposeGitChange',
-                'PreviewWorktreeExport', 'IntegrateWorktreeFile'),
+                'PreviewWorktreeExport', 'IntegrateWorktreeFile', 'WriteFile', 'EditFile'),  # Phase 40: Write/EditFile
     'testing': ('RunTests', 'RunRecipe'),
     'running': ('RunCommand', 'StartCommand', 'WaitProcess', 'StopProcess', 'WriteProcessInput', 'RunPlan',
-                'StartPreview', 'PrepareEnvironment', 'RunCode'),
+                'StartPreview', 'PrepareEnvironment', 'RunCode', 'Shell'),  # Phase 40: Shell
     'delegating': ('SpawnAgent', 'SpawnWorktreeAgent', 'ReadAgentTree', 'SendAgentMessage', 'WaitForAgents',
                    'DelegateAgentTask', 'StopAgent', 'RetryAgent', 'AskParentQuestion', 'AnswerAgentQuestion',
                    'PromoteAgentQuestion', 'ReviewAgentResult', 'ReadAgentMessage', 'ReadAgentPatch',
@@ -40,7 +41,8 @@ _CLASSES = {
     # Host bookkeeping between model turns: the model is still deciding.
     'thinking': ('AskUserQuestion', 'UpdatePlan', 'UpdateGoal', 'MemoryPropose'),
     # Real actions with no narrower honest word (an app, a connector, a screen).
-    'working': ('OpenApp', 'PluginCall', 'FetchPluginData', 'ScreenAct'),
+    'working': ('OpenApp', 'PluginCall', 'FetchPluginData', 'ScreenAct', 'ScreenRequest',  # Phase 42: ScreenRequest
+                'OpenURL', 'AppAction', 'BrowserRequest'),  # Phase 43
 }
 ACTIVITY = {name: key for key, names in _CLASSES.items() for name in names}
 

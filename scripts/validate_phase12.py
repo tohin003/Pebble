@@ -660,6 +660,11 @@ class Fixture:
             return Reply(calls(('StartCommand', 'u2-start', {'command': 'python3 job.py', 'timeout': 60})), usage(step))
         if step == 1:
             return Reply(final('The background command is waiting for native approval.'), usage(step))
+        if step == 2:
+            # Phase 45 (F194): a refused approval no longer leaves its run waiting for a review that is gone; the run
+            # continues with the refusal and answers once
+            return Reply(final('The background start was refused until the earlier unknown outcome is inspected; '
+                               'nothing ran.'), usage(step))
         return self.unexpected('u2', step, messages)
 
     def script_x2(self, step, attempt, messages, names):
@@ -876,6 +881,11 @@ class Campaign:
         cid, rid = self.send(service, tag, workspace, steps=steps)
         fact = self.facts[tag] = {'cid': cid, 'rid': rid}
         fact['first_state'] = self.settle(service, cid, rid, tag)['state']
+        # Phase 46 (D154): a run that waits at a staged step (runner.STAGED_STOP) sends no next request, so the staged
+        # StartCommand result is also read from the run's journal: the same result the model would have been shown
+        receipts = service.rpc('run_get', id=cid, run_id=rid).get('tools') or []
+        start = next((t for t in receipts if str(t.get('call_id', '')).split(':', 1)[-1] == tag + '-start'), None)
+        fact['start_receipt'] = outcome_summary(start and start['result'])
         pending = [a for a in service.rpc('get_chat', id=cid)['actions'] if a['status'] == 'pending' and a['kind'] == 'command']
         fact['pending'] = [{'asynchronous': a['payload'].get('asynchronous'), 'timeout': a['payload'].get('timeout'),
                             'argv': a['payload'].get('argv')} for a in pending]
@@ -1008,7 +1018,8 @@ class Campaign:
             assert fact['pending'] == [{'asynchronous': True, 'timeout': 60, 'argv': ['python3', 'job.py']}], fact['pending']
             assert fact['before_approval'] == {'processes': 0, 'markers': {'job-started.txt': False, 'job-done.txt': False}}, \
                 fact['before_approval']
-            assert seen('p1').get('start', {}).get('status') == 'awaiting_user_approval', seen('p1').get('start')
+            start = seen('p1').get('start') or fact.get('start_receipt') or {}
+            assert start.get('status') == 'awaiting_user_approval', start
             return {'pending': 1, 'processes_before_approval': 0}
         self.check('p1_nothing_runs_before_native_approval', before)
 
@@ -1449,11 +1460,15 @@ class Campaign:
             assert len(pending) == 1, pending
             rejected(service, 'approve', id=cid, action_id=pending[0]['id'])
             assert not service.rpc('process_list', id=cid), 'A new start ran before the unknown outcome was inspected.'
+            # Phase 45 (F194): the refused start's run answers instead of waiting for a review that no longer exists
+            after = self.settle(service, cid, rid, 'u2 after the refused start')
+            assert after['state'] != 'waiting_approval', after['state']
+            assert not service.rpc('process_list', id=cid), 'The resumed run started the command.'
             receipt = service.rpc('process_inspect', id=u1['cid'], run_id=u1['rid'], process_id=u1['pid'],
                                   observation='still_uncertain', note='Synthetic fixture inspection; outcome still unverified.')
             assert receipt.get('authorization') == 'none' and receipt.get('completion_verified') is False, receipt
             assert self.read(service, u1, limit=1).get('state') == 'unknown', 'Inspection rewrote the recorded outcome.'
-            return {'blocked_before_inspection': True, 'inspection_recorded': True}
+            return {'blocked_before_inspection': True, 'inspection_recorded': True, 'run_after_refusal': after['state']}
         self.check('u2_new_start_waits_for_native_inspection_of_an_unknown_outcome', inspection)
 
         def fresh_work():

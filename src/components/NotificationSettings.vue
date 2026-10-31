@@ -10,7 +10,7 @@ import { native, rpc } from '../bridge';
 type Kind = 'completed' | 'failed' | 'action_needed' | 'monitor_changed';
 type Preview = 'none' | 'title' | 'body';
 interface Quiet { start: string; end: string; timezone: string }
-interface Preferences { enabled: boolean; kinds: Record<Kind, boolean>; preview: Preview; quiet_hours: Quiet | null }
+interface Preferences { enabled: boolean; kinds: Record<Kind, boolean>; preview: Preview; quiet_hours: Quiet | null; replies?: boolean }
 interface MuteJob { job_id: string; label: string; state: string; muted: boolean }
 interface Status { settings: Preferences; quiet_now: boolean; outbox: Record<string, number>; deferred: number; last_failure: { reason: string; at?: string | null } | null; jobs: MuteJob[] }
 
@@ -24,7 +24,8 @@ const loginText: Record<string, string> = {
   enabled: 'Pebble opens at login and shows only the companion.',
   requires_approval: 'macOS needs your approval. Open System Settings → General → Login Items and allow Pebble.',
   not_registered: 'Pebble does not open at login.',
-  not_found: 'This build cannot register a login item. Unsigned development builds often report this.',
+  // Phase 45 (F008): said for a person, with the way that still works
+  not_found: "Pebble can't add itself to Login Items on this Mac. To open it at login, add Pebble in System Settings → General → Login Items (the + button).",
   unavailable: 'Login items are unavailable in this build.',
 };
 const authText: Record<string, string> = {
@@ -45,7 +46,7 @@ const clockPattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const status = shallowRef<Status | null>(null);
 const login = ref(''), authorization = ref('');
 const loading = ref(false), busy = ref(''), error = ref(''), notice = ref('');
-const form = reactive({ enabled: false, kinds: { completed: true, failed: true, action_needed: true, monitor_changed: true } as Record<Kind, boolean>, preview: 'title' as Preview, quiet: false, start: '22:00', end: '07:00', zone: localZone() });
+const form = reactive({ replies: true, enabled: false, kinds: { completed: true, failed: true, action_needed: true, monitor_changed: true } as Record<Kind, boolean>, preview: 'title' as Preview, quiet: false, start: '22:00', end: '07:00', zone: localZone() });
 let mounted = false, request = 0;
 
 const outboxLine = computed(() => {
@@ -80,6 +81,7 @@ function validStatus(value: unknown): value is Status {
 }
 function adopt(settings: Preferences) {
   form.enabled = settings.enabled;
+  form.replies = settings.replies !== false;  // Phase 45 (D134): a value saved before 1.9.10 has none: on
   for (const [key] of kindList) form.kinds[key] = settings.kinds[key];
   form.preview = settings.preview;
   form.quiet = settings.quiet_hours !== null;
@@ -131,8 +133,23 @@ function preferences(): Preferences {
     if (start === end) throw new Error('Quiet hours need different start and end times.');
     quiet_hours = { start, end, timezone: form.zone };
   }
-  return { enabled: form.enabled === true, kinds: Object.fromEntries(kindList.map(([key]) => [key, form.kinds[key] === true])) as Record<Kind, boolean>, preview: form.preview, quiet_hours };
+  return { enabled: form.enabled === true, kinds: Object.fromEntries(kindList.map(([key]) => [key, form.kinds[key] === true])) as Record<Kind, boolean>, preview: form.preview, quiet_hours, replies: form.replies === true };
 }
+// Phase 45 (F137, audit round R4): this page alone saves with a button (turning banners on asks macOS for
+// permission), so a change waiting for it says so instead of being lost when Settings closes.
+const unsaved = computed(() => {
+  const saved = status.value?.settings;
+  if (!saved) return false;
+  const quiet = (q: Quiet | null | undefined) => (q ? [q.start, q.end, q.timezone].join('|') : '');
+  try {
+    const value = preferences();
+    return value.enabled !== saved.enabled || value.preview !== saved.preview || quiet(value.quiet_hours) !== quiet(saved.quiet_hours)
+      || value.replies !== (saved.replies !== false)
+      || kindList.some(([key]) => value.kinds[key] !== (saved.kinds?.[key] === true));
+  } catch {
+    return true;  // quiet hours being typed: not saved yet
+  }
+});
 function save() {
   return act('save', async () => {
     const value = preferences();
@@ -186,16 +203,18 @@ onUnmounted(() => { mounted = false; request++; });
         <fieldset :disabled="!!busy">
           <legend>Notifications</legend>
           <p class="notify-note">{{ authText[authorization] ?? authText.unavailable }}</p>
-          <label class="notify-check"><input v-model="form.enabled" type="checkbox" />Show macOS notifications for schedules</label>
-          <fieldset class="notify-group">
+          <label class="notify-check"><input v-model="form.enabled" type="checkbox" />Show macOS notifications</label>
+          <fieldset class="notify-group" :disabled="!form.enabled">
             <legend>Notify me about</legend>
+            <!-- Phase 45 (D134, the person): a task in a conversation, while Pebble is in the background -->
+            <label class="notify-check"><input v-model="form.replies" type="checkbox" />Replies and cards while Pebble is in the background</label>
             <label v-for="[key, label] in kindList" :key="key" class="notify-check"><input v-model="form.kinds[key]" type="checkbox" />{{ label }}</label>
           </fieldset>
-          <fieldset class="notify-group">
+          <fieldset class="notify-group" :disabled="!form.enabled">
             <legend>Content preview</legend>
             <label v-for="[key, label, note] in previewList" :key="key" class="notify-choice"><input v-model="form.preview" type="radio" :value="key" />{{ label }}<small>{{ note }}</small></label>
           </fieldset>
-          <fieldset class="notify-group">
+          <fieldset class="notify-group" :disabled="!form.enabled">
             <legend>Quiet hours</legend>
             <label class="notify-check"><input v-model="form.quiet" type="checkbox" />Hold banners during quiet hours</label>
             <div v-if="form.quiet" class="notify-times">
@@ -206,6 +225,7 @@ onUnmounted(() => { mounted = false; request++; });
             <p class="notify-note">During quiet hours banners wait. When quiet hours end, Pebble shows one summary. Nothing is dropped, and every update stays in the app.</p>
           </fieldset>
           <p class="notify-note">Several updates from one schedule within a minute share one banner, and after three banners in ten minutes Pebble shows one summary. Banners offer only Open, which opens the conversation; approvals happen only in the Pebble window.</p>
+          <p v-if="unsaved" class="notify-note" role="status">Changes here apply when you save them.</p>
           <button class="primary-button" type="submit" :disabled="!!busy">{{ busy === 'save' ? 'Saving…' : 'Save notification preferences' }}</button>
         </fieldset>
       </form>
@@ -231,6 +251,8 @@ onUnmounted(() => { mounted = false; request++; });
 .notify-panel { min-width: 0; font-size: 13px; }
 .notify-section { margin: 12px 0; }
 .notify-section fieldset { border: 0; padding: 0; margin: 8px 0; min-width: 0; }
+/* Phase 45 (F170, audit round R5): options that follow the main switch look off while it is off */
+.notify-section fieldset.notify-group:disabled { opacity: .45; }
 .notify-section legend { font-weight: 600; margin-bottom: 6px; }
 .notify-note, .notify-choice small, .notify-list small { font-size: 12px; opacity: .75; }
 .notify-check, .notify-choice { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; flex-wrap: wrap; }

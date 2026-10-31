@@ -316,7 +316,8 @@ const settingsScript = compileScript(settingsDescriptor, { id: 'advanced' });
 assert.deepEqual(compileTemplate({ source: settingsDescriptor.template.content, filename: 'AdvancedSettings.vue', id: 'advanced',
   compilerOptions: { bindingMetadata: settingsScript.bindings } }).errors, []);
 assert.equal([...settings.matchAll(/import StorageSettings from "\.\/StorageSettings\.vue";/g)].length, 1);
-assert.ok(settings.includes("v-for=\"t in ['models', 'permissions', 'memory', 'extensions', 'mods', 'storage']\""));
+// Phase 45 (D129); Phase 46 (1.9.29, D214) adds the iPhone tab (Pebble Remote) after Privacy & Stealth.
+assert.ok(settings.includes("v-for=\"t in ['models', 'permissions', 'memory', 'extensions', 'mods', 'storage', 'privacy', 'iphone', 'appearance', 'general']\""));
 assert.ok(settings.includes('<section v-else-if="tab === \'storage\'" class="advanced-section"><StorageSettings @refresh="emit(\'refresh\')" /></section>'));
 assert.ok(!/StorageSettings/.test(readFileSync(new URL('../Pet.vue', import.meta.url), 'utf8')), 'the pet never shows it');
 console.log('StorageSettings: ok');

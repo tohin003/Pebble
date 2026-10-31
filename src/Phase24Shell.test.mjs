@@ -264,20 +264,34 @@ test("switches expose role=switch with aria-checked, and the theme aria-pressed 
   await settle();
   button(view.root, "Settings").props.onClick();
   await settle();
+  // Phase 45 (D129): Stealth Lockdown is under Privacy & Stealth and the appearance switches under Appearance.
+  assert.deepEqual(roleOf(view.root, "switch"), [], "nothing of App's own trails under the Models tab");
+  registry["AdvancedSettings.vue"].at(-1).onTab("privacy");
+  await settle();
+  const privacy = roleOf(view.root, "switch");
+  assert.deepEqual(privacy.map((el) => [squash(textOf(el)).split(" ").slice(0, 2).join(" "), el.props["aria-checked"]]),
+    [["Stealth Lockdown", "false"]]);
+  registry["AdvancedSettings.vue"].at(-1).onTab("appearance");
+  await settle();
   const switches = roleOf(view.root, "switch");
   assert.deepEqual(switches.map((el) => [squash(textOf(el)).split(" ").slice(0, 2).join(" "), el.props["aria-checked"]]),
-    [["Stealth Lockdown", "false"], ["Reduce motion", "false"], ["Follow the", "true"], ["Expressive reactions", "true"], ["UI design", "true"]]);
-  // Phase 33 (1.1.0): Stealth Lockdown's switch leads, in its own Privacy and focus section.
-  assert.deepEqual(switches.map((el) => el.props.type), ["button", "button", "button", "button", "button"]);
-  for (const el of switches) assert.ok(el.children.some((child) => child.props?.class?.toggle !== undefined || child.props?.["aria-hidden"] === "true"), "the drawn toggle is hidden");
+    // Phase 46 (1.9.29, D206): "Work view" joins Appearance, on by default
+    [["Reduce motion", "false"], ["Work view", "true"], ["Follow the", "true"], ["Expressive reactions", "true"], ["UI design", "true"]]);
+  assert.deepEqual([...privacy, ...switches].map((el) => el.props.type), ["button", "button", "button", "button", "button", "button"]);
+  for (const el of [...privacy, ...switches]) assert.ok(el.children.some((child) => child.props?.class?.toggle !== undefined || child.props?.["aria-hidden"] === "true"), "the drawn toggle is hidden");
   const theme = ["Light", "Dark", "System"].map((name) => button(view.root, name));
   assert.deepEqual(theme.map((el) => el.props["aria-pressed"]), ["false", "false", "true"]);
-  switches[1].props.onClick();
+  switches[0].props.onClick();
   theme[1].props.onClick();
   await settle();
-  assert.equal(roleOf(view.root, "switch")[1].props["aria-checked"], "true", "Reduce motion now reads on");
+  assert.equal(roleOf(view.root, "switch")[0].props["aria-checked"], "true", "Reduce motion now reads on");
   assert.deepEqual(["Light", "Dark", "System"].map((name) => button(view.root, name).props["aria-pressed"]), ["false", "true", "false"]);
   assert.deepEqual(called("setting").map((p) => p.key), ["reduced_motion", "theme"]);
+  // Phase 46 (1.9.29): the Work view switch is the host's `work_view` setting, presentation only
+  roleOf(view.root, "switch")[1].props.onClick();
+  await settle();
+  assert.equal(roleOf(view.root, "switch")[1].props["aria-checked"], "false", "Work view now reads off");
+  assert.deepEqual(called("setting").at(-1), { key: "work_view", value: false });
   // Names and landmarks (V1-161): the sidebar toggle says whether it is open; the conversation list is a list.
   const toggle = all(view.root).find((el) => el.props["aria-label"] === "Conversations sidebar");
   assert.equal(toggle.props["aria-expanded"], true);
@@ -319,9 +333,10 @@ test("Delete moves a conversation to Recently deleted and offers Undo (V1-063)",
   button(view.root, "Delete conversation Recipes").props.onClick();
   await settle();
   const text = squash(textOf(view.root));
-  assert.ok(text.includes("Delete this conversation?") && text.includes("moves to Recently deleted, where you can restore it for 30 days"), text.slice(-800));
+  // Phase 45 (F118): the dialog names the conversation, and so does its button's accessible name
+  assert.ok(text.includes("Delete “Recipes”?") && text.includes("moves to Recently deleted, where you can restore it for 30 days"), text.slice(-800));
   assert.ok(!text.includes("Delete permanently") && !text.includes("Keep this conversation?"));
-  button(view.root, "Move to Recently deleted").props.onClick();
+  button(view.root, "Move “Recipes” to Recently deleted").props.onClick();
   await settle();
   assert.deepEqual(called("storage_trash_chat"), [{ chat_id: OTHER }]);
   assert.deepEqual(called("delete_chat"), [], "nothing is deleted for good from here");
@@ -494,7 +509,7 @@ test("the sidebar finds conversations by title and renames one through chat_rena
   assert.deepEqual(listed(), [OTHER], "case-insensitive title match");
   search.props["onUpdate:modelValue"]("zzz");
   await settle();
-  assert.ok(squash(textOf(view.root)).includes("No conversation title matches “zzz”."));
+  assert.ok(squash(textOf(view.root)).includes("No conversation matches “zzz”."));  // Phase 45 (F031): words too
   search.props["onUpdate:modelValue"]("");
   await settle();
   const current = all(view.root).find((el) => el.type === "button" && el.props["aria-current"] === "page");
@@ -602,7 +617,7 @@ test("the pet cannot widen permissions; it can narrow them, and Full shows its w
   fake.setState({ ...fake.state, settings: { ...fake.state.settings, permissions: { ...fake.state.settings.permissions, mode: "full" } } });
   bridge.receive({ event: "settings", data: {} });
   await settle();
-  assert.ok(squash(textOf(view.root)).includes("Full access is on. Everything Auto runs, plus app launches and Git changes that neither delete work nor publish it."));
+  assert.ok(squash(textOf(view.root)).includes("Full access is on. Commands that only read or make new files, and each step your messages ask for: commands (including grep and builds), installs, Git, connector calls, app launches, windows, sites, presses."));  // Phase 45 (D141): the shared copy; Phase 46 (1.9.28, item 7 with D185 and the final review): restated
   roleOf(view.root, "radio")[1].props.onClick();
   await settle();
   assert.equal(called("setting").at(-1).value.mode, "auto");
@@ -623,7 +638,8 @@ test("ModelPicker's provider select filters only, and is hidden with one provide
   assert.deepEqual(selected, [], "choosing a provider never switches the model (0.6.1 selected its first model)");
   const modelSelect = all(view.root).find((el) => el.type === "select" && el.props["aria-label"] === "Choose model");
   assert.equal(modelSelect.props.value, "", "the current model is outside the filter: nothing is chosen for the person");
-  assert.ok(squash(textOf(view.root)).includes("Choose a model from this provider"));
+  // Phase 45 (F045): the list names the model still in use while it shows another provider, so nobody thinks they switched.
+  assert.ok(squash(textOf(view.root)).includes("In use: Local") && squash(textOf(view.root)).includes("choose one to switch"));
   modelSelect.props.onChange({ target: { value: "gpt" } });
   assert.deepEqual(selected, ["gpt"], "only the person's own choice selects");
   assert.ok(squash(textOf(view.root)).includes("Earlier messages were on this Mac. Review what is sent…"));
@@ -649,6 +665,13 @@ test("Markdown adds Copy to code blocks and a scroll region to tables, refuses n
   assert.equal(M.decorate("<pre><code>x</code></pre>"), '<div class="code-block"><button type="button" class="code-copy" aria-label="Copy code">Copy</button><pre><code>x</code></pre></div>');
   assert.equal(M.decorate("<table><tr><td>1</td></tr></table>"), '<div class="table-scroll" role="region" aria-label="Table" tabindex="0"><table><tr><td>1</td></tr></table></div>');
   assert.equal(M.decorate("<p>&lt;pre&gt;</p>"), "<p>&lt;pre&gt;</p>", "escaped text is never a tag");
+  // Phase 45 (F130): source markers become buttons; code, link text and attribute values keep their words
+  const cite = (id) => `<button type="button" class="cite" data-source="${id}" aria-label="Source ${id}">${id}</button>`;
+  assert.equal(M.citations("<p>Released in 2013 [S7].</p>"), `<p>Released in 2013 ${cite("S7")}.</p>`);
+  assert.equal(M.citations("<p>Both [S1, S3]</p>"), `<p>Both ${cite("S1")}${cite("S3")}</p>`);
+  assert.equal(M.citations("<pre><code>x = [S7]</code></pre><p><code>[S2]</code> <a href=\"https://a/[S4]\" title=\"a > [S5]\">[S6]</a></p>"),
+    "<pre><code>x = [S7]</code></pre><p><code>[S2]</code> <a href=\"https://a/[S4]\" title=\"a > [S5]\">[S6]</a></p>");
+  assert.equal(M.citations("<p>[S0] [S1234] [s7] &lt;b&gt;[S9]&lt;/b&gt;</p>"), `<p>[S0] [S1234] [s7] &lt;b&gt;${cite("S9")}&lt;/b&gt;</p>`);
   assert.deepEqual([M.openable("https://a"), M.openable("http://127.0.0.1:9/v"), M.openable("http://a"), M.openable("javascript:x"), M.openable(null)], [true, true, false, false, false]);
   const props = vue.reactive({ text: "start" });
   const view = mount(Markdown, props);
@@ -762,9 +785,12 @@ test("targets are at least 24–28 px and the pet loads Markdown on first use (V
   assert.match(pet, /\.quick-chat header button \{[^}]*width: 28px;\s*height: 28px;/);
   assert.match(pet, /\.quick-chat form \.pet-attachments button \{[^}]*width: 24px;\s*height: 24px;/);
   assert.match(css, /\.composer:focus-within \{\s*border-color: var\(--focus, var\(--accent\)\);/);
-  assert.ok(/const Markdown = defineAsyncComponent\(\(\) => import\("\.\/components\/Markdown\.vue"\)\);/.test(pet) && !/^import Markdown from/m.test(pet));
+  // Restated in Phase 46 (1.9.29, w25-genui-b): the companion's replies render through ReplyBody (the free table and
+  // diagram upgrades), which imports Markdown.vue; both still load on first use, never with the collapsed pet
+  assert.ok(/const ReplyBody = defineAsyncComponent\(\(\) => import\("\.\/components\/ReplyBody\.vue"\)\);/.test(pet) && !/^import (?:Markdown|ReplyBody) from/m.test(pet));
   assert.ok(!/^import CommandPalette from/m.test(pet), "the palette too");
-  assert.ok(read("./App.vue").includes('<summary>What\'s new</summary>'), "What's new in About (V1-135)");
+  // Phase 45 (F171): the summary names its release ("What's new in 1.9.10")
+  assert.ok(read("./App.vue").includes('<summary>What\'s new in {{ WHATS_NEW_VERSION }}</summary>'), "What's new in About (V1-135)");
 });
 // m24c merge: the parent's main.rs patches landed, so these two checks are plain tests now (they were `todo` until
 // then); a later main.rs without either patch fails here instead of reporting a todo.
@@ -794,6 +820,8 @@ test("Phase 33: the Stealth Lockdown switch saves the setting, then asks the she
   await settle();
   button(view.root, "Settings").props.onClick();
   await settle();
+  registry["AdvancedSettings.vue"].at(-1).onTab("privacy"); // Phase 45 (D129): its own tab
+  await settle();
   const sw = roleOf(view.root, "switch")[0];
   assert.ok(squash(textOf(sw)).startsWith("Stealth Lockdown"));
   assert.equal(sw.props["aria-checked"], "false");
@@ -808,8 +836,32 @@ test("Phase 33: the Stealth Lockdown switch saves the setting, then asks the she
   assert.deepEqual(called("setting").filter((p) => p.key === "stealth"), [{ key: "stealth", value: true }]);
   assert.deepEqual(invokes.filter(([command]) => command === "stealth_set"), [["stealth_set", { enabled: true }]]);
   assert.equal(roleOf(view.root, "switch")[0].props["aria-checked"], "true");
-  // The boot screen's avatar ("Getting your space ready") unmounted before the click; every avatar on screen now wears it.
+  // The boot screen's avatar ("Getting your space ready") unmounted before the click; every avatar on screen now wears it
+  // (Phase 45, D129: About, with its avatar, is under General).
+  registry["AdvancedSettings.vue"].at(-1).onTab("general");
+  await settle();
   const avatars = registry["Avatar.vue"].filter((attrs) => attrs.state !== "loading");
   assert.ok(avatars.length >= 3 && avatars.every((attrs) => attrs.stealth === true), "every avatar wears the Veil");
+  view.app.unmount();
+});
+
+// ---------- Phase 45 (F019): with no model, Send keeps the words and offers the ways to connect ----------
+test("Phase 45: a send with no model connected sends nothing, keeps the words and offers ChatGPT, API key and local", async () => {
+  host();
+  const view = mount(App);
+  await settle();
+  const box = () => all(view.root).find((el) => el.type === "textarea" && el.props["aria-label"] === "Message Pebble");
+  box().props["onUpdate:modelValue"]("plan a trip to Goa");
+  await settle();
+  await button(view.root, "Send message").props.onClick();
+  await settle();
+  assert.equal(called("send").length, 0, "nothing reaches the host");
+  assert.equal(box().value, "plan a trip to Goa", "the words stay in the box");
+  const card = all(view.root).find((el) => el.props.class === "storage-notice needs-model");
+  assert.ok(card && squash(textOf(card)).startsWith("Connect a model first"));
+  for (const name of ["ChatGPT", "API key", "Local model"]) assert.ok(button(card, name), name);
+  button(card, "API key").props.onClick();
+  await settle();
+  assert.equal(registry["AdvancedSettings.vue"]?.at(-1)?.intent, "add-provider", "the provider form opens at once");
   view.app.unmount();
 });

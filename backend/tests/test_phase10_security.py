@@ -422,9 +422,21 @@ def test_agent_data_cannot_carry_authority_or_forge_human_input(host):
     ('bash -c "echo hi"', 'Privileged'),
     ('cat .env', 'Credential'),
     ('cat ../notes.txt', 'stay in the selected project'),
-    ('git push origin main', 'typed Git'),
+    # Restated in 1.9.29 (w20-git): a raw push is no longer the terminal's to refuse; it is the reviewed push
+    # (App.raw_git_review), whose own checks refuse it in this folder, which is no repository, and which waits for review
+    # wherever it runs (test_git_review_1929); the guard's allow skips neither
+    ('git push origin main', 'not the root of a Git repository'),
+    ('git notes add -m x', 'typed Git'),
     ('ls && rm src.py', 'one command at a time'),
     ('echo $(whoami)', 'substitution'),
+    # Phase 46 (1.9.28, D178: the person allows chmod +x of one regular project file and plain NAME=value words outside
+    # a deny list, both reviewed, on unless PEBBLE_1928_TERMINAL=0): what the decision leaves out stays refused
+    ('sh run.sh', 'Privileged'),
+    ('chmod 777 src.py', 'other modes, options and several files at once are blocked'),
+    ('chmod +x ../outside.sh', 'Paths must stay inside the selected project'),
+    ('PATH=/tmp python3 src.py', 'environment overrides that decide how programs are found'),
+    ("'FOO=1' ls", 'Quoted or escaped environment overrides'),
+    ('A=1 cat .env', 'Credential'),
 ])
 def test_guard_allow_does_not_bypass_host_terminal_deny(host, command, match):
     h = host(mode='ask')
@@ -441,6 +453,23 @@ def test_guard_allow_does_not_bypass_host_terminal_deny(host, command, match):
     assert all(c['action'] == 'allow' for c in relevant)
     assert h.commands_run == [] and not h.app.store.actions(cid)
     assert h.file_hash('src.py') == before
+
+
+@pytest.mark.parametrize('command,effect', [('chmod +x src.py', 'Adds the exec bit to src.py'),
+                                            ('REPORT_DATE=2026-09-30 python3 src.py', 'Sets REPORT_DATE=2026-09-30')])
+def test_d178_routes_wait_for_review_even_in_full_mode_and_the_switch_still_turns_them_off(host, monkeypatch, command,
+                                                                                         effect):
+    # Phase 46 (1.9.28, D178): the two routes the person allowed always wait for the person's review, the card says the
+    # change in words, and PEBBLE_1928_TERMINAL=0 restores the refusal of section 8 as it stood before
+    h = host(mode='full')
+    cid, rid = h.root()
+    pending = h.root_tool(cid, rid, 'RunCommand', {'command': command}, 'd178')
+    assert pending['status'] == 'awaiting_user_approval' and h.commands_run == []
+    assert h.action(cid, pending['action_id'])['payload']['effect'].startswith(effect)
+    monkeypatch.setenv('PEBBLE_1928_TERMINAL', '0')
+    with pytest.raises(PolicyError, match='blocked'):
+        h.root_tool(cid, rid, 'RunCommand', {'command': command}, 'd178-off')
+    assert h.commands_run == []
 
 
 # ===========================================================================
@@ -845,10 +874,11 @@ def test_real_macos_sandbox_contains_reads_and_writes_to_the_project(tmp_path, m
         denied = h.app.approve(cid, pending['action_id'])
         assert denied['exit_code'] != 0 and not target.exists()
 
-        pending = h.root_tool(cid, rid, 'RunCommand', {'command': 'touch made-inside.txt'}, 'write-inside')
-        assert pending['status'] == 'awaiting_user_approval'
-        h.release()
-        allowed = h.app.approve(cid, pending['action_id'])
+        # Phase 46 (1.9.28, D184 with w14-full item 7, restated by the lead): in Full access a command confined to the
+        # project runs without a card, as in Auto, with a copy of the project behind it; the same sandbox still holds it
+        made = h.root_tool(cid, rid, 'RunCommand', {'command': 'touch made-inside.txt'}, 'write-inside')
+        assert made['status'] == 'applied', made
+        allowed = made['result']
         assert allowed['exit_code'] == 0 and (h.project / 'made-inside.txt').is_file()
 
         # Physical invariants: outside bytes unchanged, nothing new outside, and

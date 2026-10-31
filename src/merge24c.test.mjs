@@ -334,4 +334,7 @@ test("About's What's new lines are the newest CHANGELOG.md highlights, in order 
   const bullets = [...highlights.matchAll(/^- (.+)$/gm)].map((m) => m[1].trim());
   assert.equal(lines.length, 3);  // Phase 35 (1.3.0): three highlights
   assert.deepEqual(bullets, lines);
+  // Phase 45 (F171): and it names that release
+  const version = section.match(/^## \[([^\]]+)\]/)?.[1];
+  assert.ok(version && app.includes(`const WHATS_NEW_VERSION = "${version}";`), "What's new names " + version);
 });

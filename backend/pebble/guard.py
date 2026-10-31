@@ -2,12 +2,13 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import threading
 import weakref
 from collections import OrderedDict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 VENDOR = str(Path(__file__).resolve().parents[1] / "vendor")
 # AgentGuard records only commands it recognises as test runs, and parses this one's `=== N failed ===` summary.
@@ -31,6 +32,19 @@ TERMINAL_PARSERS = {'unittest': 'python-unittest', 'pytest': 'python-pytest', 'n
 RECIPE_FAMILIES = {'python-unittest': 'unittest', 'python-pytest': 'pytest', 'npm-test': 'npm', 'go-test': 'go',
                    'cargo-test': 'cargo', 'node-test': 'node', 'make-test': 'make'}
 HOST_SUMMARY = re.compile(r'(?:\d+ (?:passed|failed)|no tests ran|test command exited with status -?\d+)')
+# Phase 46 (1.9.27, golden held-out false completions): a terminal Python test command that names some tests (test
+# files, modules or ids, -k or -m, a discover pattern for one file) proves only those. The golden checkers run every
+# hidden test and the project's whole suite, so such a pass is no evidence that the change is done (its failures still
+# count) and the gate asks for the project's tests. A bare runner, a folder or a wildcard pattern runs the suite.
+NARROWING = {'unittest': frozenset({'-k'}),
+             'pytest': frozenset({'-k', '-m', '--deselect', '--lf', '--last-failed', '--sw', '--stepwise', '--ignore',
+                                  '--ignore-glob'})}
+VALUED = {'unittest': frozenset({'-k', '--durations', '-s', '--start-directory', '-p', '--pattern', '-t',
+                                 '--top-level-directory'}),
+          'pytest': frozenset({'-k', '-m', '-p', '-o', '-c', '-W', '-r', '-n', '--tb', '--maxfail', '--rootdir',
+                               '--basetemp', '--durations', '--import-mode', '--capture', '--log-level',
+                               '--log-cli-level', '--junitxml', '--confcutdir', '--cov', '--cov-report', '--timeout',
+                               '--color', '--override-ini', '--deselect', '--ignore', '--ignore-glob'})}
 # Phase 24 (V1-094): Pebble's project tools that change nothing in the project. They keep their names in AgentGuard's
 # record and never enter its validation (scope, evidence), so a search or a test run is never challenged. Test recipes
 # run on an isolated snapshot.
@@ -98,6 +112,47 @@ def named(value):
 def waived(prompt):
     """Whether the person's request tells Pebble not to run the tests (an anchored imperative)."""
     return bool(WAIVER.search(prompt or ''))
+
+
+def _one_file(pattern):
+    return not any(c in pattern for c in '*?[')
+
+
+def narrowed(command):
+    """Whether a terminal Python test command runs only some of the project's tests (Phase 46, NARROWING)."""
+    try:
+        argv = shlex.split(command or '')
+    except ValueError:
+        return False
+    names = [PurePosixPath(arg).name for arg in argv]
+    at = next((i for i, name in enumerate(names) if name in ('unittest', 'pytest', 'py.test')), None)
+    if at is None:
+        return False
+    runner = 'unittest' if names[at] == 'unittest' else 'pytest'
+    args = argv[at + 1:]
+    discover = runner == 'unittest' and args[:1] == ['discover']
+    positional, pending = [], None
+    for arg in args[1:] if discover else args:
+        if pending is not None:
+            if discover and pending in ('-p', '--pattern') and _one_file(arg):
+                return True
+            pending = None
+            continue
+        option, equals, value = arg.partition('=')
+        if len(arg) > 1 and arg.startswith('-'):
+            if option in NARROWING[runner] or not arg.startswith('--') and arg[:2] in NARROWING[runner]:
+                return True  # also -kNAME and -mMARK
+            if discover and equals and option in ('-p', '--pattern') and _one_file(value):
+                return True
+            if not equals and option in VALUED[runner]:
+                pending = option
+            continue
+        positional.append(arg)
+    if discover:
+        return len(positional) > 1 and _one_file(positional[1])  # start directory, pattern, top-level directory
+    if runner == 'unittest':
+        return bool(positional)  # test modules, classes, methods or files
+    return any('::' in arg or arg.endswith('.py') for arg in positional)  # pytest: files and ids; a folder is all
 
 
 def _digest(root, name):
@@ -554,8 +609,9 @@ class GuardAdapter:
             return {**kwargs, 'arguments': {'command': UNREAD_COMMAND}, 'result': {'exit_code': None}}, None
         outcome, count = verdict
         normalized = ' '.join(command.split())[:200]
-        run = {'key': 'terminal:' + normalized, 'family': family, 'evidence': True, 'digest': self._snapshot(root),
-               'label': 'terminal test run ' + json.dumps(normalized[:120])}
+        narrow = narrowed(command)  # Phase 46 (NARROWING): a pass of some tests is no evidence; a failure still counts
+        run = {'key': 'terminal:' + normalized, 'family': family, 'evidence': not narrow, 'narrowed': narrow,
+               'digest': self._snapshot(root), 'label': 'terminal test run ' + json.dumps(normalized[:120])}
         return {**kwargs, 'arguments': {'command': TERMINAL_COMMAND + family},
                 'result': {'stdout': f'Host terminal outcome: {outcome}\n=== {count} {outcome} ===\n',
                            'exit_code': 0 if outcome == 'passed' else 1}}, run
@@ -704,7 +760,7 @@ class GuardAdapter:
         the tested code printed. Paths are project-relative names; nothing else here comes from the project."""
         gate = {'kind': 'pass', 'files_changed': 0, 'changed': [], 'covering': [], 'problems': [], 'failed': None,
                 'tests': {'passed': 0, 'failed': 0, 'runner': None}, 'snapshot_current': None, 'waived': False,
-                'untrusted_summary': None}
+                'untrusted_summary': None, 'narrowed': None}
         if state is None:
             gate['outcome'] = 'untracked'
             return gate
@@ -743,6 +799,11 @@ class GuardAdapter:
         elif 'no-test-run' in subjects:
             gate['kind'] = 'no_test_run'
             gate['covering'] = runners.affected_tests(index, set(changed))[:4]
+            # Phase 46 (NARROWING): a pass of only some tests on the current files is named, so the repair asks for the
+            # project's tests instead of saying that no tests ran.
+            narrow = [r for r in self._runs(key) if r.get('narrowed') and r['outcome'].passed is True and r['digest']]
+            if narrow and narrow[-1]['digest'] == self._snapshot(root):
+                gate['narrowed'] = narrow[-1]['label']
         else:
             gate['kind'] = 'other'
         gate['outcome'] = ('unavailable' if gate['kind'] == 'unavailable' else 'held' if gate['kind'] != 'pass'
@@ -1047,6 +1108,12 @@ class GuardAdapter:
         return decision
 
     def _test_result(self, root, cid, recipe, result):
+        if result.get("outcome") == "no_tests":
+            # Phase 46 (golden dev d-mt-01 on gpt-6.1-sol): a run that collected no tests was reported as a failed test
+            # command, so in a project with no tests at all every changed-code turn was held as "reported failures (1
+            # failed)" through all its repairs. It is no evidence either way: never a pass, and not a failure. Where
+            # tests cover the change, AgentGuard still holds the run until they run (no_test_run).
+            return {"action": "allow", "reason": "no tests ran: not evidence either way"}
         if result.get("outcome") is not None:
             return self._recipe_result(root, cid, recipe, result)
         # A result without the host's classification: classified here the same way, and only the summary is sent.
@@ -1056,6 +1123,8 @@ class GuardAdapter:
         exit_code = result.get("exit_code")
         outcome, tests = recipes.classify('test', parser, exit_code if type(exit_code) is int else 1,
                                           result.get("output") or '')
+        if outcome == 'no_tests':
+            return {"action": "allow", "reason": "no tests ran: not evidence either way"}
         failed = (tests['failed'] + tests['errors']) if tests else 0
         if outcome == 'passed' and exit_code == 0:
             summary = f"=== {tests['passed']} passed ==="

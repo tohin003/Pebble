@@ -72,6 +72,9 @@ button {
   display: flex;
   height: 100dvh;
   overflow: hidden;
+  /* Phase 45 (F142, audit round R4): focusing the schedule review scrolled this frame (hidden overflow still scrolls
+     for focus and scripts): the header went off the top and an empty band filled the bottom. Clip never scrolls. */
+  overflow: clip;
 }
 .sidebar {
   width: 218px;
@@ -143,6 +146,9 @@ kbd {
 .nav-item.selected {
   background: var(--selected);
   color: var(--text);
+  /* Phase 45 (F136, audit round R4): hover and selected are nearly one shade, so the row under the pointer looked
+     chosen too; the chosen space is also bold */
+  font-weight: 600;
 }
 .nav-item:hover {
   background: var(--hover);
@@ -455,7 +461,7 @@ kbd {
   color: var(--text);
   line-height: 1.6;
   min-height: 57px;
-  max-height: 180px;
+  max-height: min(40vh, 360px); /* Phase 45 (F112): grows with its text up to here (autosize) */
   padding: 0;
   font-size: 14px;
   outline: none !important;
@@ -524,6 +530,26 @@ kbd {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+/* Phase 45 (F004): each footer item stays on one line; the model line and the note shorten with an ellipsis. */
+.composer-foot > * {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.composer-foot > .foot-model,
+.composer-foot > .foot-note {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-foot > .foot-model {
+  display: block;
+}
+.composer-foot > .foot-model > .tiny-dot {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 5px;
 }
 .tiny-dot {
   width: 4px;
@@ -1039,7 +1065,8 @@ kbd {
 }
 .action-heading strong {
   font-weight: 550;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word; /* Phase 45 (F123): "https://www.youtube.c / om" broke mid-word; long words still wrap */
+  min-width: 0;
   flex: 1;
 }
 .action-heading > span {
@@ -1249,6 +1276,69 @@ kbd {
   box-shadow: var(--shadow);
   padding: 25px;
 }
+/* Phase 45 (F006, F007, D129): in the workspace window Settings is wider and its tabs are a sidebar, so every section
+   has its own place and the tabs never wrap; the companion keeps the row of tabs. (The tabs' own look is scoped in
+   AdvancedSettings.vue; these selectors are one class stronger.) */
+.modal.settings-modal {
+  width: 800px;
+  /* Phase 45 (F013): the title and close button stay; only the sections scroll */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal.settings-modal > .settings-layout {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.modal .settings-layout {
+  display: grid;
+  grid-template-columns: 182px minmax(0, 1fr);
+  column-gap: 24px;
+  align-items: start;
+}
+.modal .settings-layout > .settings-tabs {
+  grid-column: 1;
+  grid-row: 1 / span 40;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  position: sticky;
+  top: 0;
+  margin: 4px 0 0;
+}
+.modal .settings-layout > .settings-tabs button {
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+.modal .settings-layout > :not(.settings-tabs) {
+  grid-column: 2;
+  min-width: 0;
+}
+.compact .modal.settings-modal {
+  width: 520px;
+}
+.compact .modal .settings-layout {
+  display: block;
+}
+.compact .modal .settings-layout > .settings-tabs {
+  flex-direction: row;
+  flex-wrap: wrap;
+  position: static;
+  margin: 16px 0;
+}
+@media (max-width: 760px) {
+  .modal .settings-layout {
+    display: block;
+  }
+  .modal .settings-layout > .settings-tabs {
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+    margin: 16px 0;
+  }
+}
 .modal-title {
   display: flex;
   align-items: center;
@@ -1414,6 +1504,8 @@ kbd {
 }
 .about-pebble {
   display: flex;
+  /* 2.0.0 (D222): where the row is too narrow (the companion's Settings), the credit moves below it, still right */
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   border-top: 1px solid var(--line);
@@ -1429,12 +1521,23 @@ kbd {
   font-weight: 400;
   margin-left: 5px;
 }
+/* 2.0.0 (D222): the line under the version is 12 px, so the credit below can be smaller and keep the 11 px floor
+   (V1-119). */
 .about-pebble small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   margin-top: 5px;
+}
+/* 2.0.0 (D222): the avatar engine's credit, in smaller type in the About panel's bottom-right corner. */
+.about-pebble .about-credit {
+  align-self: flex-end;
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: right;
+  white-space: nowrap;
 }
 .search-input {
   display: flex;
@@ -1786,7 +1889,7 @@ kbd {
 .toast-region {
   position: fixed;
   left: 50%;
-  bottom: 27px;
+  bottom: var(--toast-bottom, 27px); /* Phase 45 (F135): above the composer (App.vue placeToasts) */
   transform: translateX(-50%);
   z-index: 50;
   max-width: 85%;
@@ -2008,7 +2111,8 @@ kbd {
   cursor: default;
 }
 .effort-picker select {
-  max-width: 120px;
+  max-width: 160px; /* Phase 45 (F084): "Medium · recommended" was cut as "recommende" */
+  field-sizing: content;
 }
 .artifact-links {
   max-width: 740px;
@@ -2113,7 +2217,7 @@ kbd {
 .stealth-card {
   display: grid;
   gap: 10px;
-  margin-inline: -12px;
+  margin-inline: 0; /* Phase 45 (F098): a -12 px bleed ran under the scroll bar and made the section scroll sideways */
   padding: 12px;
   border-radius: 12px;
   border: 1px solid var(--stealth-line);
@@ -2230,4 +2334,116 @@ kbd {
   font-size: 11px;
   line-height: 1.65;
   color: var(--muted);
+}
+
+/* Phase 45 (F023): the terminal dialog's two buttons no longer touch */
+.connect-project {
+  margin-top: 10px;
+}
+
+/* Phase 45 (F029): the header's project menu */
+.project-switch-wrap {
+  position: relative;
+}
+.project-menu {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 20;
+}
+.project-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  text-align: left;
+}
+.project-menu button:hover {
+  background: var(--hover);
+}
+
+/* Phase 45 (F032) */
+.recently-deleted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 12px 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Phase 45 (F037): the conversations over a small window */
+.sidebar.sidebar-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 35;
+  box-shadow: var(--shadow);
+}
+
+/* Phase 45 (F073): the companion's window is transparent around its panel; a dialog's veil would draw a grey box */
+.pet-surface .palette-backdrop {
+  background: transparent !important;
+}
+
+/* Phase 45 (F031): where a conversation found by its words says them */
+.chat-excerpt {
+  font-size: 11px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Phase 45 (F105): the reply as it is written, quieter than a finished reply */
+.live-draft {
+  margin: 8px 0 4px;
+  opacity: 0.78;
+}
+.live-draft-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Phase 45 (F134): the conversation search's own clear button replaces WebKit's (named "cancel") */
+.chat-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
+}
+.chat-search-clear {
+  flex-shrink: 0;
+}
+
+/* Phase 45 (F130): a reply's source marker ([S7]) as a small button that shows its source */
+.markdown .cite {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  vertical-align: 1px;
+  cursor: pointer;
+}
+.markdown .cite:hover {
+  background: var(--hover);
 }

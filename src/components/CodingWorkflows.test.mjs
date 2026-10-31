@@ -533,6 +533,15 @@ try {
   assert.ok(!shown.text.includes('New branch'), 'the source branch of a push is not labelled as a new branch');
   shown = review({ kind: 'git', payload: { ...pushPlan, destructive: true } });
   assert.deepEqual(shown.alerts, ['Destructive', 'Publication'], 'both badges show together');
+  // Phase 46 (D159): a forced push with a lease, a remote branch deletion, the remote-tracking branch and -u
+  shown = review({ kind: 'git', payload: { ...pushPlan, destructive: true, bindings: { ...pushPlan.bindings, force: true, dropped: 2,
+    tracking: ['refs/remotes/origin/main', '9'.repeat(40)], upstream: { branch: 'main', remote: 'origin', merge: 'refs/heads/main' } } } });
+  includes(shown, ['Forced updateyes: only while the remote still points at 999999999999; 2 remote commit(s) leave the branch',
+    'Remote-tracking branchrefs/remotes/origin/main', 'Sets upstreamorigin · refs/heads/main'], 'forced push review');
+  shown = review({ kind: 'git', payload: { ...pushPlan, destructive: true, branch: undefined,
+    bindings: { ...pushPlan.bindings, new_oid: null, delete: true, commits: 0, exclude: [] } } });
+  includes(shown, ['Remote ref movesrefs/heads/main: 999999999999 → absent (deleted)'], 'deletion review');
+  assert.ok(!shown.text.includes('Forced update'), 'a deletion is not labelled forced');
 
   const settledCommit = { ...commitPlan, result: {
     receipt_id: commitPlan.plan_id, operation: 'commit', plan_hash: commitPlan.plan_hash, state: 'applied', phase: 'applied and read back', effect_started: true, broker: { requires_review: true, permission_mode: 'ask' }, steps: ['write-tree'],

@@ -413,6 +413,16 @@ def _has_pytest(prefix, real):
     return all((site / rel).is_file() for rel in ('pytest/__init__.py', '_pytest/__init__.py', 'pluggy/__init__.py'))
 
 
+# Phase 46 (1.9.27, the lead; private d-cf-93 on sol: the fix was right, RunTests said "Node.js is missing"): an app
+# opened from the Dock or Finder gets launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), so `which node` finds nothing
+# unless Node came from nvm. The nodejs.org installer puts node in /usr/local/bin, Homebrew in /opt/homebrew/bin and
+# Volta in ~/.volta/bin; the person's own terminal (and Codex, whose PATH has /usr/local/bin) runs those. nvm stays
+# first, as before. /usr/local before /opt/homebrew: the sandbox reads all of /usr (the installer's node is
+# self-contained, Intel Homebrew's libraries sit under /usr/local), while Apple-silicon Homebrew's node loads libraries
+# from /opt/homebrew, which no profile grants yet (not measured: no Homebrew node on the development Mac).
+NODES = (Path('/usr/local/bin/node'), Path('/opt/homebrew/bin/node'))
+
+
 def _node():
     found = shutil.which('node')
     if found and Path(found).is_absolute():
@@ -422,9 +432,12 @@ def _node():
         version = re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', candidate.parent.parent.name)
         if version:
             versions.append((tuple(map(int, version.groups())), str(candidate)))
-    if not versions:
-        raise PolicyError('Install Node to run this test recipe.')
-    return Path(max(versions)[1])
+    if versions:
+        return Path(max(versions)[1])
+    for candidate in (*NODES, Path.home() / '.volta/bin/node'):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    raise PolicyError('Install Node to run this test recipe.')
 
 
 def _cargo():
@@ -574,6 +587,33 @@ def _mount(mount, recipe, project):
             'env': dict(sorted(env.items())), **labels}
 
 
+# Phase 46: a src-layout project (packages under src/ and nothing configuring pytest's pythonpath) could not import its
+# own package in RunTests: -I ignores PYTHONPATH, and neither discover nor pytest adds src/. The golden checkers run
+# hidden tests with the root and src/ on the path, and Codex and Claude Code type PYTHONPATH=src, so a correct fix was
+# reported "blocked". src/ now joins the import path for exactly those projects; every other plan is unchanged.
+SRC_BOOT = ("import runpy,sys;sys.path.insert(0,'src');sys.argv=['python -m unittest']+sys.argv[1:];"
+            "runpy.run_module('unittest',run_name='__main__',alter_sys=True)")
+
+
+def _src_layout(root):
+    src = Path(root) / 'src'
+    try:
+        return src.is_dir() and not src.is_symlink() and any(
+            (child / '__init__.py').is_file() or child.suffix == '.py' for child in list(src.iterdir())[:200])
+    except OSError:
+        return False
+
+
+def _sets_pythonpath(root):
+    for name in ('pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini'):
+        try:
+            if 'pythonpath' in (Path(root) / name).read_text(encoding='utf-8', errors='replace')[:200_000]:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _build(recipe_id, ws, mount, project, facts_=None):
     """Every plan field except the pinned hashes, derived from fixed data."""
     recipe = REGISTRY.get(recipe_id) if isinstance(recipe_id, str) else None
@@ -585,6 +625,11 @@ def _build(recipe_id, ws, mount, project, facts_=None):
     launch = found['executable'] if mount and mount['kind'] == 'python-env' else found['realpath']
     entry = found['entrypoint']
     argv = [str(launch)] + [str(entry) if part == NPM_CLI else part for part in recipe.argv]
+    if recipe.id in ('python-unittest', 'python-pytest') and _src_layout(ws.root):
+        if recipe.id == 'python-unittest':
+            argv = [argv[0], '-I', '-c', SRC_BOOT, *recipe.argv[3:]]  # unittest discover -v, with src/ first
+        elif not _sets_pythonpath(ws.root):
+            argv += ['-o', 'pythonpath=src']
     env = {'PATH': str(Path(launch).parent) + ':/usr/bin:/bin', 'HOME': TEMP, 'TMPDIR': TEMP,
            'PYTHONNOUSERSITE': '1', 'LANG': 'en_US.UTF-8', **dict(recipe.env), **found['env'],
            **(mount['env'] if mount else {})}
@@ -602,10 +647,10 @@ def _drift(current, expected, role):
     return current
 
 
-def _auto(ws, mount):
+def _auto(ws, mount, among=AUTO):
     found = facts(ws)
     kind = mount.get('kind') if isinstance(mount, dict) else None
-    for recipe_id in AUTO:
+    for recipe_id in among:
         recipe = REGISTRY[recipe_id]
         if mount is not None and recipe.needs != kind or not recipe.detect(found):
             continue
@@ -639,10 +684,11 @@ def inspect(ws):
     return {'recipes': rows, 'authorization': 'none', 'inventory_truncated': found['truncated']}
 
 
-def resolve(recipe_id, ws, mount=None):
-    """Pinned plan for one registry recipe, or the deterministic 'auto' choice."""
+def resolve(recipe_id, ws, mount=None, among=AUTO):
+    """Pinned plan for one registry recipe, or the deterministic 'auto' choice (the first of `among`, in AUTO's order,
+    that is detected and available)."""
     if recipe_id == 'auto':
-        recipe_id = _auto(ws, mount)
+        recipe_id = _auto(ws, mount, among)
     plan = _build(recipe_id, ws, mount, ws.root)
     derived = plan['executable']['realpath']
     if plan['mount'] and plan['mount']['kind'] == 'python-env':

@@ -76,7 +76,9 @@ onMounted(() => { act(load); });
   </section>
 </template>
 <style scoped>
-.mods-settings textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; margin: 8px 0; }
+.mods-settings textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; margin: 8px 0;
+  /* Phase 45 (F017): themed like every other field (it was pure white in dark mode) */
+  background: var(--bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px; }
 .mods-settings small { display: block; overflow-wrap: anywhere; }
 .mod-review pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
 .button-row { display: flex; gap: 8px; margin: 12px 0; }

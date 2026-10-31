@@ -20,7 +20,8 @@ test("Open full workspace opens the workspace in full screen, never always on to
   assert.ok(open.indexOf("reveal(&app)") < open.indexOf("set_fullscreen(true)"), "shown first, then full screen");
   assert.match(open, /set_always_on_top\(false\)/);
   // Phase 33: only while Stealth Lockdown is off; under it the workspace opens windowed (Phase33Shell.test.mjs).
-  assert.match(open, /if !stealth_on\(\) && !main\.is_fullscreen\(\)\.unwrap_or\(false\) \{ let _=main\.set_fullscreen\(true\); \}/);
+  // Phase 45 (D146): full screen when the person left the workspace full screen (the first open is)
+  assert.match(open, /if full && !stealth_on\(\) && !main\.is_fullscreen\(\)\.unwrap_or\(false\) \{ let _=main\.set_fullscreen\(true\); \}/);
   // ⌘⇧Space, the tray and reopening from Finder keep the window as it was.
   assert.doesNotMatch(fn("reveal"), /fullscreen/);
 });

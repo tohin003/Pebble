@@ -65,7 +65,8 @@ import uuid
 from pathlib import Path
 
 from .policy import PolicyError
-from .terminal import inspect_command, resolve_executable
+from .terminal import developer_environment, inspect_command, project_environment, resolve_executable
+from .zone import person_zone
 
 SANDBOX = Path('/usr/bin/sandbox-exec')
 CHUNK_BYTES = 2048
@@ -165,7 +166,7 @@ def run_async_command(payload, cancel, on_started, on_output, *, timeout=300, ma
             process = subprocess.Popen(
                 [str(SANDBOX), '-p', profile, str(exe), *checked['argv'][1:]],
                 cwd=root,
-                env=_environment(exe, temp),
+                env=_environment(exe, temp, root),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -249,8 +250,9 @@ def _profile(exe, toolchain, root, temp, writable, network):
         job_marker=uuid.uuid4().hex, process_model='tree')
 
 
-def _environment(exe, temp):
-    # Nothing is inherited; HOME and TMPDIR are this run's temporary folder.
+def _environment(exe, temp, root=None):
+    # Nothing is inherited; HOME and TMPDIR are this run's temporary folder. A command's own environment names its
+    # project root; the shim's does not.
     return {
         'PATH': str(exe.parent) + ':/usr/bin:/bin:/opt/homebrew/bin',
         'HOME': str(temp),
@@ -259,6 +261,9 @@ def _environment(exe, temp):
         'PYTHONNOUSERSITE': '1',
         'GIT_CONFIG_NOSYSTEM': '1',
         'GIT_TERMINAL_PROMPT': '0',
+        **person_zone(),  # Phase 46: the person's TZ (zone.py)
+        **(project_environment(root) if root is not None else {}),  # Phase 46: as terminal.run_command
+        **developer_environment(),  # Phase 46 (1.9.29): as terminal.run_command
     }
 
 
@@ -312,7 +317,7 @@ def _run_on_shim(checked, writable, exe, toolchain, root, identity, cancel, on_s
         plan = {
             'version': 1, 'argv': [str(exe), *checked['argv'][1:]], 'cwd': str(root),
             'env': {**_environment(exe, home), 'PYTHONPATH': str(Path(__file__).resolve().parents[1])},
-            'command_env': _environment(exe, home), 'profile': profile, 'launcher': list(prefix),
+            'command_env': _environment(exe, home, root), 'profile': profile, 'launcher': list(prefix),
             'limits': {'timeout': timeout, 'output_limit': max_output, 'nofile': 4096, 'nproc': 512},
             'on_disconnect': on_disconnect, 'secret': _secrets.token_hex(16), 'isolation': isolation,
         }
@@ -597,7 +602,7 @@ def run_plan(plan, cancel, on_started, on_output, *, launcher, timeout=None, max
         steps = []
         for step in plan['steps']:
             real = Path(step['executable']['realpath'])
-            env = {**_environment(real, home), **step['env']}
+            env = {**_environment(real, home, root), **step['env']}
             if plan['interactive']:
                 env.setdefault('TERM', 'dumb')
             steps.append({'argv': [str(real), *step['argv'][1:]], 'cwd': str(root / step['cwd']), 'env': env,

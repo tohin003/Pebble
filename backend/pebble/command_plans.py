@@ -106,7 +106,7 @@ BROAD = frozenset(map(Path, ('/usr', '/opt', '/var', '/etc', '/tmp', '/System', 
                              '/Users', '/Volumes', '/private', '/private/var', '/private/tmp', '/private/etc')))
 NO_NETWORK = {'mode': 'none', 'destinations': [], 'credentials': []}
 PRIVILEGED = ('Privileged commands, shell wrappers and system administration are blocked. '
-              'Run them yourself outside Pebble.')  # inspect_command's own refusal
+              'Run them yourself outside Pebble.')  # inspect_command's own refusal (Phase 46: a shell's adds SHELL_HINT)
 AMBIGUOUS = ('Quotes, globs, escapes, ~ and other shell syntax make a command string ambiguous. Use only letters, '
              'digits, spaces and @%+=:,./_- in a command string, or propose the argv as a typed plan.')
 DESTINATIONS = 'Name each network destination as an exact [host, 443] pair; open network is not a plan field.'

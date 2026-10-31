@@ -122,10 +122,16 @@ assert.deepEqual(calls.filter(call => call.method === 'run_reconcile').at(-1).pa
 assert.ok(all(root).some(element => element.props.role === 'status' && textOf(element) === 'No uncertain outcome is waiting.'));
 
 // A readback failure is reported, never shown as an empty list.
-failures.set('run_readback', 'Stop the active run before reading back its outcomes.');
+failures.set('run_readback', 'The readback could not finish.');
 props.runId = 'run-2';
 await settle();
-assert.equal(events.at(-1), 'error:Error: Stop the active run before reading back its outcomes.');
+assert.equal(events.at(-1), 'error:Error: The readback could not finish.');
 assert.ok(!all(root).some(element => element.props.role === 'status'));
+// Phase 45 (F224, audit round R9): while another task runs the readback waits, said calmly, never as an empty list
+failures.set('run_readback', 'Stop the active run before reading back its outcomes.');
+props.runId = 'run-3';
+await settle();
+assert.ok(all(root).some(element => element.props.role === 'status' && textOf(element) === 'Pebble reads these back once the current task ends.'));
+assert.ok(!all(root).some(element => element.props.role === 'status' && textOf(element) === 'No uncertain outcome is waiting.'));
 app.unmount();
 console.log('reconcile panel: ok');

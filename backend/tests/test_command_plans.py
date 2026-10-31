@@ -18,7 +18,7 @@ import pytest
 
 from pebble import command_plans as plans, process_jobs, recipes
 from pebble.policy import PolicyError
-from pebble.terminal import inspect_command, resolve_executable
+from pebble.terminal import SHELL_HINT, inspect_command, resolve_executable
 
 INTERPRETER = Path(sys.executable).resolve()
 SOURCE = INTERPRETER if INTERPRETER.stat().st_size < 8 << 20 else Path('/bin/echo')
@@ -116,12 +116,14 @@ def test_documented_defaults_and_typed_options(project):
         plans.from_command('ls', project / 'missing')
 
 
+# Phase 46 (1.9.28, D178: the person allows plain NAME=value words outside a deny list under review, on unless
+# PEBBLE_1928_TERMINAL=0): 'FOO=1 ls' left this list for test_a_variable_is_reviewed_but_never_planned; a quoted one stays
 BLOCKED_COMMANDS = ['sudo ls', 'su', 'bash -c ls', 'sh', 'zsh', '/bin/sh', 'env ls', 'xargs ls', 'nohup ls', 'eval ls',
                     'git status', 'chmod 777 README.md', 'launchctl list', 'osascript', 'security list-keychains',
                     'mkfs.ext4 x', 'dd if=x', 'cat .env', 'cat src/.ssh/id', 'cat key.pem', 'ls ..', 'cat ../x',
-                    'ls /', 'FOO=1 ls', 'ls $(pwd)', 'ls `pwd`', 'ls ${HOME}', 'ls; pwd', 'ls && pwd', 'ls || pwd',
-                    'ls | wc', 'ls > out.txt', 'ls >> out.txt', 'cat < README.md', 'ls &', 'ls\npwd', 'ls\rpwd',
-                    'ls\x00', '', '   ', 'x' * 4001]
+                    'ls /', "'FOO=1' ls", 'PATH=/tmp ls', 'ls $(pwd)', 'ls `pwd`', 'ls ${HOME}', 'ls; pwd', 'ls && pwd',
+                    'ls || pwd', 'ls | wc', 'ls > out.txt', 'ls >> out.txt', 'cat < README.md', 'ls &', 'ls\npwd',
+                    'ls\rpwd', 'ls\x00', '', '   ', 'x' * 4001]
 
 
 @pytest.mark.parametrize('command', BLOCKED_COMMANDS)
@@ -135,7 +137,7 @@ def test_blocked_commands_refused_exactly_as_inspect_command(project, command):
 
 @pytest.mark.parametrize('argv', [['sudo', 'ls'], ['bash', '-c', 'ls'], ['/bin/zsh'], ['env', 'ls'], ['git', 'status'],
                                   ['chmod', '777', 'x'], ['ls', ';', 'pwd'], ['ls', '|', 'wc'], ['ls', '>', 'x'],
-                                  ['ls', '&&', 'pwd'], ['ls', '$(pwd)'], ['ls', '`pwd`'], ['FOO=1', 'ls'],
+                                  ['ls', '&&', 'pwd'], ['ls', '$(pwd)'], ['ls', '`pwd`'], ['PATH=/tmp', 'ls'],
                                   ['cat', '.env'], ['ls', '..'], ['ls', '/']])
 def test_typed_argv_refused_like_the_command_parser(project, argv):
     with pytest.raises(PolicyError) as expected:
@@ -143,6 +145,28 @@ def test_typed_argv_refused_like_the_command_parser(project, argv):
     with pytest.raises(PolicyError) as actual:
         plans.from_argv([{'argv': argv}], project)
     assert str(actual.value) == str(expected.value)
+
+
+def test_a_variable_is_reviewed_but_never_planned(project, monkeypatch):
+    # D178: the broker admits `FOO=1 python3 x.py` for review (its card names the variable); a plan carries no
+    # variables, so the string is ambiguous to it and the typed argv does not survive the parser. With the switch off,
+    # as before.
+    # Phase 46 (1.9.28, the follow-ups security review 11, restated): a variable goes only to the project's own program,
+    # so `FOO=1 ls` (this test's command before) is refused now
+    checked = inspect_command('FOO=1 python3 x.py', project)
+    assert checked['env'] == {'FOO': '1'} and checked['argv'] == ['python3', 'x.py'] and checked['requires_review']
+    with pytest.raises(PolicyError, match="only for the project's own program"):
+        inspect_command('FOO=1 ls', project)
+    with pytest.raises(PolicyError, match='ambiguous'):
+        plans.from_command('FOO=1 python3 x.py', project)
+    with pytest.raises(PolicyError, match='does not survive the command parser unchanged'):
+        plans.from_argv([{'argv': ['FOO=1', 'python3', 'x.py']}], project)
+    monkeypatch.setenv('PEBBLE_1928_TERMINAL', '0')
+    for run in (lambda: inspect_command('FOO=1 ls', project), lambda: plans.from_command('FOO=1 ls', project),
+                lambda: plans.from_argv([{'argv': ['FOO=1', 'ls']}], project),
+                lambda: inspect_command('FOO=1 python3 x.py', project)):
+        with pytest.raises(PolicyError, match='environment overrides are blocked'):
+            run()
 
 
 @pytest.mark.parametrize('command', ['xcrun clang', 'time ls', 'nice ls', 'tcsh', 'ksh', 'dash', 'caffeinate ls',
@@ -573,7 +597,8 @@ def test_linear_pipeline_pins_each_step(project, tmp_path):
         plans.from_argv(tty, project, pipeline='linear')
     with pytest.raises(PolicyError) as exc:
         plans.from_argv([{'argv': ['ls']}, {'argv': ['sh']}], project, pipeline='linear')
-    assert str(exc.value) == plans.PRIVILEGED
+    # Phase 46 (1.9.27): inspect_command's own refusal, which for a shell adds the way that works
+    assert str(exc.value) == plans.PRIVILEGED + SHELL_HINT
     with pytest.raises(PolicyError, match='one-step'):
         plans.legacy_payload(plan)
     with pytest.raises(PolicyError, match=r'\(pipeline\)'):

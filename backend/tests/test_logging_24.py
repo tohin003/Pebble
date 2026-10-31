@@ -49,6 +49,10 @@ def _workspace(self, id, path):
 def _effort(self, effort):
     raise _NumberCode('Refused with private-detail-24.')
 App.chatgpt_start, App.set_workspace, App.model_effort = _start, _workspace, _effort
+# 1.9.29 (the lead): App.dispatch fetches ChatGPT's discovery document (prefetch) before chatgpt_start, so without this
+# stub the test reached the network and failed when auth.openai.com was unreachable (errno 65, impact run 68)
+from pebble.chatgpt import ChatGPT
+ChatGPT.prefetch = lambda self: {}
 '''
 
 
@@ -80,7 +84,8 @@ def test_an_unexpected_failure_keeps_its_line_and_traceback_and_ends_with_the_ti
     home = tmp_path / 'data'
     service = pebble_service(home)
     reply = service.call('get_chat', timeout=60)  # no id: a KeyError, which is a defect and not a refusal
-    assert reply['error'] == "'id'" and 'code' not in reply
+    # Phase 45 (F239, audit round R10, deliberate): the person reads one sentence, never the defect's own words ("'id'")
+    assert reply['error'] == backend_main.DEFECT_TEXT and 'code' not in reply
     assert service.close() == 0
     lines = log_lines(home)
     first = lines[0]
@@ -172,3 +177,8 @@ def test_the_error_payload_carries_only_content_free_codes():
     assert not backend_main.refusal(json.JSONDecodeError('bad', '{', 0))
     assert not backend_main.refusal(UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid'))
     assert backend_main.method_label('odd\nname') == 'odd?name' and backend_main.method_label('') == '?'
+    # Phase 45 (F239, audit round R10): a defect never shows its own words to the person
+    for defect in (TypeError("App._route_table.<locals>.<lambda>() got an unexpected keyword argument 'id'"),
+                   KeyError('id'), AttributeError("'NoneType' object has no attribute 'x'")):
+        payload, shown = reply('r', defect, friendly_error)
+        assert payload == {'id': 'r', 'error': backend_main.DEFECT_TEXT} and shown is defect

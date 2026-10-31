@@ -66,6 +66,15 @@ def test_test_files_are_recognised_by_path(path, expected):
     ('Write tests for parse().', False),
     ('Add a case to test_parser.py for negative numbers.', False),
     ('Extend the existing test suite with a tuple case.', False),
+    # Phase 46 (dev d-cb-01): a framework's name, and the file named with its folder
+    ('Also add unittest tests for it in tests/test_parser.py.', False),
+    ('Add pytest tests for parse().', False),
+    ('Add a case to tests/test_parser.py for negative numbers.', False),
+    ("Don't add unittest tests; just repair parse().", True),
+    # Phase 46 (private dev d-lh-91's last turn): a behaviour that needs a new test
+    ('Every behaviour we added today needs a test in tests/ (add the missing ones), and the suite must pass.', False),
+    ('The release needs the tests to pass first.', True),
+    ("This fix doesn't need a test.", True),
 ])
 def test_only_a_request_for_test_changes_lets_a_test_edit_through(text, waits):
     reason = edit_scope.review_reason('test_parser.py', text)

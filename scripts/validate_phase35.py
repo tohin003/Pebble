@@ -185,7 +185,12 @@ class Campaign:
                 v34.call('Write', {'file_path': 'stats.py', 'content': v34.FIXED}, 'w1'),
                 v34.call('RunTests', {'recipe': 'python-unittest', 'check': v34.CHECK}, 'c1'),
                 v34.call('RunTests', {'recipe': 'python-unittest'}, 't1')], 'Make mean return 0.0 for an empty list.')
-            assert coding[0] == {'messages': 5, 'first': True}, coding[0]
+            # Phase 46 (runner.PREFETCH): the host's prefetch of the tiny project's two files is appended after the
+            # request (5 messages without it; its views are current, so no audit lists them until one changes); every
+            # later request still extends the one before.
+            extra = ['pebble_prefetch'] if runner.PREFETCH else []
+            assert coding[0] == {'messages': 5 + len(extra), 'first': True}, coding[0]
+            assert [m.get('name') for m in requests[0][5:]] == extra, [m.get('name') for m in requests[0]]
             assert len(coding) >= 6 and all(r and r['append_only'] for r in coding[1:]), coding
             audits = [m for m in requests[-1] if m.get('name') == 'pebble_source_status']
             assert len(audits) >= 2 and all(m.get('_pebble_source') and runner.AUDIT_TEXT in m['content'] for m in audits)

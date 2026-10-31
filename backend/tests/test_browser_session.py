@@ -163,6 +163,7 @@ class FakeChrome:
         self.hang, self.die_on = set(), set()
         self.download = self.thread = None
         self.closing, self.wlock, self.rids = False, threading.Lock(), itertools.count(1)
+        self.scale = 1  # layout units per CSS px in DOMSnapshot (2 on a Retina Mac, E-B1 2026-10-25)
 
     def add_tab(self, page):
         tab = Tab(page)
@@ -339,7 +340,7 @@ class FakeChrome:
                     content['value'].append(add(n.child, (n.rect[0] - n.child.scroll[0], n.rect[1] - n.child.scroll[1])))
             documents[position] = {
                 'documentURL': s(page.url), 'baseURL': s(page.url), 'title': s(page.title), 'frameId': s(page.frame_id),
-                'scrollOffsetX': page.scroll[0], 'scrollOffsetY': page.scroll[1],
+                'scrollOffsetX': page.scroll[0] * self.scale, 'scrollOffsetY': page.scroll[1] * self.scale,
                 'nodes': {'parentIndex': [where[n.parent.backend] if n.parent else -1 for n in nodes],
                           'nodeType': [9 if n.tag == '#document' else 3 if n.tag == '#text' else 1 for n in nodes],
                           'nodeName': [s(n.tag) for n in nodes],
@@ -349,7 +350,8 @@ class FakeChrome:
                           'inputValue': {'index': [i for i, _ in values], 'value': [s(v) for _, v in values]},
                           'contentDocumentIndex': content},
                 'layout': {'nodeIndex': [i for i, _ in boxes],
-                           'bounds': [[r[0] - offset[0], r[1] - offset[1], r[2], r[3]] for _, r in boxes],
+                           'bounds': [[(r[0] - offset[0]) * self.scale, (r[1] - offset[1]) * self.scale,
+                                       r[2] * self.scale, r[3] * self.scale] for _, r in boxes],
                            'styles': [], 'text': [], 'stackingContexts': {'index': []}}}
             return position
 
@@ -465,6 +467,11 @@ class FakeChrome:
             self._fire(tab, node, 'focus')
         elif js == bs.FOCUSED_JS:
             value = tab.focus == node.backend
+        elif js == bs.CLICK_JS:  # Phase 44: the element's own click (a hidden tab's press)
+            self.inputs.append(('dom_click', params.get('userGesture') is True))
+            r = node.rect
+            self._click(tab, r[0] + r[2] / 2, r[1] + r[3] / 2)
+            value = True
         elif js == bs.CHOOSE_JS:
             option = next((k for k in node.kids if k.name == args[0]['value'].strip()), None)
             value = node.tag == 'SELECT' and option is not None
@@ -558,6 +565,11 @@ class FakeChrome:
         if method == 'DOM.getContentQuads':
             node, _ = self._node(tab, p['backendNodeId'])
             r = node.rect
+            if r is not None and node.props.get('pieces'):  # wrapped inline text: one quad per line, halves here
+                half = r[2] / 2
+                return {'quads': [[r[0], r[1], r[0] + half, r[1], r[0] + half, r[1] + r[3] / 2, r[0], r[1] + r[3] / 2],
+                                  [r[0] + half, r[1] + r[3] / 2, r[0] + r[2], r[1] + r[3] / 2, r[0] + r[2], r[1] + r[3],
+                                   r[0] + half, r[1] + r[3]]]}
             return {'quads': [] if r is None or node.props.get('hidden') else
                     [[r[0], r[1], r[0] + r[2], r[1], r[0] + r[2], r[1] + r[3], r[0], r[1] + r[3]]]}
         if method == 'DOM.getFrameOwner':
@@ -1157,6 +1169,136 @@ def test_input_act_types_trusted_text_inside_the_guard(env):
     assert env.browser.effect_log(env.tab.id) == []
 
 
+def test_a_retina_snapshot_is_read_in_css_pixels_so_typing_is_not_refused_as_moved(env):
+    # E-B1 on the person's Mac (2026-10-25): Chrome's DOMSnapshot bounds came in device pixels (twice the CSS pixels
+    # DOM.getContentQuads gives), so every re-check refused the field as moved more than 8 px.
+    env.peer.scale = 2
+    env.tab.page.scroll = (0, 30)
+    sid = grant(env)
+    view = env.sessions.observe(sid, env.run)
+    # the CSS viewport rect DOM.getContentQuads gives, though the bounds and the scroll both came doubled
+    assert element(env, sid, view, 'to')['frame'] == [10, 10, 200, 20]
+    result = act(env, sid, 'to', 'type', 'bob@example.com')
+    assert (result['status'], result['verdict'], result['basis']) == ('done', 'occurred', 'value_matches')
+    assert env.peer.inputs == [('text', 'bob@example.com')]
+
+
+def test_a_hidden_tab_is_pressed_by_the_elements_own_click_with_a_user_gesture(env):
+    # Phase 44, measured in Chrome (2026-10-25): Pebble's own tab in the background never answered
+    # Input.dispatchMouseEvent (5 s, then an uncertain act); the element's own click navigated at once.
+    env.tab.visible = False
+    env.tab.page.add(link('Next', ORIGIN + '/next', [10, 400, 60, 20], key='next'))
+    env.peer.sites[ORIGIN + '/next'] = lambda: Page(ORIGIN + '/next', 'Next', [text('Page two', [0, 0, 99, 9])])
+    sid = grant(env)
+    view = env.sessions.observe(sid, env.run)
+    assert view['window']['focused'] is False
+    result = act(env, sid, 'next', 'press', routine=True)  # routine navigation: an input act, never brought forward
+    assert result['status'] != 'needs_native_review'
+    assert env.peer.inputs == [('dom_click', True)], 'no mouse events into a hidden tab'
+    assert env.tab.page.url == ORIGIN + '/next' and env.tab.visible is False
+
+
+def test_a_navigation_readback_rides_out_reads_that_fail_mid_navigation(env, monkeypatch):
+    # Phase 44, measured in Chrome on YouTube: reads failed for a moment while the page navigated, and the press came
+    # back uncertain, which paused the session; the readback now looks again until its deadline.
+    env.tab.visible = False
+    env.tab.page.add(link('Next', ORIGIN + '/next', [10, 400, 60, 20], key='next'))
+    env.peer.sites[ORIGIN + '/next'] = lambda: Page(ORIGIN + '/next', 'Next', [text('Page two', [0, 0, 99, 9])])
+    sid = grant(env)
+    real, failures = env.sessions._snapshot, []
+
+    def flaky(row):
+        if env.peer.inputs and len(failures) < 2:  # the click went out: the page is mid-navigation
+            failures.append(1)
+            raise ScreenRefused('stale_ui', 'The page kept navigating while Pebble read it.')
+        return real(row)
+    monkeypatch.setattr(env.sessions, '_snapshot', flaky)
+    result = act(env, sid, 'next', 'press', routine=True)
+    assert len(failures) == 2 and (result['status'], result['verdict']) == ('done', 'occurred'), result
+    assert env.sessions.observe(sid, env.run)['state'] == 'active', 'the session was never paused'
+
+
+def test_a_reviewed_press_brings_the_hidden_tab_forward_and_clicks_for_real(env):
+    env.tab.visible = False
+    env.tab.page.add(link('Next', ORIGIN + '/next', [10, 400, 60, 20], key='next'))
+    env.peer.sites[ORIGIN + '/next'] = lambda: Page(ORIGIN + '/next', 'Next', [text('Page two', [0, 0, 99, 9])])
+    sid = grant(env)
+    proposal = act(env, sid, 'next', 'press')
+    assert proposal['status'] == 'needs_native_review'
+    env.sessions.commit(proposal['proposal_id'])
+    assert env.tab.visible is True and [i[0] for i in env.peer.inputs] == ['mouse', 'mouse', 'mouse']
+
+
+def test_typing_brings_pebbles_hidden_tab_forward_first(env):
+    env.tab.visible = False
+    sid = grant(env)
+    result = act(env, sid, 'to', 'type', 'bob@example.com')
+    assert (result['status'], result['verdict']) == ('done', 'occurred')
+    assert env.tab.visible is True and env.peer.inputs == [('text', 'bob@example.com')]
+
+
+def test_a_visible_tab_is_still_pressed_with_trusted_mouse_events(env):
+    env.tab.visible = True
+    env.tab.page.add(link('Next', ORIGIN + '/next', [10, 400, 60, 20], key='next'))
+    env.peer.sites[ORIGIN + '/next'] = lambda: Page(ORIGIN + '/next', 'Next', [text('Page two', [0, 0, 99, 9])])
+    sid = grant(env)
+    env.sessions.observe(sid, env.run)
+    proposal = act(env, sid, 'next', 'press')
+    env.sessions.commit(proposal['proposal_id']) if proposal.get('status') == 'needs_native_review' else proposal
+    assert [i[0] for i in env.peer.inputs] == ['mouse', 'mouse', 'mouse']
+
+
+def test_a_page_whose_layout_scale_cannot_be_measured_is_not_read(env):
+    for node in env.tab.page.nodes():
+        node.rect = None  # no box to measure against
+    sid = grant(env)
+    assert 'layout scale' in str(refused('ax_failed', env.sessions.observe, sid, env.run))
+    assert env.peer.inputs == []
+
+
+def app_shell(env):
+    # Phase 44, measured on YouTube (2026-10-25): HTML and BODY have no height (the app is positioned out of flow) and
+    # the doctype is named HTML too, so the root boxes alone measured nothing and the page was never read.
+    page = env.tab.page
+    page.root.kids.insert(0, N('generic', 'html', '', None))
+    page.root.kids[1].rect = page.body.rect = [0, 0, 1280, 0]
+    return page
+
+
+def test_an_app_shell_page_is_measured_on_two_agreeing_large_boxes(env):
+    env.peer.scale = 2
+    page = app_shell(env)
+    page.add(N('generic', 'YTD-APP', '', [0, 0, 1280, 800], kids=[], ignored=True))
+    page.add(N('generic', 'DIV', '', [0, 0, 1280, 56], ignored=True))
+    sid = grant(env)
+    view = env.sessions.observe(sid, env.run)
+    assert element(env, sid, view, 'to')['frame'] == [10, 10, 200, 20]  # CSS pixels, as on a page with sized roots
+    result = act(env, sid, 'to', 'type', 'bob@example.com')
+    assert (result['status'], result['verdict']) == ('done', 'occurred')
+
+
+def test_one_large_box_alone_never_sets_the_scale(env):
+    page = app_shell(env)
+    for node in page.nodes():
+        if node.tag not in ('#document', 'html', 'HTML', 'BODY'):
+            node.rect = None
+    page.add(N('generic', 'YTD-APP', '', [0, 0, 1280, 800], ignored=True))
+    sid = grant(env)
+    assert 'layout scale' in str(refused('ax_failed', env.sessions.observe, sid, env.run))
+
+
+def test_a_box_drawn_in_several_pieces_never_measures_the_scale(env):
+    env.peer.scale = 2
+    page = app_shell(env)
+    for node in page.nodes():
+        if node.tag not in ('#document', 'html', 'HTML', 'BODY'):
+            node.rect = None
+    page.add(N('generic', 'SPAN', '', [0, 0, 1280, 800], pieces=True))  # its first quad would say 4, not 2
+    page.add(N('generic', 'P', '', [0, 0, 1280, 790], pieces=True))
+    sid = grant(env)
+    assert 'layout scale' in str(refused('ax_failed', env.sessions.observe, sid, env.run))
+
+
 def test_typing_a_newline_is_a_reviewed_commit_that_presses_enter(env):
     sid = grant(env)
     proposal = act(env, sid, 'subject', 'type', 'Lunch\n')
@@ -1430,7 +1572,9 @@ def test_browser_sessions_add_no_model_tool_and_stay_above_8192(env):
     assert not hasattr(bs, 'SCHEMAS') and not hasattr(bs, 'TOOL_NAMES')
     names = {t['function']['name'] for t in tool_catalogue.TOOLS}
     # Integrated by the parent (Phase 16): the screen tools are catalogue entries; the browser adds none of its own.
-    assert screen_session.TOOL_NAMES <= names and not any('Browser' in n for n in names)
+    # D114 (Phase 43, 1.9.0): BrowserRequest, the person's site grant asked for in screen_session, is the one named
+    # exception; browser_session itself still adds no tool.
+    assert screen_session.TOOL_NAMES <= names and not any('Browser' in n for n in names - {'BrowserRequest'})
     grant(env)
     live = env.sessions.live_session(env.run)
     assert live is True
@@ -1440,3 +1584,23 @@ def test_browser_sessions_add_no_model_tool_and_stay_above_8192(env):
                                             text=ask) == frozenset()
     assert screen_session.offered_tools(budget=8193, tools={'screen': True}, live_session=live,
                                         text=ask) == screen_session.TOOL_NAMES
+
+
+def test_a_page_growing_while_it_is_measured_is_measured_by_width(env, monkeypatch):
+    # Phase 44, measured on YouTube's watch page: its boxes grew taller between the snapshot and the quads (1903 against
+    # 3000 px), so width and height disagreed and the page could not be read; widths never moved.
+    env.peer.scale = 2
+    page = app_shell(env)
+    page.add(N('generic', 'YTD-APP', '', [0, 0, 1280, 800], ignored=True))
+    page.add(N('generic', 'DIV', '', [0, 0, 1280, 700], ignored=True))
+    real = env.peer._dispatch
+
+    def taller(method, p, session):
+        answer = real(method, p, session)
+        if method == 'DOM.getContentQuads' and answer.get('quads'):
+            q = answer['quads'][0]
+            answer = {'quads': [[q[0], q[1], q[2], q[3], q[4], q[5] * 1.6, q[6], q[7] * 1.6]]}  # grown meanwhile
+        return answer
+    monkeypatch.setattr(env.peer, '_dispatch', taller)
+    sid = grant(env)
+    assert env.sessions.observe(sid, env.run)['status'] == 'ready'

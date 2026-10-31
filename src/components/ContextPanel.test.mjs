@@ -135,13 +135,13 @@ assert.deepEqual(segments().map(kind), ['system', 'tool_schemas', 'project_host'
 const widths = segments().map(s => parseFloat(s.props.style.width));
 assert.ok(Math.abs(widths.reduce((a, b) => a + b, 0) - 100) < 0.1, 'categories plus free space fill the bar');
 const bar = all(root).find(element => element.props.role === 'img');
-assert.ok(bar.props['aria-label'].startsWith(`Context use: ${used.toLocaleString()} of 32,704 tokens. System prompt 480; Tool schemas 2,390;`));
+assert.ok(bar.props['aria-label'].startsWith(`Context use: ${used.toLocaleString()} of 32,704 tokens. System prompt 480; Tool descriptions 2,390;`));
 assert.ok(bar.props['aria-label'].includes('Free space ' + (32704 - used).toLocaleString()) && !bar.props['aria-label'].includes('Memory recall'));
 
 // Tables: every category with its share; the conversation and host parts that hold messages; the largest schemas.
-assert.deepEqual(tables().map(caption), ['By category (tokens)', 'Conversation and host messages', 'Largest tool schemas']);
+assert.deepEqual(tables().map(caption), ['By category (tokens)', 'Conversation and Pebble messages', 'Largest tool descriptions']);
 const [categories, parts, tools] = tables();
-assert.deepEqual(rowsOf(categories).map(row => textOf(row.children[0])), ['System prompt', 'Tool schemas', 'Memory recall', 'Project and host messages',
+assert.deepEqual(rowsOf(categories).map(row => textOf(row.children[0])), ['System prompt', 'Tool descriptions', 'Memory recall', 'Project and Pebble messages',
   'Conversation', 'Tool results', 'Estimate margin and framing', 'Free space']);
 assert.deepEqual(rowsOf(categories)[1].children.slice(1).map(textOf), ['2,390', '7.3%', '10 tools']);
 assert.deepEqual(rowsOf(categories)[5].children.slice(1).map(textOf), ['1,743', '5.3%', '4']);
@@ -150,7 +150,7 @@ assert.deepEqual(rowsOf(parts).map(row => textOf(row.children[0])), ['Task check
 assert.deepEqual(rowsOf(tools).map(row => [textOf(row.children[0]), textOf(row.children[1])]), TOOLS.slice(0, 8).map(([name, n]) => [name, n.toLocaleString()]));
 page = textOf(root);
 assert.ok(page.includes('And 2 more tools, 210 tokens.'));
-assert.ok(page.includes("The host's own count when it sent this window (step 4): " + used.toLocaleString() + ' tokens, by local o200k estimate.'));
+assert.ok(page.includes("Pebble's own count when it sent this window (step 4): " + used.toLocaleString() + " tokens, by Pebble's own estimate."));
 assert.ok(page.includes('Added since: 2 messages, 640 tokens. They join the next request.') && page.includes('Context archives for this task: 0.'));
 assert.ok(!all(root).some(element => element.type === 'img'), 'a hostile tool name stays plain text');
 for (const table of tables()) {
@@ -224,7 +224,7 @@ await button('Refresh').props.onClick({});
 await settle();
 page = textOf(root);
 assert.ok(page.includes('40,000 of 32,704 tokens · 7,296 over the window'));
-assert.ok(page.includes('these are the tools this task could be offered') && page.includes('2 recorded schemas are no longer stored'));
+assert.ok(page.includes('these are the tools this task could be offered') && page.includes('2 tool descriptions sent earlier are no longer stored'));
 assert.ok(segments().some(s => kind(s) === 'context-seg-calibration') && !segments().some(s => kind(s) === 'context-seg-free'));
 assert.ok(segments().every(s => parseFloat(s.props.style.width) <= 100));
 assert.ok(rowsOf(tables()[0]).some(row => textOf(row).startsWith('Route calibration4,000')));

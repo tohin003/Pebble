@@ -11,7 +11,9 @@ readable binary may run inside the same confinement, and a descendant that
 leaves the group is beyond killpg. Independent containment is a Phase 14 limit.
 """
 
+import contextlib
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -24,6 +26,7 @@ from pathlib import Path
 from . import diagnostics, recipes
 from .terminal_text import sanitize as sanitize_terminal
 from .policy import MAX_FILE, PolicyError, Workspace, digest
+from .zone import person_zone
 
 LEGACY = ("python-unittest", "node-test")
 FILE_LIMIT = 2_000_000
@@ -41,6 +44,34 @@ CHECK_FILES = {"python-unittest": "test_pebble_check.py", "node-test": "pebble-c
 CHECK_LIMIT = 16_000
 CHECK_NOTE = ("Ad hoc check: {path} was added to an isolated copy for this run only. The project did not change, and "
               "this run does not count as the project's tests; run RunTests without check to verify the project.")
+# Phase 46 (1.9.28, golden dev d-cf-01 and d-lh-91 on Opus: auto chose pytest and refused the check, then a python3 -c
+# probe and a second test run followed, 3-10 s a turn). With auto, one RunTests call is two launches, each in its own
+# isolated copy: the project's own tests exactly as reviewed, with no code of the check in that copy or process (the
+# run that counts; w10's security review, F2-1), then the check ALONE under the first recipe that takes one (the app's
+# check_run), whose result is reported beside and never counts. A check with no test of its own never reads as passed.
+CHECK_ALONE = {"python-unittest": lambda path: ["-p", path], "node-test": lambda path: [path]}
+CHECK_RUN_NOTE = ("Ad hoc check: the project's own tests ran without {path} in one isolated copy, and their result is "
+                  "this run's. {path} then ran alone with {recipe} in a second copy; its result is here and never "
+                  "counts as the project's tests. The project did not change.")
+CHECK_EMPTY = "Ran 0 tests from {path}: it holds no test {recipe} collects, so nothing was checked. "
+CHECK_SHOWN = 6000  # characters of the check's own output, shown beside the project's run
+UNITTEST_OWN = re.compile(r"^\w+ \(test_pebble_check\.[\w.]+\)", re.M)  # `-v` lines of the check module's own tests
+# Node runs a test file that defines no test as one passing test named after the file (v24.14: "✔ pebble-check.test.mjs
+# (47ms)", or TAP "ok 1 - pebble-check.test.mjs"); a file with tests shows only its tests (w10's review, F2-2)
+NODE_FILE_ONLY = re.compile(r"^(?:✔ |ok \d+ - )pebble-check\.test\.mjs\b", re.M)
+
+
+def _own_tests(recipe, alone, check, tests, text):
+    """How many of the check's own tests ran: alone, every test the run counted, except Node's stand-in for a file that
+    defines none; beside python-unittest's discovery, the check module's `-v` lines; else None (node-test does not name
+    the file of each test it runs beside others)."""
+    if alone:
+        if not tests:
+            return None
+        return 0 if recipe == "node-test" and NODE_FILE_ONLY.search(recipes.clean(text)) else tests["total"]
+    if recipe == "python-unittest" and check["path"] == CHECK_FILES[recipe]:
+        return len(UNITTEST_OWN.findall(recipes.clean(text)))
+    return None
 
 
 def check_payload(recipe, content):
@@ -224,10 +255,10 @@ def _launch(plan, profile, snapshot, env, output, cancel):
         return process.returncode, handle.read(plan["output_limit"]), size
 
 
-def _display(text):
-    if len(text) <= DISPLAY_LIMIT:
+def _display(text, limit=DISPLAY_LIMIT):
+    if len(text) <= limit:
         return text
-    head, tail = 6000, DISPLAY_LIMIT - 6100
+    head, tail = min(6000, limit // 2), limit - min(6000, limit // 2) - 100
     return text[:head] + f"\n… {len(text) - head - tail} characters omitted …\n" + text[-tail:]
 
 
@@ -256,15 +287,94 @@ def run_tests(payload, cancel):
         # Legacy pending actions predate pinned plans: resolve now, as before.
         plan = recipes.resolve(recipe, ws)
     recipes.shape(plan)
+    drafts, reviewed, bound = payload.get("drafts", []), payload.get('reviewed_files'), payload.get('bound_files')
+    check_run = payload.get("check_run")
+    if check_run is None:
+        check = _check(payload, plan["recipe"])
+        with _copy(ws, drafts, plan, mount, reviewed, bound, check) as (launch, manifest, mount):
+            # a check's failures are the model's own probe, not the project's diagnostics
+            code, data, size = launch(cancel, offer=check is None)
+        result, text = _result(plan, code, data, size, manifest, pinned, mount)
+        if check is not None:
+            own = _own_tests(plan["recipe"], False, check, result["tests"], text)
+            if own == 0 and result["outcome"] == "passed":
+                result["outcome"] = "no_tests"  # Phase 46 (1.9.28): the check checked nothing; never shown as a pass
+            note = CHECK_NOTE.format(path=check["path"])
+            empty = own == 0 and result["outcome"] == "no_tests"
+            result.update(kind="check", check={"path": check["path"], "sha256": check["sha256"], "note": (
+                CHECK_EMPTY.format(path=check["path"], recipe=plan["recipe"]) + note if empty else note),
+                **({"tests_run": own} if own is not None else {})})
+        return result
+    # Phase 46 (1.9.28): the project's own tests and the check alone, each in its own copy (CHECK_ALONE). The check's
+    # copy is prepared first, so a check that cannot be added stops the call before anything runs.
+    if (not pinned or not isinstance(check_run, dict) or set(check_run) != {"recipe", "plan", "mount", "reviewed_files"}
+            or check_run["recipe"] not in CHECK_ALONE or not isinstance(check_run["plan"], dict)
+            or check_run["plan"].get("recipe") != check_run["recipe"] or payload.get("check") is None):
+        raise PolicyError("The reviewed check is malformed.")
+    check = _check(payload, check_run["recipe"])
+    recipes.shape(check_run["plan"])
+    with _copy(ws, drafts, check_run["plan"], check_run["mount"], check_run["reviewed_files"], None, check,
+               alone=True) as (probe, _, _):
+        with _copy(ws, drafts, plan, mount, reviewed, bound) as (launch, manifest, mount):
+            code, data, size = launch(cancel, offer=True)
+        result, _ = _result(plan, code, data, size, manifest, pinned, mount)
+        checked = {"path": check["path"], "sha256": check["sha256"], "recipe": check_run["recipe"],
+                   "note": CHECK_RUN_NOTE.format(path=check["path"], recipe=check_run["recipe"])}
+        try:
+            probed, text = _result(check_run["plan"], *probe(cancel), {}, True, None)
+        except PolicyError as exc:  # the project's run above stands; the check's own failure is reported beside it
+            checked["error"] = str(exc)
+        else:
+            own = _own_tests(check_run["recipe"], True, check, probed["tests"], text)
+            outcome = "no_tests" if own == 0 and probed["outcome"] == "passed" else probed["outcome"]
+            checked.update(exit_code=probed["exit_code"], outcome=outcome, tests=probed["tests"],
+                           output=_display(probed["output"], CHECK_SHOWN),
+                           **({"tests_run": own} if own is not None else {}))
+            if own == 0 and outcome == "no_tests":
+                checked["note"] = CHECK_EMPTY.format(path=check["path"], recipe=check_run["recipe"]) + checked["note"]
+    result["check"] = checked
+    return result
+
+
+def _result(plan, code, data, size, manifest, pinned, mount):
+    """One launch's result as the broker records it, and the raw text it was classified from."""
+    text = data.decode("utf-8", errors="replace")
+    outcome, tests = recipes.classify(plan["kind"], plan["recipe"], code, text)
+    shown, removed, _ = sanitize_terminal(data, final=True)
+    return {
+        "exit_code": code,
+        # Classification reads the raw text; the model and UI get the terminal_text projection.
+        "output": _display(shown),
+        "output_projection": "terminal_text/1",
+        "controls_removed": removed,
+        "output_bytes": size,
+        "output_truncated": len(text) > DISPLAY_LIMIT,
+        "outcome": outcome,
+        "tests": tests,
+        "recipe": plan["recipe"],
+        "kind": plan["kind"],
+        **manifest,
+        "executable_sha256": plan["executable"]["sha256"],
+        "pinned": pinned,
+        "environment": mount and {key: mount[key] for key in ("kind", "environment_id", "tree_digest")},
+        "isolation": ISOLATION,
+    }, text
+
+
+@contextlib.contextmanager
+def _copy(ws, drafts, plan, mount, reviewed, bound, check=None, alone=False):
+    """One isolated copy of the project (plus drafts), ready to launch: the reviewed manifests, the plan re-derived from
+    the copy, the check written into it when given (alone: the recipe told to run only it). Yields (launch, manifest,
+    mount); launch(cancel, offer) verifies the pinned identities immediately before it starts and returns (code, data,
+    size). Phase 46 (1.9.28): one call may hold two copies, and nothing passes between them."""
     with tempfile.TemporaryDirectory(prefix="pebble-test-") as temp, tempfile.TemporaryDirectory(prefix="pebble-test-log-") as logs:
         temp = Path(temp).resolve()
         snapshot = temp / "project"
         snapshot.mkdir()
         file_hashes = {}
-        manifest = _collect(ws, payload.get("drafts", []), snapshot, file_hashes)
+        manifest = _collect(ws, drafts, snapshot, file_hashes)
         # Phase 20 G20-recipes: the manifests and lockfiles that run are the ones reviewed (app.py records them).
         # X20 F20-03: per file, so one unbindable file (a lockfile over 2 MB, or a link) never voids the others' check.
-        reviewed, bound = payload.get('reviewed_files'), payload.get('bound_files')
         if isinstance(reviewed, dict):
             now = recipes.review_bindings(plan['recipe'], Workspace(snapshot))
             if any(value != 'unbindable' and now.get(name) != value for name, value in reviewed.items()):
@@ -272,7 +382,6 @@ def run_tests(payload, cancel):
         elif isinstance(bound, dict) and recipes.bindings(plan['recipe'], Workspace(snapshot))[0] != bound:
             raise PolicyError('A project manifest or lockfile changed after review. Propose the recipe again.')
         mount = recipes.matches(plan, Workspace(snapshot), mount, ws.root)
-        check = _check(payload, plan["recipe"])
         if check is not None:
             # Added after the plan was re-derived, so the reviewed plan is exactly the project's own.
             target = snapshot / check["path"]
@@ -290,33 +399,22 @@ def run_tests(payload, cancel):
             key: str(temp) + value[len(recipes.TEMP):] if value.startswith(recipes.TEMP) else value
             for key, value in plan["env"].items()
         }
-        recipes.verify(plan, ws.root)
-        # The output log lives outside the sandbox-writable folder.
-        code, data, size = _launch(plan, profile, snapshot, env, Path(logs) / "output.log", cancel)
-        # Phase 20 G20-diag: hash-bound diagnostics for the host broker's open capture only; the result is unchanged
-        # and offer never raises. A stopped launch raised above, so it records nothing.
-        if check is None:  # a check's failures are the model's own probe, not the project's diagnostics
-            diagnostics.offer(plan, code, data, snapshot, file_hashes, ws)
-    text = data.decode("utf-8", errors="replace")
-    outcome, tests = recipes.classify(plan["kind"], plan["recipe"], code, text)
-    shown, removed, _ = sanitize_terminal(data, final=True)
-    return {
-        "exit_code": code,
-        # Classification reads the raw text; the model and UI get the terminal_text projection.
-        "output": _display(shown),
-        "output_projection": "terminal_text/1",
-        "controls_removed": removed,
-        "output_bytes": size,
-        "output_truncated": len(text) > DISPLAY_LIMIT,
-        "outcome": outcome,
-        "tests": tests,
-        "recipe": plan["recipe"],
-        "kind": "check" if check is not None else plan["kind"],
-        **({"check": {"path": check["path"], "sha256": check["sha256"],
-                      "note": CHECK_NOTE.format(path=check["path"])}} if check is not None else {}),
-        **manifest,
-        "executable_sha256": plan["executable"]["sha256"],
-        "pinned": pinned,
-        "environment": mount and {key: mount[key] for key in ("kind", "environment_id", "tree_digest")},
-        "isolation": ISOLATION,
-    }
+        env = {**person_zone(), **env}  # Phase 46: the person's TZ, as their own test runs have it (zone.py)
+        # Phase 46 (1.9.29): a test that runs /usr/bin's git, make or cc under a framework or Homebrew Python or Node
+        # died with Xcode selected ("xcrun: error: unable to load libxcrun": the profile reads only the Command Line
+        # Tools); the Command Line Tools, as RunCommand and a CLT recipe's own plan already have them
+        from .terminal import developer_environment
+        env = {**developer_environment(), **env}
+        # Phase 46 (1.9.28): a check run alone names its module after the reviewed argv (the plan stays the recipe's own)
+        argv = {**plan, "argv": plan["argv"] + CHECK_ALONE[plan["recipe"]](check["path"])} if alone else plan
+
+        def launch(cancel, offer=False):
+            recipes.verify(plan, ws.root)
+            # The output log lives outside the sandbox-writable folder.
+            code, data, size = _launch(argv, profile, snapshot, env, Path(logs) / "output.log", cancel)
+            # Phase 20 G20-diag: hash-bound diagnostics for the host broker's open capture only; the result is
+            # unchanged and offer never raises. A stopped launch raised above, so it records nothing.
+            if offer:
+                diagnostics.offer(plan, code, data, snapshot, file_hashes, ws)
+            return code, data, size
+        yield launch, manifest, mount

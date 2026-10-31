@@ -737,6 +737,40 @@ def test_derived_values_are_accepted_only_from_values_the_host_verified():
         == {'unsupported'}
 
 
+class TextLedger:
+    """One page with the given text as S1 (the ledger read API, as PackLedger)."""
+
+    def __init__(self, url, text):
+        self.texts = {'S1': text}
+        self.rows = [{'source_id': 'S1', 'cite': 'S1', 'kind': 'page', 'url': url, 'final_url': url,
+                      'retrieved_at': NOW - 300, 'characters': len(text),
+                      'dates': {'claimed_published': '2026-10-01T00:00:00Z'}}]
+
+    def sources(self, run_id, *, tree=True):
+        return [dict(row) for row in self.rows]
+
+    def text(self, run_id, source_id):
+        return self.texts[source_id]
+
+
+def test_a_verified_value_said_again_in_a_closing_line_needs_no_second_citation():
+    # Golden-set dev case d-rl-01 (2026-10-27): the closing "FINAL: 10.2.3" repeated the cited section number and was
+    # held as an uncited claim, so the appended notice came after the line the person asked to end the reply with.
+    rfc = TextLedger('https://www.rfc-editor.example/rfc/rfc9110.txt',
+                     '10.2.3.  Retry-After\n\nServers send the "Retry-After" header field to indicate how long the '
+                     'user agent ought to wait before making a follow-up request.')
+    report, found = gate('RFC 9110 defines the Retry-After header field in Section 10.2.3 [S1].\n\nFINAL: 10.2.3',
+                         ledger=rfc)
+    assert found['issues'] == [] and [d['basis'] for d in report['derived']] == ['repeated']
+    # A date said again keeps its own citation rule (test_reply_after_decision_20, pilot 5 case 2).
+    report, found = gate('The winter timetable starts on 2026-11-02 [S6].\nFINAL: 2026-11-02 here')
+    assert held(report, found) == {'2026-11-02': 'uncited'}
+    # A value no cited sentence verified still needs its own citation.
+    report, found = gate('RFC 9110 defines the Retry-After header field in Section 10.2.3 [S1].\n\nFINAL: 10.2.4',
+                         ledger=rfc)
+    assert held(report, found) == {'10.2.4': 'uncited'}
+
+
 @pytest.mark.parametrize('answer, kept', [
     ('The cargo rate rose from EUR 0.42 [S2] to EUR 0.47 [S1], an increase of EUR 0.06 (about 15%).',
      {'EUR 0.06': 'unsupported', '15%': 'unsupported'}),                      # wrong arithmetic

@@ -20,6 +20,9 @@ export interface ActivityItem {
   duration: number | null;
   status: ItemStatus;
   activity?: string | null; // the host's activity class (reading, searching, …) when it sent one
+  // Phase 46 (1.9.29): the work view the host built for this item (pebble-ui-spec v1), as sent; workView.parseView
+  // checks it before anything is drawn, and an item without a usable view shows as this row
+  view?: Record<string, unknown>;
 }
 // Activity classes (statusWords ACTIVITY_KEYS) a row may carry; only reading and searching fold.
 const CLASSES: ReadonlySet<string> = new Set(["thinking", "writing", "reading", "searching", "editing", "testing", "running", "delegating", "viewing", "working", "loading"]);
@@ -47,6 +50,12 @@ export interface RunActivity {
   // Phase 24 (V1-121): the host's per-run counts from get_chat, used while no rows are known (a reopened
   // conversation). null: the host said it could not count them; absent: a host that does not report counts.
   counts?: Counts | null;
+  // Phase 46 (1.9.29, the work view): the run's UpdatePlan steps (the `plan` event), and the run_activity reply's
+  // header, summary and usage, as sent (workView parses them)
+  plan?: unknown;
+  header?: unknown;
+  summary?: unknown;
+  usage?: unknown;
 }
 export interface Counts {
   steps: number;
@@ -100,7 +109,8 @@ export function parseItem(raw: unknown): ActivityItem | null {
   const at = finite(r.at), duration = finite(r.duration);
   const detail = clampText(r.detail, LIMITS.detail, true);
   const activity = typeof r.activity === "string" && CLASSES.has(r.activity) ? r.activity : null;
-  return { seq, at: at !== null && at >= 0 ? at : 0, kind, label, detail: detail || null, duration: duration !== null && duration >= 0 ? duration : null, status, activity };
+  const view = r.view && typeof r.view === "object" && !Array.isArray(r.view) ? { view: r.view as Record<string, unknown> } : {};
+  return { seq, at: at !== null && at >= 0 ? at : 0, kind, label, detail: detail || null, duration: duration !== null && duration >= 0 ? duration : null, status, activity, ...view };
 }
 
 /** Upsert by seq, ordered, keeping the newest LIMITS.items rows. */
@@ -210,9 +220,16 @@ const foldable = (item: ActivityItem) => item.kind === "tool" && item.status ===
  * become "Explored · read 3 files, 2 searches". Edits, commands, tests, delegation, views, retries,
  * waits, withdrawn drafts and failures are never folded: they are the steps people check.
  */
+// Phase 45 (F182, audit round R6): one Chess move showed about 30 rows, "Recalled 3 memories", "Connected to ChatGPT"
+// and "Checked the reply" again before every step. A model turn's finished plumbing folds into one row named by its
+// reply; a check that found something, and anything still running or failed, stays a row of its own.
+const plumbing = (item: ActivityItem) =>
+  item.status === "done" && (item.kind === "context" || item.kind === "model" || (item.kind === "check" && item.label === "Checked the reply"));
+
 export function groupRows(list: readonly ActivityItem[]): Entry[] {
   const out: Entry[] = [];
   let run: ActivityItem[] = [];
+  let turn: ActivityItem[] = [];
   const flush = () => {
     if (run.length >= 2) {
       const reads = run.filter((i) => i.activity === "reading").length, searches = run.length - reads;
@@ -221,14 +238,28 @@ export function groupRows(list: readonly ActivityItem[]): Entry[] {
     } else run.forEach((item) => out.push({ type: "row", item }));
     run = [];
   };
+  const flushTurn = () => {
+    if (turn.length >= 2) {
+      const reply = [...turn].reverse().find((i) => i.kind === "model" && / responded/.test(i.label));
+      out.push({ type: "group", key: turn[0].seq, items: turn, label: (reply ? reply.label : "Model turn") + " · " + turn.length + " steps" });
+    } else turn.forEach((item) => out.push({ type: "row", item }));
+    turn = [];
+  };
   for (const item of list) {
-    if (foldable(item)) run.push(item);
-    else {
+    if (plumbing(item)) {
       flush();
+      turn.push(item);
+    } else if (foldable(item)) {
+      flushTurn();
+      run.push(item);
+    } else {
+      flush();
+      flushTurn();
       out.push({ type: "row", item });
     }
   }
   flush();
+  flushTurn();
   return out;
 }
 
@@ -308,6 +339,9 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
     events: false, // host activity events reached this window
   });
   const pending = new Set<string>();
+  // Phase 45 (F129, audit round R4): run events seen per run, so a read answered after a newer run event (a chat or
+  // activity read made while the run waited for an approval, answered after it resumed) never sets its state or times
+  const runEvents = new Map<string, number>();
 
   function ensure(runId: string, chatId: string): RunActivity {
     let record = state.runs.get(runId);
@@ -317,6 +351,7 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
         for (const [id, old] of state.runs)
           if (!isLiveState(old.state)) {
             state.runs.delete(id);
+            runEvents.delete(id);
             for (const [message, run] of state.messages) if (run === id) state.messages.delete(message);
             break;
           }
@@ -384,6 +419,7 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
         const record = ensure(d.run_id, chatId);
         const wasLive = isLiveState(record.state);
         record.state = d.state;
+        runEvents.set(d.run_id, (runEvents.get(d.run_id) || 0) + 1);
         if (isLiveState(d.state)) {
           // A new live stretch (new, or resumed): its time is counted afresh, and the host's record is
           // read again once (its start and active seconds), so the elapsed time stays exact.
@@ -394,6 +430,9 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
         } else {
           finishPhases(record);
           settle(record);
+          // F129: the host's active seconds for the whole run (every stretch; waits for the person left out)
+          const elapsed = finite(d.elapsed);
+          if (elapsed !== null && elapsed >= 0) record.elapsed = elapsed;
         }
         return;
       }
@@ -443,6 +482,12 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
         if (record) settle(record);
         return;
       }
+      case "plan": {
+        // Phase 46 (1.9.29): UpdatePlan's steps for the work view's plan rail (the host's own record, as sent)
+        if (!validId(d.run_id) || !Array.isArray(d.steps)) return;
+        ensure(d.run_id, chatId).plan = { steps: d.steps };
+        return;
+      }
     }
   }
 
@@ -466,13 +511,16 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
     const runs = (chat.runs || []).slice(0, 20).filter((r) => validId(r.id) && typeof r.state === "string");
     for (const run of runs) {
       const record = ensure(run.id as string, chat.id);
+      // F129: a run this window sees live keeps the times its events give it; a chat read made while it waited for an
+      // approval, answered after the approval resumed it, fixed the receipt at the 7 s before the card
+      const live = isLiveState(record.state);
       if (!record.state) record.state = run.state as string;
-      if (record.elapsed === null && finite(run.elapsed) !== null && !isLiveState(run.state)) record.elapsed = finite(run.elapsed);
+      if (!live && record.elapsed === null && finite(run.elapsed) !== null && !isLiveState(run.state)) record.elapsed = finite(run.elapsed);
       // V1-121: the host's counts for a settled run (null when it said it could not count them).
-      if (Object.prototype.hasOwnProperty.call(run, "counts") && !isLiveState(run.state)) record.counts = parseCounts(run.counts);
+      if (!live && Object.prototype.hasOwnProperty.call(run, "counts") && !isLiveState(run.state)) record.counts = parseCounts(run.counts);
       if (record.startedAt === null && finite(run.created) !== null) record.startedAt = (run.created as number) * 1000;
       if (isLiveState(run.state)) state.live.set(chat.id, run.id as string);
-      else if (record.endedAt === null && finite(run.updated) !== null) record.endedAt = (run.updated as number) * 1000;
+      else if (!live && record.endedAt === null && finite(run.updated) !== null) record.endedAt = (run.updated as number) * 1000;
     }
     const assistant = chat.messages.filter((m) => m.role === "assistant" && typeof m.id === "string");
     for (const message of assistant) if (validId(message.run_id) && state.runs.has(message.run_id)) link(message.id as string, message.run_id);
@@ -500,6 +548,8 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
     const record = state.runs.get(runId);
     if (!record || !options.fetch || state.supported === false || pending.has(runId)) return record || null;
     pending.add(runId);
+    const seen = runEvents.get(runId) || 0;
+    let stale = false;
     try {
       const reply = (await options.fetch(runId, record.next)) as Record<string, unknown> | null;
       if (!reply || typeof reply !== "object" || reply.run_id !== runId) throw new Error("The activity reply belongs to another task.");
@@ -515,19 +565,27 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
         record.reasoning = text.text;
         record.reasoningClipped = text.clipped;
       }
-      if (typeof reply.state === "string" && reply.state) record.state = reply.state;
-      const started = finite(reply.started);
-      if (started !== null && started > 0) record.startedAt = started * 1000;
-      const elapsed = finite(reply.elapsed);
-      if (elapsed !== null && elapsed >= 0 && !isLiveState(record.state)) record.elapsed = elapsed;
-      // While live, the host's own seconds (which leave out waits for the person) fix the start.
-      if (isLiveState(record.state))
-        record.hostStart = elapsed !== null && elapsed >= 0 ? now() - elapsed * 1000 : started !== null && started > 0 ? started * 1000 : record.hostStart;
       if (items.some((i) => i.activity === "delegating" || i.kind === "child")) record.delegated = true;
+      // Phase 46 (1.9.29): the work view's header (plan progress) and, once the run settled, its summary and usage
+      if (reply.header && typeof reply.header === "object") record.header = reply.header;
+      if (reply.summary && typeof reply.summary === "object") record.summary = reply.summary;
+      if (reply.usage && typeof reply.usage === "object") record.usage = reply.usage;
       const next = reply.next;
       if (typeof next === "number" && Number.isSafeInteger(next) && next >= record.next) record.next = next;
-      if (!isLiveState(record.state)) for (const [chat, run] of state.live) if (run === runId) state.live.delete(chat);
-      record.loaded = true;
+      // F129: a reply read before a run event this window has since seen keeps its rows, not its state or times
+      stale = (runEvents.get(runId) || 0) !== seen;
+      if (!stale) {
+        if (typeof reply.state === "string" && reply.state) record.state = reply.state;
+        const started = finite(reply.started);
+        if (started !== null && started > 0) record.startedAt = started * 1000;
+        const elapsed = finite(reply.elapsed);
+        if (elapsed !== null && elapsed >= 0 && !isLiveState(record.state)) record.elapsed = elapsed;
+        // While live, the host's own seconds (which leave out waits for the person) fix the start.
+        if (isLiveState(record.state))
+          record.hostStart = elapsed !== null && elapsed >= 0 ? now() - elapsed * 1000 : started !== null && started > 0 ? started * 1000 : record.hostStart;
+        if (!isLiveState(record.state)) for (const [chat, run] of state.live) if (run === runId) state.live.delete(chat);
+        record.loaded = true;
+      }
       record.error = "";
     } catch (error) {
       if (isUnsupported(error)) state.supported = false;
@@ -535,6 +593,8 @@ export function createActivityStore(options: ActivityStoreOptions = {}) {
     } finally {
       pending.delete(runId);
     }
+    // F129: the live stretch that began while the stale read was out is read afresh (its own read found one pending)
+    if (stale && isLiveState(record.state) && !record.loaded) return load(runId);
     return record;
   }
 

@@ -278,9 +278,72 @@ ok(A.isUnsupported(new Error("Pebble can't do that from this window.")), "the sh
   eq(A.WAITING_TEXT, "Waiting for the model to respond");
 }
 
+// ---- Phase 45 (F129, audit round R4): a run resumed after an approval is timed whole ----
+{
+  // "Worked for 7 s" for 37 s of work: a chat read made while the run waited answered after the approval resumed it
+  let t = 5_000_000;
+  const s9 = A.createActivityStore({ now: () => t });
+  const e9 = (event, data) => s9.accept({ event, data: { chat_id: "c9", ...data } });
+  e9("run", { run_id: "r9", state: "running" });
+  t += 7000;
+  e9("run", { run_id: "r9", state: "waiting_approval", elapsed: 7 });
+  eq(s9.record("r9").elapsed, 7, "a settled event's host seconds are the receipt's");
+  t += 17500;
+  e9("run", { run_id: "r9", state: "queued" });
+  e9("run", { run_id: "r9", state: "running" });
+  s9.seedChat({ id: "c9", runs: [{ id: "r9", state: "waiting_approval", created: 5000, updated: 5007, elapsed: 7 }], messages: [] });
+  eq([s9.record("r9").state, s9.record("r9").elapsed, s9.record("r9").endedAt], ["running", null, null], "a chat read from before the resume changes nothing the window saw since");
+  t += 30000;
+  e9("run", { run_id: "r9", state: "completed", elapsed: 37 });
+  eq(A.receipt(s9.record("r9")), "Thought for 37 s", "the host's seconds for the whole run, not the last stretch (30 s) or the first (7 s)");
+  e9("run", { run_id: "r9b", state: "running" });
+  t += 4000;
+  e9("run", { run_id: "r9b", state: "completed" });
+  eq(A.settledSeconds(s9.record("r9b")), 4, "an event without the host's seconds keeps the window's clock");
+  e9("run", { run_id: "r9c", state: "failed", elapsed: -3 });
+  eq(s9.record("r9c").elapsed, null, "a malformed elapsed is ignored");
+}
+{
+  // An activity read made while the run waited, answered after it resumed: rows count, state and times do not, and the
+  // new stretch is read afresh
+  let t = 6_000_000;
+  const resolvers = [];
+  const s10 = A.createActivityStore({ now: () => t, fetch: () => new Promise((resolve) => resolvers.push(resolve)) });
+  const e10 = (event, data) => s10.accept({ event, data: { chat_id: "c10", ...data } });
+  e10("run", { run_id: "r10", state: "running" });
+  e10("run", { run_id: "r10", state: "waiting_approval", elapsed: 7 });
+  const first = s10.load("r10");
+  e10("run", { run_id: "r10", state: "queued" });
+  e10("run", { run_id: "r10", state: "running" });
+  resolvers.shift()({ run_id: "r10", state: "waiting_approval", started: 6000, elapsed: 7, next: 1,
+    items: [{ seq: 1, at: 0.5, kind: "tool", label: "Opening Wikipedia", detail: null, duration: 0.1, status: "done" }] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const r10 = s10.record("r10");
+  eq([r10.state, r10.elapsed, r10.loaded, A.rows(r10).length], ["running", null, false, 1], "the stale reply's rows are kept; its state and times are not");
+  eq(resolvers.length, 1, "the stretch that began meanwhile is read afresh");
+  t += 1000;
+  resolvers.shift()({ run_id: "r10", state: "running", started: 6000, elapsed: 8, next: 1, items: [] });
+  await first;
+  eq([r10.state, r10.loaded, r10.hostStart], ["running", true, t - 8000], "the fresh reply fixes the live stretch's start");
+}
+
 // ---- bounds: at most 48 records, live ones kept ----
 const s4 = A.createActivityStore({ now: () => now });
 s4.accept({ event: "run", data: { chat_id: "c", run_id: "keep", state: "running" } });
 for (let i = 0; i < 60; i++) s4.accept({ event: "run", data: { chat_id: "c" + i, run_id: "r" + i, state: "completed" } });
 ok(s4.state.runs.size <= 48 && s4.record("keep"), "records are bounded and a live run is never dropped");
-console.log(`Activity fixtures passed: ${checks} checks; contract items clamped and validated, newest 200 rows, 20000-character summaries, live store from host events with the progress fallback, retries as rows, token links, on-demand run_activity with feature detection, history links without guessing, bounded records.`);
+console.log(`Activity fixtures passed: ${checks} checks; contract items clamped and validated, newest 200 rows, 20000-character summaries, live store from host events with the progress fallback, retries as rows, token links, on-demand run_activity with feature detection, history links without guessing, runs resumed after an approval timed whole (F129), bounded records.`);
+
+// Phase 45 (F182, audit round R6): a model turn's finished plumbing is one row, named by its reply
+{
+  const mk = (seq, kind, label, extra = {}) => A.parseItem({ seq, at: seq, kind, label, status: "done", duration: 1, ...extra });
+  const rows45 = [mk(1, "context", "Recalled 3 memories"), mk(2, "model", "Connected to ChatGPT in 2.0 s"), mk(3, "model", "ChatGPT responded"),
+    mk(4, "check", "Checked the reply"), mk(5, "tool", "Looking at the app window", { activity: "reading" }),
+    mk(6, "context", "Recalled 3 memories"), mk(7, "model", "ChatGPT responded"), mk(8, "check", "A check asked for more evidence"),
+    mk(9, "model", "Connecting to ChatGPT…", { status: "running" })];
+  const folded = A.groupRows(rows45);
+  eq(folded.map((e) => e.type), ["group", "row", "group", "row", "row"], "each turn's plumbing folds; a check with findings and a live row stay");
+  eq(folded[0].label, "ChatGPT responded · 4 steps", "named by the reply");
+  eq(folded[2].items.length, 2, "the second turn folds its two plumbing rows");
+}
+

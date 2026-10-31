@@ -309,6 +309,7 @@ onUnmounted(() => {
 /* Phase 24 (V1-160): a 28 px target. */
 .status-stop {
   flex: none;
+  margin-left: auto; /* Phase 45 (F106): at the line's end, so a growing status never moves it from under the pointer */
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 6px;

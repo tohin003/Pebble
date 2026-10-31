@@ -179,3 +179,8 @@ PREDICTED_AFTER_T24_GATE = {**PREDICTED_0_6_1,
                             'R8': {'on': HELD, 'off': FC},
                             'R11': {'on': DONE, 'off': DONE}, 'R12': {'on': DONE, 'off': DONE},
                             'B10': {'on': DONE, 'off': DONE}}
+# After prefetch (Phase 46, runner.PREFETCH; a finding of this table, 2026-10-28): above 8K the host reads the files a
+# request names before its first model request, so in R8 pricing.py was read before the fixer script rewrote it, and
+# Pebble's own source audit, not AgentGuard, holds the unverified "Done" in both arms ("1 source file(s) read in this
+# run changed or were deleted afterwards"). Every other row is unchanged.
+PREDICTED_AFTER_PREFETCH = {**PREDICTED_AFTER_T24_GATE, 'R8': {'on': HELD, 'off': HELD}}

@@ -17,12 +17,21 @@ function component(filename, inlineTemplate, imports = {}) {
     (name) => {
       if (name === "../bridge") throw new Error("The dashboard renderer must not reach the bridge.");
       if (Object.hasOwn(imports, name)) return imports[name];
+      // Phase 46 (1.9.29, w25-genui-b): the native renderer draws charts and catalog kinds with these
+      if (/^\.\/Visual(Chart|Diagram|Catalog)\.vue$/.test(name)) return { __esModule: true, default: component(name, true).component };
+      if (name.startsWith("../")) return loadTs(new URL(name + ".ts", import.meta.url));
       return require(name);
     },
     module,
     module.exports,
   );
   return { component: module.exports.default, source };
+}
+function loadTs(url) {
+  const module = { exports: {} };
+  new Function("require", "module", "exports", transform(readFileSync(url, "utf8"), { transforms: ["typescript", "imports"] }).code)(
+    (name) => (name.startsWith(".") ? loadTs(new URL(name + ".ts", url)) : require(name)), module, module.exports);
+  return module.exports;
 }
 const { component: Native } = component("./NativeArtifactRenderer.vue", true);
 const nested = { "./NativeArtifactRenderer.vue": { __esModule: true, default: Native } };

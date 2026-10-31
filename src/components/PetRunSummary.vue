@@ -53,7 +53,27 @@ const plan = computed(() => {
     now: value.steps.find((s) => s.status === "in_progress")?.title || "",
   };
 });
-const next = computed(() => pick(workspaceStates, current.value?.state));
+// Phase 45 (F185, audit round R6): a card the companion answers itself (D133: a site, a window, bringing a window
+// forward) is not "in the workspace"
+const SIMPLE_CARDS = ["browser_grant", "screen_grant", "screen_raise"];
+const simpleOnly = computed(() => {
+  const waiting = (props.chat.actions || []).filter((a) => a.status === "pending");
+  return waiting.length > 0 && waiting.every((a) => SIMPLE_CARDS.includes(a.kind));
+});
+const next = computed(() => current.value?.state === "waiting_approval" && simpleOnly.value
+  ? undefined : pick(workspaceStates, current.value?.state));
+// Phase 45 (F070, F087; audit rounds R2 and R3): a run's note is written for the model ("Do not claim ...", "Never say
+// it plays", "ScreenAct focus on its Address row"); the person sees only the sentences meant for them. The same in
+// PetRunSummary.vue and RunPanel.vue (personNote.test.mjs holds them equal).
+const FOR_THE_MODEL = /^(Do not|Don't|Never|Say |Tell the person|Check the|Otherwise)/;
+const TOOL_NAME = /\b(ScreenAct|ScreenObserve|ScreenRequest|BrowserRequest|OpenURL|OpenApp|AppAction|RunTests|RunCode|ReadFile|WriteFile|EditFile|Shell)\b/;
+function personNote(text: unknown) {
+  return String(text || "").split(/(?<=\.)\s+/).filter((s) => !FOR_THE_MODEL.test(s) && !TOOL_NAME.test(s)).join(" ");
+}
+const errorText = computed(() => personNote(current.value?.error));
+// Phase 45 (F053): a plain finished reply needs no task summary (its note read as if the real result were elsewhere).
+const worth = computed(() => !!(goal.value || pending.value.length || plan.value || next.value || current.value?.error
+  || (current.value && current.value.state !== "completed")));
 const chip = computed(() => {
   if (!goal.value) return "";
   const p = goal.value.progress;
@@ -80,7 +100,7 @@ onUnmounted(() => (alive = false));
 </script>
 
 <template>
-  <section v-if="current || pending.length || goal" class="pet-run-summary" aria-label="Task summary">
+  <section v-if="worth" class="pet-run-summary" aria-label="Task summary">
     <button v-if="goal" type="button" class="pet-goal-chip" @click="emit('workspace')">
       {{ chip }}<span aria-hidden="true"> → </span>Open
     </button>
@@ -95,8 +115,8 @@ onUnmounted(() => (alive = false));
     <p v-else-if="next">
       {{ next }} <button type="button" class="pet-summary-link" @click="emit('workspace')">Open</button>
     </p>
-    <p v-if="current?.error" class="pet-summary-note">{{ current.error }}</p>
-    <small class="pet-summary-note">Output, agents and reviews are in the workspace.</small>
+    <p v-if="errorText" class="pet-summary-note">{{ errorText }}</p>
+    <small class="pet-summary-note">{{ simpleOnly ? "Output and agents are in the workspace." : "Output, agents and reviews are in the workspace." }}</small>
   </section>
 </template>
 

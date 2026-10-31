@@ -44,6 +44,7 @@
     "src-tauri/icons/**",
     "src-tauri/gen/schemas/**",
     "src-tauri/helpers/pebble-vault/pebble_vault.c",
+    "src-tauri/helpers/screen/main.swift",
     "src-tauri/resources/NOTICE.md",
     "src-tauri/resources/LICENSE",
     "src-tauri/resources/AGENTGUARD-LICENSE",
@@ -72,7 +73,10 @@
     "docs/HARNESS_SIGNING_IDENTITY.md",
     "docs/HARNESS_BROWSER_EXTENSION.md",
     "docs/HARNESS_INSTALL_RUNBOOK.md",
-    "docs/HARNESS_RELEASE_GATES.md"
+    "docs/HARNESS_RELEASE_GATES.md",
+    "docs/PEBBLE_REMOTE.md",
+    "docs/ui-spec.md",
+    "docs/ui-spec/**"
   ],
   "exclude": [
     {"glob": "scripts/finalize_harness_phase*.py", "reason": "D11: the phase finalizers bind private phase records and name the development accounts' folders."},
@@ -91,6 +95,10 @@
     {"glob": "backend/tests/test_finalize_harness_phase35.py", "reason": "Loads scripts/finalize_harness_phase35.py, which is not published (D11)."},
     {"glob": "backend/tests/test_finalize_harness_phase36.py", "reason": "Loads scripts/finalize_harness_phase36.py, which is not published (D11)."},
     {"glob": "backend/tests/test_finalize_harness_phase37.py", "reason": "Loads scripts/finalize_harness_phase37.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase38.py", "reason": "Loads scripts/finalize_harness_phase38.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase39.py", "reason": "Loads scripts/finalize_harness_phase39.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase47.py", "reason": "Loads scripts/finalize_harness_phase47.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase48.py", "reason": "Loads scripts/finalize_harness_phase48.py, which is not published (D11)."},
     {"glob": "**/__pycache__/**", "reason": "Build output."},
     {"glob": "**/*.pyc", "reason": "Build output."},
     {"glob": "**/.DS_Store", "reason": "Finder metadata."},
@@ -164,7 +172,8 @@
       {"test": "test_phase16_evidence.py::test_phase15_namespace_refuses_the_phase16_suite", "reason": "Reads the maintainer's Phase 15 service evidence under .runtime, which is never published."},
       {"test": "test_validate_phase24.py::test_the_whole_source_campaign_runs_within_the_verifier_budget", "reason": "Its publish check builds the public tree from the maintainer's checkout; inside a published tree the manifest's scrubs are already applied, so it refuses (scrub_count_differs)."},
       {"test": "test_validate_phase25.py::test_the_checkout_passes_every_check", "reason": "Checks the strip tool of the maintainer's pinned toolchain under .runtime/toolchain, which is never published."},
-      {"test": "test_validate_phase25.py::test_the_report_names_the_same_checks_in_both_modes", "reason": "Checks the strip tool of the maintainer's pinned toolchain under .runtime/toolchain, which is never published."}
+      {"test": "test_validate_phase25.py::test_the_report_names_the_same_checks_in_both_modes", "reason": "Checks the strip tool of the maintainer's pinned toolchain under .runtime/toolchain, which is never published."},
+      {"test": "test_cu_run1_45.py::test_the_pinned_helper_is_built_from_this_source", "reason": "Reads the maintainer's pinned screen helper and its record under src-tauri/resources/helpers, which are not published (each builder pins their own, as for the vault helper)."}
     ]
   }
 }

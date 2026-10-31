@@ -64,6 +64,7 @@ PROCESS_MODELS = ('tree', 'single')
 MARKER = re.compile(r'[0-9a-f]{32}')
 PATH_LIMIT = 1024
 LIST_LIMIT = 64
+DENY_LIMIT = 256  # Phase 40: the Shell's protected list (D92) is longer than any job's own path lists
 PRIVATE_DENY = (
     '(regex #"(^|/)(\\.git|\\.env[^/]*|\\.ssh|\\.aws|\\.gnupg|\\.netrc|\\.npmrc|\\.pypirc|credentials|secrets)(/|$)")'
     ' (regex #"\\.(pem|key|p12|pfx|gguf)$")'
@@ -73,6 +74,15 @@ TTY = re.compile(r'/dev/ttys[0-9]{1,6}')
 CONTROLLING_TTY = Path('/dev/tty')
 BROKER_SLOT = ';; pebble-slot: broker-port'
 TTY_SLOT = ';; pebble-slot: pty-slave'
+# Phase 46 (1.9.29, golden held-out recovery: 6 honest stops of 15 on both models; D212: the one failed command printed
+# a lock with "Operation not permitted", a traceback, and the run stopped): Python's multiprocessing locks, queues and
+# pools, and so concurrent.futures.ProcessPoolExecutor, are POSIX named semaphores (SemLock, "/mp-<random>"), which
+# (deny default) refused: "PermissionError: [Errno 1] Operation not permitted" from a project's own script that runs in
+# the person's terminal, in Codex (whose base profile allows POSIX semaphores for Python multiprocessing) and in the
+# golden checkers. Only the names Python's multiprocessing makes; a semaphore holds a count, never data, so the worst
+# another program's /mp- semaphore could suffer is a stuck or early lock. Unix sockets, shared memory and every network
+# stay closed.
+PYTHON_SEMAPHORES = '(allow ipc-posix-sem (ipc-posix-name-prefix "/mp-"))'
 
 
 class _Deferred:
@@ -118,12 +128,21 @@ def bind(profile, *, broker_port=None, tty=None):
 
 
 def build(*, executable, exec_paths, read_paths, project_root, temp, writable_paths=(), network='none',
-          broker_port=None, private_deny=True, job_marker, process_model='tree', executables=(), tty=None):
+          broker_port=None, private_deny=True, job_marker, process_model='tree', executables=(), tty=None,
+          deny_paths=(), deny_names=None, keep_paths=(), undeletable_paths=(), write_denied=None):
     """SBPL text for one job; refuses anything it cannot state exactly.
 
     executables are further pinned files the job may exec (a pipeline's other
     steps). tty is None (no terminal access), a /dev/ttysN slave, or DEFERRED.
     broker_port may be DEFERRED in broker mode; bind() then fills it.
+    Phase 40 (1.6.0, D92): deny_paths (absolute, resolved) and deny_names (one SBPL regex) are denied for reading and
+    writing after every allow, so they win inside the readable home folder; both default to nothing, which leaves
+    every earlier profile byte for byte as it was.
+    Phase 46 (1.9.28, b-new G2): keep_paths are denied every write and undeletable_paths deletion and renaming
+    (file-write-unlink), after every allow; reads stay. Both default to nothing, leaving every profile as it was.
+    Phase 46 (1.9.28, the w13b security review F1): write_denied (one SBPL regex) is denied every write after every
+    allow, reads stay (confined.write_denied: the folders and bytecode files where later runs load code); none by
+    default.
     """
     executable = _path(executable, 'executable')
     pinned = _paths(executables, 'executable')
@@ -139,6 +158,15 @@ def build(*, executable, exec_paths, read_paths, project_root, temp, writable_pa
     elif broker_port is not None:
         raise PolicyError('A broker port is only valid with broker network mode.')
     terminal = None if tty is None else TTY_SLOT if tty is DEFERRED else tty_rule(tty)
+    denied = _paths(deny_paths, 'deny', limit=DENY_LIMIT) if deny_paths else ()
+    kept = _paths(keep_paths, 'kept', limit=DENY_LIMIT) if keep_paths else ()
+    undeletable = _paths(undeletable_paths, 'kept', limit=DENY_LIMIT) if undeletable_paths else ()
+    if deny_names is not None and (type(deny_names) is not str or not deny_names or '"' in deny_names
+                                   or any(ord(c) < 32 for c in deny_names) or len(deny_names) > 1024):
+        raise PolicyError('The sandbox deny-names rule is one short regular expression.')
+    if write_denied is not None and (type(write_denied) is not str or not write_denied or '"' in write_denied
+                                     or any(ord(c) < 32 for c in write_denied) or len(write_denied) > 2048):
+        raise PolicyError('The sandbox write-deny rule is one short regular expression.')
     if type(private_deny) is not bool:
         raise PolicyError('The private-path deny switch must be a boolean.')
     if type(job_marker) is not str or not MARKER.fullmatch(job_marker):
@@ -176,6 +204,7 @@ def build(*, executable, exec_paths, read_paths, project_root, temp, writable_pa
         '(allow process-info* (target same-sandbox))',
         '(allow sysctl-read) (allow file-read-metadata)',
         '(allow mach-lookup ' + ' '.join(f'(global-name {q(name)})' for name in mach) + ')',
+        PYTHON_SEMAPHORES,  # Phase 46 (1.9.29)
         '(allow file-read* ' + ' '.join(f'(literal {q(p)})' for p in (*handles, *SYSTEM_LITERALS, executable, *pinned))
         + ' ' + ' '.join(f'(subpath {q(p)})' for p in (*SYSTEM_READ, *exec_paths, *read_paths, root, temp, *writable))
         + ')',
@@ -184,6 +213,11 @@ def build(*, executable, exec_paths, read_paths, project_root, temp, writable_pa
         _protected_rules((root, *writable), files=(executable, *pinned), reads=(*exec_paths, *read_paths, temp, *writable),
                          writes=(temp, *writable)),
         (f'(deny file-read-data file-write* (subpath {q(root / ".git")}) {PRIVATE_DENY})' if private_deny else ''),
+        ('(deny file-read-data file-write* ' + ' '.join(f'(subpath {q(p)})' for p in denied) + ')') if denied else '',
+        f'(deny file-read-data file-write* (regex #"{deny_names}"))' if deny_names else '',
+        ('(deny file-write* ' + ' '.join(f'(subpath {q(p)})' for p in kept) + ')') if kept else '',
+        ('(deny file-write-unlink ' + ' '.join(f'(subpath {q(p)})' for p in undeletable) + ')') if undeletable else '',
+        f'(deny file-write* (regex #"{write_denied}"))' if write_denied else '',
         terminal or '',
     ]
     if network == 'broker':
@@ -240,8 +274,8 @@ def _path(value, label):
     return path
 
 
-def _paths(values, label):
-    if isinstance(values, (str, Path)) or not isinstance(values, (list, tuple)) or len(values) > LIST_LIMIT:
+def _paths(values, label, limit=LIST_LIMIT):
+    if isinstance(values, (str, Path)) or not isinstance(values, (list, tuple)) or len(values) > limit:
         raise PolicyError(f'The sandbox {label} paths must be a short list.')
     found = []
     for value in values:

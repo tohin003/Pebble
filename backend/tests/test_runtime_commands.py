@@ -22,6 +22,8 @@ SAMPLES = {
     'export': '/export missing html'}
 ROUTING = re.compile('Unknown command|does not accept those arguments')
 # A command mention in UI or reply text: "/name" after a space, quote, backtick, bracket or tag.
+# A regex literal's flags right after ">" or a quote read as a command here (impact run 68: src/visuals.ts's
+# /<br\s*\/?>/gi gave "gi"); UI code keeps such a ">" in a character class: /<br\s*\/?[>]/gi (the lead, 1.9.29)
 MENTION = re.compile(r'''(?:^|(?<=[\s"'`(>]))/([a-z][a-z-]{1,15})(?![\w/.:-])''', re.M)
 ITEMS = [{'id': 'scope', 'title': 'Which scope should I use?', 'options': []}]
 

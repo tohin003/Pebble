@@ -823,7 +823,11 @@ def test_g24_no_model_tool_is_added_and_no_route_is_a_tool():
     from pebble.tool_catalogue import TOOLS
     names = [t['function']['name'] for t in TOOLS]
     # D72 (Phase 37): the catalogue is Phase 18's plus the tools later phases added, each named with its phase.
-    catalogue = PHASE18_TOOLS | {'RunCode'}  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
+    catalogue = PHASE18_TOOLS | {'RunCode',  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
+                                 # Phase 40, 1.6.0 (D90): the Companion's general tools
+                                 'Shell', 'ReadFile', 'WriteFile', 'EditFile', 'Screenshot', 'FindTool',
+                                 'ScreenRequest', 'OpenURL',  # D103: Phase 42, 1.8.0; D106: Phase 43, 1.9.0
+                                 'AppAction', 'BrowserRequest'}  # D112, D113: Phase 43, 1.9.0
     assert len(names) == len(set(names)) and set(names) == catalogue, sorted(set(names) ^ catalogue)
     folded = {n.casefold() for n in names}
     assert not folded & {r.casefold() for r in (*PHASE19_ROUTES, 'artifact_submit', 'artifact_stop', 'pet_gaze',

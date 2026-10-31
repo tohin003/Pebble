@@ -7,6 +7,7 @@ import time
 import uuid
 
 from .artifact_schema import NATIVE_KINDS, evidence_ids as validate_evidence_ids, json_object, referenced_evidence, validate_native, validate_native_title, validate_quiz
+from .artifact_schema import DIAGRAM_KEYS, DIAGRAM_NODE_KEYS, diagram_variant
 from .interaction import RunInteractions
 
 
@@ -26,11 +27,13 @@ def validate(kind, data):
         # Phase 21 (F21-quiz): the same accepted shapes and data; a refusal names each field path, never a value.
         data = validate_quiz(data)
     elif kind == 'diagram':
-        if set(data) != {'nodes', 'edges'} or not isinstance(data['nodes'], list) or not 1 <= len(data['nodes']) <= 40 or not isinstance(data['edges'], list) or len(data['edges']) > 80:
+        # Phase 46 (1.9.29, w25-genui-b): a diagram may name its layout, direction and node layers, subtitles and tones
+        # (artifact_schema.CATALOG_SCHEMAS); Phase 18 diagrams validate exactly as before.
+        if not {'nodes', 'edges'} <= set(data) <= {'nodes', 'edges', *DIAGRAM_KEYS} or not isinstance(data['nodes'], list) or not 1 <= len(data['nodes']) <= 40 or not isinstance(data['edges'], list) or len(data['edges']) > 80:
             raise ValueError('Diagram needs 1–40 nodes and at most 80 edges.')
         ids = set()
         for n in data['nodes']:
-            if not isinstance(n, dict) or set(n) != {'id', 'label'}:
+            if not isinstance(n, dict) or not {'id', 'label'} <= set(n) <= {'id', 'label', *DIAGRAM_NODE_KEYS}:
                 raise ValueError('Diagram nodes need an ID and label.')
             text(n['id'], 60)
             text(n['label'], 180)
@@ -40,6 +43,8 @@ def validate(kind, data):
         for e in data['edges']:
             if not isinstance(e, dict) or set(e) != {'from', 'to', 'label'} or not isinstance(e['from'], str) or not isinstance(e['to'], str) or e['from'] not in ids or e['to'] not in ids or not isinstance(e['label'], str) or len(e['label']) > 100:
                 raise ValueError('Diagram edges must connect existing nodes.')
+        if set(data) - {'nodes', 'edges'} or any(set(n) - {'id', 'label'} for n in data['nodes']):
+            data = diagram_variant(data)
     elif kind == 'html':
         if not set(data).issubset({'html', 'css', 'script', 'language'}) or 'html' not in data:
             raise ValueError('Custom view accepts html, css, script and language only.')

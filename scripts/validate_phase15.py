@@ -745,7 +745,10 @@ class Campaign:
             fact = self.need('m1')
             self.fixture.share(m1_files=['prod.yaml'])
             again = self.run(service, 'm1', GOALS['m1_again'], root, chat=fact['cid'])
-            assert [t['state'] for t in self.receipts(service, again, 'Read')] == ['completed'], 'prod.yaml was not read.'
+            # The model's Read; above 8K the host's prefetch also reads the named prod.yaml (Phase 46), and a forgotten
+            # fact must not return through either read.
+            reads = [t for t in self.receipts(service, again, 'Read') if not t['call_id'].startswith('host:')]
+            assert [t['state'] for t in reads] == ['completed'], 'prod.yaml was not read.'
             assert not quoted(semantic(service), 'port: 9090'), 'The forgotten fact was learned again.'
             return {'reread': 'prod.yaml', 'relearned': False}
         self.check('m1_forgotten_counterpart_is_not_relearned_from_the_same_source', relearn)
@@ -777,7 +780,11 @@ class Campaign:
         self.run(service, 'm3', GOALS['m3'], root, chat=cid)
         requests = self.fixture.requests(phase=phase, scenario='m3')
         assert requests, 'The recall run made no model request.'
-        return native, any('m3' in r['markers'] for r in requests), len(requests)
+        # Recall only: above 8K the host's prefetch reads the named notes.yaml into its own message (Phase 46), and the
+        # folder's own file read fresh is not a recall, so a marker counts only from another message.
+        recalled = any(any(not s.startswith('user:pebble_prefetch:') for s in (r.get('marker_sources') or {}).get('m3', ()))
+                       for r in requests)
+        return native, recalled, len(requests)
 
     def scenario_m3(self, service):
         root_a, root_b = self.need('root:m3a'), self.need('root:m3b')
@@ -1165,7 +1172,8 @@ class Campaign:
             fact = self.send(service, 's1', GOALS['s1'], root)
             assert self.fixture.holding['s1'].wait(30), 'The s1 model turn after the read never started.'
             run = service.rpc('run_get', id=fact['cid'], run_id=fact['rid'])
-            reads = [t for t in run['tools'] if t['name'] == 'Read']
+            # The model's Read (Phase 46: above 8K the host's prefetch reads the named facts.txt first, host:prefetch_1)
+            reads = [t for t in run['tools'] if t['name'] == 'Read' and not t['call_id'].startswith('host:')]
             assert run['state'] == 'running' and [t['state'] for t in reads] == ['completed'], (run['state'], reads)
             (root / 'facts.txt').write_text(S1_AFTER)
             self.fixture.release['s1'].set()

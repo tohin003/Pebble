@@ -64,7 +64,8 @@ test("nothing activates Pebble while Stealth Lockdown is on", () => {
   assert.match(fn("front_without_activating"), /makeKeyAndOrderFront:/);
   // set_focus remains in exactly one place: focus(), when the switch is off.
   assert.equal([...shell.matchAll(/set_focus\(\)/g)].length, 1);
-  assert.match(fn("open_workspace"), /if !stealth_on\(\) && !main\.is_fullscreen\(\)/, "windowed under stealth");
+  // Phase 45 (D146): full screen also only when the person left the workspace full screen
+  assert.match(fn("open_workspace"), /if full && !stealth_on\(\) && !main\.is_fullscreen\(\)/, "windowed under stealth");
 });
 
 test("the keys, the menu-bar icon and its menu", () => {

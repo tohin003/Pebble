@@ -1,10 +1,12 @@
 """User-selected local GGUF, OpenAI-compatible and Anthropic providers."""
 
+import contextlib
 import copy
 import http.client
 import ipaddress
 import itertools
 import json
+import os
 import re
 import socket
 import sqlite3
@@ -19,10 +21,12 @@ import certifi
 from . import VERSION
 from .model import Model
 from .vault import Vault
-from .responses import complete_responses
-from .recovery import (CONNECT_ATTEMPT, NETWORK, ProviderFailure, RETRYABLE_STATUS, connect_message, current_open,
-                       failure_class, retry_after, tracked_open, transient)
+from .responses import _abort, complete_responses, stream_budget
+from .recovery import (CONNECT_ATTEMPT, NETWORK, REQUEST_TIMEOUT, ProviderFailure, RETRYABLE_STATUS, StreamBudget,
+                       StreamWatchdog, connect_message, current_open, failure_class, open_watched, retry_after,
+                       tracked_open, transient)
 from .capabilities import capabilities, choose, output_budget
+from .responses_socket import ResponsesSocket, SocketPool, SocketRefused
 from .token_budget import TokenBudget
 
 MAX_CONTEXT = 10_000_000
@@ -37,6 +41,46 @@ def model_capacity(url, model):
     if urlsplit(url).hostname == "api.openai.com" and model in {'gpt-6-luna','gpt-6-sol','gpt-6-astra','gpt-6.1-sol'}:
         return 1_050_000
     return None
+
+
+# Phase 46 (1.9.28, w10's security review, F7-1): on the Messages API the first line can follow the prompt's processing,
+# which a long uncached prompt (a resume after the cache expired) may take past 20 s, where 1.9.27 waited up to its
+# socket's 60 s. So the Anthropic route's first-event budget grows with the request: the run's budget (20 s by default)
+# plus one second per PREFILL_TOKENS input tokens, all taken as uncached, up to REQUEST_TIMEOUT (1.9.27's wait); a
+# request of unknown size waits REQUEST_TIMEOUT. Anthropic's own figure, 2024: a 100,000-token prompt answered its first
+# token 11.5 s after the request without caching; this allows 60 s there, and 20-36 s for Pebble's usual 1-32K requests.
+PREFILL_TOKENS = 2000
+
+
+def first_event_budget(budget, tokens):
+    """The Anthropic route's stream budget for a request of `tokens` input tokens (F7-1); never below the run's own.
+    `tokens` is the context manifest's count (Providers.last_input_estimate: the request as sent is its 'after')."""
+    if isinstance(tokens, dict):
+        tokens = tokens.get('after')
+    known = isinstance(tokens, (int, float)) and not isinstance(tokens, bool) and tokens >= 0  # NaN is unknown too
+    first = budget.first_event + tokens / PREFILL_TOKENS if known else REQUEST_TIMEOUT
+    return StreamBudget(max(budget.first_event, min(REQUEST_TIMEOUT, first)), budget.idle)
+
+
+def watched_lines(response, watchdog):
+    """Phase 46 (1.9.28): a stream's lines under its watchdog (recovery.StreamWatchdog). Any line is liveness; a read
+    the watchdog cut, or a stream that ended after it expired, is its retryable stall (recovery.StreamStalled)."""
+    lines = iter(response)
+    while True:
+        try:
+            raw = next(lines)
+        except StopIteration:
+            if watchdog.expired:
+                raise watchdog.failure() from None
+            return
+        except Exception:
+            if watchdog.expired:
+                raise watchdog.failure() from None
+            raise
+        if watchdog.expired:
+            raise watchdog.failure()
+        watchdog.beat()
+        yield raw
 
 
 def safe_error(data, secrets=()):
@@ -126,6 +170,9 @@ def connect_any(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=
 
 
 ABANDONED = 'The model request was abandoned before it was sent.'
+SOCKET_DEFAULT = '1'  # Phase 46 (D154): on, measured on sol 2026-10-27 (eight dev cases each faster; request median
+                      # 4.7 s against 6.2 over HTTP; d-sa-01's false completions equal on both, phase46-plan.md)
+SOCKET_RETRY = 600.0  # seconds before an upgrade that broke without an HTTP refusal (status 0) is tried again
 SUMMARY_REFUSALS = 'reasoning_summary_refused'  # setting: [[profile id, model], ...] that refused reasoning summaries
 
 
@@ -216,10 +263,16 @@ class Providers:
         # and whether a request opens on a helper thread so a stalled connect can be abandoned (this provider's
         # transport has no socket handle before the response; a child's pinned transport opens on its own thread).
         self.stream_budget = None
+        self.cache_prefix = None  # Phase 46 (1.9.28): the system's part every run shares (PEBBLE_1928_CACHE_BREAKPOINT)
         self.last_timing = None
         self.summaries_refused = set()
         self.watched_open = True
         self.connect_observer = None  # called once when a Responses request is still connecting after 1 s
+        # Phase 46 (D154): the Responses WebSocket mode's connections (one per run) and the routes that refused the
+        # upgrade since Pebble started ((profile id, model) -> status); those keep HTTP.
+        self.socket_pool = SocketPool()
+        self.sockets_refused = {}
+        self.sockets_refused_at = {}
         self.token_budget = TokenBudget(resources)
         # C08: provider-reported input usage calibrates local estimates per route (only ever upward).
         from .token_calibration import Calibration
@@ -317,6 +370,68 @@ class Providers:
             response = (self._through_proxy(other) if other else self.http).open(again, timeout=timeout)
             self.via_proxy = bool(other)
             return response
+
+    def socket_route(self, profile):
+        """Whether this profile's Responses requests may use the WebSocket mode (Phase 46, D154): switched on
+        (PEBBLE_RESPONSES_SOCKET, '1' by default), not refused by the route since Pebble started, this provider's own
+        direct transport (no system proxy, no replaced opener or request seam: a test's or a child's transport keeps
+        HTTP)."""
+        if os.environ.get('PEBBLE_RESPONSES_SOCKET', SOCKET_DEFAULT) != '1':
+            return False
+        key = (profile.get('id'), profile.get('model'))
+        if key in self.sockets_refused:
+            # An HTTP refusal holds until Pebble restarts; a broken upgrade (status 0: the connection dropped or the
+            # answer was unreadable) may be transient, so it is tried again after SOCKET_RETRY.
+            if self.sockets_refused[key] != 0 or time.monotonic() - self.sockets_refused_at.get(key, 0.0) < SOCKET_RETRY:
+                return False
+            self.sockets_refused.pop(key, None)
+        if self.http is not self._own_http or self.via_proxy or {'request', 'open_url'} & set(vars(self)):
+            return False
+        try:
+            return self._system_proxy(urllib.request.Request(profile['url'])) is None
+        except Exception:
+            return False
+
+    def refuse_sockets(self, profile, status):
+        """The route refused or broke the WebSocket upgrade: this profile keeps HTTP until Pebble restarts (a refusal
+        with an HTTP status) or for SOCKET_RETRY seconds (status 0, a broken upgrade)."""
+        key = (profile.get('id'), profile.get('model'))
+        self.sockets_refused[key] = status
+        self.sockets_refused_at[key] = time.monotonic()
+
+    def open_response_socket(self, url, headers, timeout):
+        """A WebSocket to `url`/responses (responses_socket.ResponsesSocket), connected as this provider's HTTP opener
+        connects: connect_any with its resolver and socket factory, certifi trust, no proxy, and inside a watched open
+        nothing written once the open was abandoned. A failed connect raises ProviderFailure as Providers.request
+        does; a refused, unreadable or interrupted upgrade raises SocketRefused (the caller keeps HTTP)."""
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port or 443
+        record = current_open()
+        try:
+            if record is not None and not record.track():
+                raise OSError(ABANDONED)
+            raw = connect_any((host, port), timeout, resolve=self.resolve, factory=self.socket_factory)
+            try:
+                sock = ssl.create_default_context(cafile=certifi.where()).wrap_socket(raw, server_hostname=host)
+            except BaseException:
+                raw.close()
+                raise
+        except OSError as exc:
+            code, retryable = failure_class(exc), transient(exc)
+            raise ProviderFailure(connect_message(code), retryable=retryable, code=code,
+                                  network=retryable and code in NETWORK) from None
+        if record is not None and record.abandoned:
+            sock.close()
+            raise ProviderFailure(ABANDONED, retryable=True)
+        try:
+            return ResponsesSocket.handshake(sock, host, parts.path.rstrip('/') + '/responses', headers)
+        except SocketRefused:
+            sock.close()
+            raise
+        except (OSError, ValueError) as exc:
+            sock.close()
+            # Content-free: the class and Pebble's own wording of what in the upgrade answer did not hold.
+            raise SocketRefused(0, f'{type(exc).__name__}: {exc}'[:160].encode()) from None
 
     def summary_refused(self, profile):
         """Whether this profile's route refused reasoning summaries (remembered across restarts, Phase 22)."""
@@ -836,6 +951,27 @@ class Providers:
         finally:
             self.response = None
 
+    @contextlib.contextmanager
+    def open_stream(self, p, path, headers, body, effort, cancel):
+        """The streamed response of one chat-completions or Messages request and its lines. Phase 46 (1.9.28, golden
+        dev d-rc-101 on Opus: one request sent nothing for 69.2 s, then failed with a TimeoutError; its retry took
+        6.6 s): the Anthropic stream runs inside the run's stream watchdog, as the Responses route does
+        (recovery.StreamWatchdog), its first line within a budget that grows with the request (first_event_budget).
+        After the first line the socket's own 60 s read timeout still cuts first, as before; other routes are
+        unchanged."""
+        opened = lambda: self.request(p["url"] + path, headers, body, timeout=60)  # noqa: E731
+        if p["kind"] != "anthropic":
+            with opened() as response:
+                yield response, response
+            return
+        watchdog = StreamWatchdog(first_event_budget(stream_budget(self, p, effort), self.last_input_estimate))
+        try:
+            with (open_watched(opened, watchdog, cancel) if self.watched_open else opened()) as response:
+                watchdog.arm(lambda: _abort(response))
+                yield response, watched_lines(response, watchdog)
+        finally:
+            watchdog.close()
+
     def _complete(self, messages, tools, cancel, token, deliberate=False):
         p = self.current()
         if not p or p["kind"] == "gguf":
@@ -958,6 +1094,18 @@ class Providers:
             # again. Anthropic-compatible gateways may refuse the field, so only Anthropic's own API gets it.
             if urlsplit(p["url"]).hostname == "api.anthropic.com":
                 body["cache_control"] = {"type": "ephemeral"}
+                # Phase 46 (1.9.28, PEBBLE_1928_CACHE_BREAKPOINT=1, off until measured on dev): the automatic breakpoint
+                # sits at the prompt's end and every run's first request differs there, so 194 of 197 first requests
+                # of the recorded Opus dev runs read nothing from the cache (about 7.2K tokens written each). One more
+                # breakpoint on the system's leading part that is the same for every run on this route (the runner's
+                # cache_prefix) lets a run's first request read the tools and that part from an earlier run. The
+                # docs: the automatic breakpoint then uses one of the 4 slots. The same split on every step of a run,
+                # so the prefix the thinking blocks are bound to does not change between steps.
+                prefix, system = getattr(self, "cache_prefix", None), body["system"]
+                if os.environ.get("PEBBLE_1928_CACHE_BREAKPOINT") == "1" and isinstance(prefix, str) and prefix \
+                        and system.startswith(prefix):
+                    body["system"] = [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}] + (
+                        [{"type": "text", "text": system[len(prefix):]}] if system[len(prefix):] else [])
                 # Phase 28: Anthropic binds each thinking block to everything sent before it (system, tools and
                 # earlier messages) and, by default on accounts created since 2026-08-31, refuses a request with
                 # HTTP 400 when that prefix changed. Pebble rebuilds the first user message each step (the host
@@ -982,11 +1130,9 @@ class Providers:
         headers = self.headers(p["kind"], key)
         if isinstance(body.get("thinking"), dict) and body["thinking"].get("block_binding"):
             headers["anthropic-beta"] = THINKING_BINDING_BETA
-        with self.request(
-            p["url"] + path, headers, body, timeout=60
-        ) as response:
+        with self.open_stream(p, path, headers, body, effort, cancel) as (response, lines):
             self.response = response
-            for raw in response:
+            for raw in lines:
                 if cancel.is_set():
                     raise InterruptedError("Stopped by you.")
                 received += len(raw)

@@ -165,3 +165,36 @@ def test_an_unready_index_never_holds_a_run_that_changed_no_source(make, monkeyp
     monkeypatch.setattr(RepoIndex, 'build', lambda self: (_ for _ in ()).throw(RuntimeError('fixture')))
     env = make('Explain calc.py.')
     assert stop(env)['action'] == 'allow'
+
+
+def test_a_project_without_tests_is_not_held_for_a_run_that_collected_none(tmp_path):
+    """Phase 46 (golden dev d-mt-01 on gpt-6.1-sol): in a project with no tests at all, a run that collected none was
+    reported as a failed test command, so every changed-code turn was held as "reported failures (1 failed)" through all
+    its repairs. A run that collected no tests is no evidence either way: it never passes, and it is not a failure."""
+    project = tmp_path / 'no-tests' / 'project'
+    project.mkdir(parents=True)
+    (project / 'calc.py').write_text(SOURCE)  # this project has no tests at all
+    guard = GuardAdapter(tmp_path / 'no-tests' / 'data')
+    env = SimpleNamespace(guard=guard, project=project, root=Workspace(project).root, rid='run-no-tests')
+    assert guard.begin(env.root, env.rid, 'Update calc.py so add documents its behaviour.')['state'] == 'started'
+    edit(env)
+    digest = testing.snapshot_digest(Workspace(env.project))
+    env.guard.test_result(str(env.root), env.rid, 'python-unittest', {
+        'exit_code': 5, 'outcome': 'no_tests', 'kind': 'test', 'recipe': 'python-unittest', 'snapshot_digest': digest,
+        'tests': {'passed': 0, 'failed': 0, 'skipped': 0, 'errors': 0, 'total': 0}})
+    try:
+        decision = stop(env)
+    finally:
+        guard.close()
+    assert decision['action'] == 'allow' and decision['gate'].get('kind') != 'failing_tests', decision
+
+
+def test_where_tests_cover_the_change_a_run_that_collected_none_is_held_for_them(make):
+    env = make()
+    edit(env)
+    digest = testing.snapshot_digest(Workspace(env.project))
+    env.guard.test_result(str(env.root), env.rid, 'python-unittest', {
+        'exit_code': 5, 'outcome': 'no_tests', 'kind': 'test', 'recipe': 'python-unittest', 'snapshot_digest': digest,
+        'tests': {'passed': 0, 'failed': 0, 'skipped': 0, 'errors': 0, 'total': 0}})
+    held = stop(env)
+    assert held['action'] == 'block' and held['gate']['kind'] == 'no_test_run' and held['gate']['covering'] == ['test_calc.py']

@@ -369,7 +369,10 @@ def test_purge_lists_everything_a_full_removal_touches_and_changes_nothing(stage
 
 def test_purge_names_the_same_chrome_host_as_the_app():
     assert tool.HOST_NAME == browser_bridge.HOST_NAME
-    assert tool.HOST_FOLDERS == tuple(browser_bridge.HOST_FOLDERS.values())
+    # D113 (Phase 43, 1.9.0): a purge removes the host file of every browser Connect a browser can write, the Chrome
+    # family first as before.
+    assert tool.HOST_FOLDERS[:4] == tuple(browser_bridge.HOST_FOLDERS.values())
+    assert set(tool.HOST_FOLDERS) == set(browser_bridge.BROWSER_FOLDERS.values()) and len(set(tool.HOST_FOLDERS)) == 8
 
 
 # ---- Safety properties for the new paths --------------------------------------------------------------------------

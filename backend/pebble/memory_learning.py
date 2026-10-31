@@ -21,7 +21,7 @@ import re
 import time
 from pathlib import Path
 
-from . import memory_facts, memory_graph, recipes
+from . import memory, memory_facts, memory_graph, recipes
 from .policy import MAX_FILE, PolicyError, Workspace, digest
 from .recipes import REGISTRY
 
@@ -51,6 +51,18 @@ UNSETTLED = frozenset({'running', 'queued', 'retry_wait', 'waiting_approval', 'w
                        'interrupted', 'budget_exhausted'})
 AWAITING = 'awaiting_native_confirmation'
 CONTEST_DECISIONS = ('keep', 'reject', 'keep_both')
+# Phase 46 (1.9.28, F2; the 1.9.26 dev cell d-me-01 k3: two bare "unsupported" results, then "FINAL: blocked — the
+# memory save came back unsupported", graded format_only): a profile proposal that was not saved says why and what to do.
+# Phase 46 (1.9.29, w22-memory-r2): the rule as it now is: the sentences and list items right after that sentence that
+# spell out what to keep count too (memory._spec_after), never this reply's own instructions or anything for now
+NOT_SAVED_NOTE = ("Not saved for later sessions. Pebble keeps the person's own words only from the sentence of their "
+                  "message that asks to remember them and the sentences or list items right after it that spell out what "
+                  "to keep, and never a task, this reply's own instructions or anything for now: quote one whole "
+                  "sentence, clause or list item of them exactly (kind profile), one per call. What Pebble already saved "
+                  "from this message needs no call. If it cannot be saved, say plainly that it was not saved, and finish "
+                  "the rest of the task.")
+WAITING_NOTE = ("Not saved yet: it waits for the person's confirmation in Settings → Memory. Do not say it was saved; "
+                "finish the rest of the task.")
 # Deleting a conversation keeps the global and project records the person saved in it with
 # "Remember that ..." (V1-021) and unlinks them. Settings and seed rows (origin 'user') keep
 # their 0.6.1 coupling: test_companion pins that a chat-linked one leaves with its chat.
@@ -266,6 +278,10 @@ class Learning:
         if memory_facts.credential_shaped(content):
             raise PolicyError('Recognizable credentials cannot enter automatic memory.')
         run = self.app.runs.get(rid)
+        if kind == 'semantic' and not evidence_ids and memory.requested_quote(content, self._human(run, input_id)):
+            # Phase 46 (1.9.28, F2): "my manager is Jordan Lee." proposed as a fact has no file to quote; it is the
+            # person's own words they asked to keep, a profile record (the receipt-backed fact path is unchanged)
+            kind = 'profile'
         self.begin_run(rid)
         if not self.consent(rid, kind):
             return {'status': 'disabled', 'authorization': 'none'}
@@ -275,8 +291,17 @@ class Learning:
             human = self._human(run, input_id)
             if not content.strip() or content.strip() not in human:
                 raise PolicyError('A profile proposal must quote current human input exactly.')
-            if content.startswith('Across all projects,'):
-                scope = 'global'
+            words = normalized(content).rstrip(' .!')
+            same = [row['id'] for row in self.store.query(
+                "SELECT id,content FROM memories WHERE chat_id=? AND origin='direct-user' AND created>=? LIMIT 32",
+                (run['chat_id'], run['created'])) if words in normalized(row['content'])]
+            if same:
+                # Phase 46 (1.9.28): the host saved these words from this message already; a second record would only
+                # repeat them in every later session's SAVED PREFERENCES
+                return {'status': 'already_saved', 'memory_id': same[0], 'authorization': 'none'}
+            if (content.startswith('Across all projects,') or self._companion_wide(run, content, human)) \
+                    and memory_facts.own_quote(human, content):
+                scope = 'global'  # follow-up 1 (review finding 3, G1): only the person's own words widen the scope
         slot = key or kind + ':' + digest(normalized(content).encode())[:20]
         if kind == 'episodic':
             # Model-written lessons never take a host lesson slot.
@@ -286,6 +311,17 @@ class Learning:
             # the first instead of waiting as a same-slot conflict.
             slot = key + '@' + self._source_tag(rid, evidence_ids)
         return self._queue(run, kind, scope, slot, content, evidence_ids, input_id, expires, supersedes)
+
+    @staticmethod
+    def _companion_wide(run, content, human=None):
+        """Phase 46 (1.9.28, follow-up 2, D177, PEBBLE_1928_COMPANION_LATER, on unless "0"): a later-session
+        wish said in a Companion chat (no project; memory.later_wish: "From now on, ...", "Please always ...") applies in
+        every conversation, as the person's "Remember that ..." does there; shown with Forget (runner.learned_cards).
+        Phase 46 (1.9.29, w22): also a MemoryPropose quote whose later-session marker is in the person's sentence that
+        asks to keep it, not in the quote ("I want dates as DD.MM.YYYY" from "Moving forward, please keep this in mind:
+        ..."; memory.later_request): it stayed in its conversation, so no later one had it."""
+        return not run['config']['workspace'] and memory.companion_later() and (
+            memory.later_wish(content) or human is not None and memory.later_request(content, human))
 
     def _source_tag(self, rid, evidence_ids):
         receipt = next((t for t in self.app.runs.tools(rid) if evidence_ids and t['call_id'] == evidence_ids[0]), None)
@@ -337,10 +373,18 @@ class Learning:
             human = self._human(run, candidate['input_id'])
             # Quoted/pasted blocks are not the person's own statement, and
             # authority-shaped or protected-trait wishes are never automatic.
-            if content not in memory_facts.visible_human_text(human) or not memory_facts.preference_allowed(content):
+            if content not in memory_facts.visible_human_text(human) or not memory_facts.preference_allowed(content) \
+                    or not memory_facts.own_quote(human, content):
+                # follow-up 1 (the w5 security review): pasted or quoted words are someone else's, in every class
                 raise PolicyError('durable_human_preference_required')
             if PREFERENCE.fullmatch(content):
                 proof.update(evidence_class='human_preference', input_id=candidate['input_id'])
+            elif memory.requested_quote(content, human) and not memory_facts._INJECTION.search(content):
+                # Phase 46 (1.9.28, F2; golden held-out memory): the person's exact words from the sentence of their
+                # message that asks to keep them ("Next time you give me a date, use DD.MM.YYYY.") waited for a native
+                # confirmation no later session gives, or were refused. They are saved as asked; never another sentence
+                # of the message, nor a task ("Delete the old build folder when you're done."): memory.requested_quote
+                proof.update(evidence_class='requested_human_quote', input_id=candidate['input_id'])
             elif not memory_facts.nomination_eligible(content, human):
                 raise PolicyError('durable_human_preference_required')
             elif candidate['reason'] == 'native_confirm':
@@ -465,6 +509,16 @@ class Learning:
                 return set()
             return {row[0] for row in db.execute('SELECT effect_call_id FROM agent_effects WHERE run_id=? AND effect_call_id IS NOT NULL', (rid,))}
 
+    def _prefetch_named(self, rid):
+        """Phase 46: the files the run's request named among those the host prefetched (runner.prefetch_files)."""
+        named = set()
+        for row in self.store.query("SELECT payload FROM run_events WHERE run_id=? AND kind='prefetch'", (rid,)):
+            try:
+                named.update(p for p in json.loads(row['payload']).get('named') or () if isinstance(p, str))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        return named
+
     def _action(self, run, receipt):
         result = receipt.get('result') if isinstance(receipt.get('result'), dict) else {}
         # One keyed row, not the whole chat's action history (V1-079).
@@ -489,8 +543,9 @@ class Learning:
         payload = action['payload']
         outcome = payload.get('result') if isinstance(payload.get('result'), dict) else {}
         code = outcome.get('exit_code')
+        # Phase 46 (1.9.28): a check run alone used a recipe that is not the project's own (testing.CHECK_ALONE)
         return (type(code) is int and code == 0 and not outcome.get('cancelled') and outcome.get('outcome', 'passed') == 'passed'
-                and cls._recipe(receipt, payload) is not None)
+                and cls._recipe(receipt, payload) is not None and 'check_alone' not in payload)
 
     @staticmethod
     def _argv_digest(recipe, payload):
@@ -832,6 +887,11 @@ class Learning:
                             # Claims and edges commit with the promotion itself.
                             related = memory_graph.relate(db, mid, now)
                             contested = bool(related and related['status'] == 'contested')
+                            if candidate['kind'] == 'profile' and proof.get('evidence_class') in memory.VERIFIED_QUOTES \
+                                    and not contested:
+                                # Phase 46 (1.9.28, follow-up 2, D183): the person's own words with a newer value of a
+                                # slot replace the older record holding only that slot, as their "Remember that ..." does
+                                memory_graph.supersede_slot(db, mid, now, fingerprint, learned=True)
                     db.execute('UPDATE memory_candidates SET status=?,reason=?,memory_id=?,updated=?,validated_proof=? WHERE id=?', (status, reason, mid, now, packed(proof) if proof else None, candidate['id']))
                     self._bound(db)
             # A contested record is stored but withheld: not completed evidence.
@@ -928,10 +988,13 @@ class Learning:
             inputs.append((row['id'], self._human(run, row['id'])))
         default_scope = run['config']['workspace'] or 'chat:' + run['chat_id']
         for input_id, human in inputs:
-            for text in memory_facts.preference_quotes(human):
+            # Phase 46 (1.9.29, w22): never a wish for now ("I prefer YYYY-MM-DD for this answer.") nor a message the
+            # person said not to keep (memory.learnable_quotes)
+            for text in memory.learnable_quotes(human):
                 key, supersedes = memory_facts.preference_slot(text), None
                 if key and memory_facts.CORRECTION.search(text):
-                    scope = 'global' if text.startswith('Across all projects,') else default_scope
+                    scope = 'global' if text.startswith('Across all projects,') or self._companion_wide(run, text) \
+                        else default_scope  # follow-up 2 (D177): the scope propose gives it
                     active = self.store.query("SELECT e.memory_id FROM memory_evidence e JOIN memories m ON m.id=e.memory_id WHERE e.scope=? AND e.kind='profile' AND e.slot=? AND e.status='active' LIMIT 1", (scope, key))
                     supersedes = active[0]['memory_id'] if active else None
                 try:
@@ -950,7 +1013,13 @@ class Learning:
         if not self.on('semantic') or not self.consent(rid, 'semantic'):
             return
         remaining, files = memory_facts.MAX_FACTS_PER_RUN, {}
-        reads = [r for r in receipts if r['name'] == 'Read' and r['state'] == 'completed'][-MAX_READ_RECEIPTS:]
+        # Phase 46: the host's prefetch reads (call ids host:...) teach only for the files the request named, as the
+        # model's own Read of them would; the others (a tiny project read whole, files earlier turns changed) were read
+        # for speed, not chosen, and learning from them would add facts and contests nobody asked about.
+        named = self._prefetch_named(rid)
+        reads = [r for r in receipts if r['name'] == 'Read' and r['state'] == 'completed'
+                 and (not str(r.get('call_id', '')).startswith('host:')
+                      or isinstance(r.get('arguments'), dict) and r['arguments'].get('file_path') in named)][-MAX_READ_RECEIPTS:]
         for receipt in reversed(reads):
             result, arguments = receipt.get('result'), receipt.get('arguments')
             if not isinstance(result, dict) or result.get('error') or not isinstance(arguments, dict):
@@ -1157,6 +1226,40 @@ class Learning:
                 raise PolicyError('Relate memory outside an application transaction.')
             with db:
                 return memory_graph.relate_person(db, mid, time.time(), fingerprint, correction)
+
+    def proposal_note(self, result):
+        """Phase 46 (1.9.28, F2): a MemoryPropose result, with NOT_SAVED_NOTE or WAITING_NOTE when a profile proposal
+        was not saved (the statuses and reasons are unchanged)."""
+        ident = result.get('candidate_id') if isinstance(result, dict) else None
+        rows = self.store.query('SELECT kind FROM memory_candidates WHERE id=?', (ident,)) if ident else []
+        if not rows or rows[0]['kind'] != 'profile':
+            return result
+        if result.get('status') == 'unsupported':
+            return {**result, 'note': NOT_SAVED_NOTE}
+        if result.get('status') == 'pending' and result.get('reason') == AWAITING:
+            return {**result, 'note': WAITING_NOTE}
+        return result
+
+    def supersede_named(self, mid):
+        """Phase 46 (1.9.28, F3): a captured statement that names the value it replaces supersedes the older records
+        holding it (memory_graph.supersede_named). One transaction; memory rows only, never a grant."""
+        with self.store.lock:
+            db = self.store.db
+            if db.in_transaction:
+                raise PolicyError('Relate memory outside an application transaction.')
+            with db:
+                return memory_graph.supersede_named(db, mid, time.time(), fingerprint)
+
+    def supersede_slot(self, mid):
+        """Phase 46 (1.9.28, follow-up 2, D183): a captured statement holding a newer value of a slot (a date format, a
+        currency ...) supersedes the older record of the person's that holds only that slot (memory_graph
+        .supersede_slot). One transaction; memory rows only, never a grant."""
+        with self.store.lock:
+            db = self.store.db
+            if db.in_transaction:
+                raise PolicyError('Relate memory outside an application transaction.')
+            with db:
+                return memory_graph.supersede_slot(db, mid, time.time(), fingerprint)
 
     def resolve(self, ident, accept):
         """Native answer to a conflicting candidate, a nomination waiting for

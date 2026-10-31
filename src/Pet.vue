@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   PhArrowUp,
@@ -27,6 +27,8 @@ import StatusLine from "./components/StatusLine.vue";
 import TokenStats from "./components/TokenStats.vue";
 import CompanionSidebar from "./components/CompanionSidebar.vue";
 import PetRunSummary from './components/PetRunSummary.vue';
+import WorkStrip from "./components/WorkStrip.vue";
+import { createActivityStore } from "./activity";
 import { matchShortcut, type ShortcutId } from './shortcuts';
 import { applyRunEvent } from './runEvents';
 import { MODES, MODE_IDS, modeName, type PermissionMode } from "./permissionModes";
@@ -43,7 +45,8 @@ import {
 } from "./bridge";
 import type { Chat, State, Attachment, CompanionSettings, Permissions, PrototypeFeedback } from "./types";
 // Phase 24 (V1-165): the Markdown renderer and the command palette load on first use, not with the collapsed pet.
-const Markdown = defineAsyncComponent(() => import("./components/Markdown.vue"));
+// Phase 46 (1.9.29, D195): ReplyBody draws a reply's free upgrades and hands the rest to Markdown.vue
+const ReplyBody = defineAsyncComponent(() => import("./components/ReplyBody.vue"));
 const CommandPalette = defineAsyncComponent(() => import("./components/CommandPalette.vue"));
 const expanded = ref(false),
   state = ref<State | null>(null),
@@ -103,12 +106,67 @@ const working = computed(() => !!state.value?.active);
 const pending = computed(
   () => chat.value?.actions.filter((a) => a.status === "pending").length || 0,
 );
+// Phase 45 (F217, audit round R8): a card of a workspace conversation is not in this window's chat, so the pill read
+// "Needs your review" and did nothing when clicked; it opens the companion whenever a review waits (toggle picks it)
+const waiting = computed(() => pending.value > 0 || companion.status.value === "review");
+// Phase 45 (D133, the person): a simple card (a site, a window, bringing a window forward) is answered here, the first
+// one waiting; any other card still opens the workspace ("needs review" counts the rest).
+const SIMPLE_CARDS = ["browser_grant", "screen_grant", "screen_raise"];
+const simpleCard = computed(() => chat.value?.actions.find((a) => a.status === "pending" && SIMPLE_CARDS.includes(a.kind)) || null);
+const otherPending = computed(() => pending.value - (simpleCard.value ? 1 : 0));
+const deciding = ref("");
+function cardSites(sites: unknown) {
+  const hosts = (Array.isArray(sites) ? sites : []).map((site) => {
+    try {
+      return new URL(String(site)).hostname.replace(/^www\./, "");
+    } catch {
+      return String(site);
+    }
+  });
+  return [...new Set(hosts)].join(", ");
+}
+function cardTitle(a: { kind: string; payload: Record<string, any> }) {
+  const p = a.payload || {};
+  if (a.kind === "browser_grant") return "Use " + (cardSites(p.sites) || "these sites");
+  if (a.kind === "screen_raise") return "Bring " + (p.app || "the window") + " forward";
+  return "Use " + (p.app || "an app window");
+}
+function cardNote(a: { kind: string; payload: Record<string, any> }) {
+  const p = a.payload || {};
+  if (a.kind === "browser_grant")
+    return p.route === "window"
+      ? `Pebble opens these sites in a new ${p.browser_name || "browser"} window and uses them in this conversation, for up to 15 minutes. Sending, buying or deleting still asks you.`
+      : "Pebble uses these sites in its own tab in your browser in this conversation, for up to 15 minutes. Sending, buying or deleting still asks you.";
+  if (a.kind === "screen_raise") return "macOS may switch to that window's desktop.";
+  // Phase 45 (F165, F180): most presses ask; macOS's own alert about pictures, said before it comes
+  if (p.file_panel)  // F187 (audit round R6): Preview's Open panel listed the person's Downloads
+    return "This is a file panel: it shows one of your folders, and Pebble would read the names of the files listed there. Allow it only if that is what you want.";
+  return `Pebble reads and uses ${p.title ? "“" + String(p.title).slice(0, 60) + "”" : "this window"} in this conversation, for up to 15 minutes. `
+    + (p.full_access ? "In Full access the presses your messages ask for run without asking; spending money still asks." : "Most presses still ask you first.")
+    + (p.screenshots ? " If macOS asks whether Pebble may bypass its window picker, choose Allow for pictures of it." : "");
+}
+async function decideSimple(a: { id: string }, allow: boolean) {
+  if (!chat.value || deciding.value) return;
+  deciding.value = a.id;
+  try {
+    await rpc(allow ? "approve_simple" : "reject_simple", { id: chat.value.id, action_id: a.id });
+    chat.value = await rpc("get_chat", { id: chat.value.id });
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    deciding.value = "";
+  }
+}
 // Phase 19 P10 (design study §2.1–§2.6): the companion's pose and status words come from host events and this
 // window's own counts (companionState.ts); progress labels, which can embed paths, are never status words.
 const companionSetting = computed<CompanionSettings>(
   () => state.value?.settings.companion || { pointer: true, reactions: true, status_words: "rotate", ui_guidance: true },
 );
 const reducedMotion = computed(() => !!state.value?.settings.reduced_motion);
+// Phase 46 (1.9.29, D206): the work view's strip, from the live events only (no fetch: the timeline route is not on
+// the companion's list); the "Work view" setting turns it off with the workspace's cards
+const activityStore = createActivityStore();
+const workRecord = computed(() => (state.value?.settings.work_view !== false && chat.value ? activityStore.liveFor(chat.value.id) : null));
 // Phase 33: the pebble wears the Veil while Stealth Lockdown is on (the shell does the hiding).
 const stealthOn = computed(() => !!state.value?.settings.stealth);
 const companion = useCompanion({
@@ -135,6 +193,8 @@ watch(() => companion.mood.value, () => nativeGaze?.rearm());
 const collapsedStatus = computed(() => !expanded.value && !!companion.status.value && companionSetting.value.status_words !== "off");
 watch(collapsedStatus, () => resizeCompanion().catch((e) => (error.value = String(e))));
 const sidebar = ref(false);
+// Phase 45 (F068, audit round R2): the companion never said which project its conversation was in; its header does
+const projectName = computed(() => chat.value?.workspace?.split(/[\\/]/).pop() || "");
 const sidebarTab = ref<"chats" | "activity" | "views">("chats");
 const selectedView = ref("");
 const activity = ref<
@@ -176,6 +236,7 @@ async function selectChat(id: string) {
     for (const source of [...sources.value]) await removeAttachment(source.id);
     chat.value = await rpc("get_chat", { id });
     localStorage.setItem("pebble-pet-chat", id);
+    pickedAt = Date.now();
     input.value = "";
     error.value = "";
     selectedView.value = "";
@@ -187,6 +248,8 @@ async function selectChat(id: string) {
 // V1-018: a conversation moved to Recently deleted takes no new messages; the pet lets go of it (the saved id too),
 // and the next message starts a new conversation.
 const SAVED = "pebble-pet-chat";
+// Phase 45 (F158): when this window last chose its conversation (opened, picked or started one)
+let pickedAt = Date.now();
 function dropChat() {
   chat.value = null;
   sources.value = [];
@@ -234,7 +297,11 @@ async function ensureChat() {
   }
   return chat.value!;
 }
+// Phase 45 (F088, audit round R3): a pebble that says Blocked (or waits for a review, an answer or a check) opens on the
+// conversation of the run it is about; it used to open on its own empty chat.
+const NEEDS_PERSON = ["blocked", "review", "question", "uncertain", "error"];
 async function toggle(value: boolean) {
+  const statusRun = value && NEEDS_PERSON.includes(String(companion.status.value)) ? companion.state.value.run?.id : null;
   expanded.value = value;
   if (!value) {
     panel.value = null;
@@ -243,15 +310,50 @@ async function toggle(value: boolean) {
   await resizeCompanion();
   if (value) {
     await refresh();
+    const runChat = statusRun ? (state.value?.runs || []).find((r: any) => r.id === statusRun)?.chat_id : null;
+    if (native && runChat && runChat !== chat.value?.id) await selectChat(runChat);
+    // Phase 45 (F158, audit round R5): after a task in the workspace, the companion still showed its older conversation,
+    // and Open full workspace took the workspace there. Opened again, it follows the conversation used last when that
+    // one changed after this window's own pick and nothing is being typed here.
+    const latest = (state.value?.chats || [])[0];
+    if (native && !runChat && latest && latest.id !== chat.value?.id && !input.value.trim()
+        && typeof latest.updated === "number" && latest.updated * 1000 > pickedAt) await selectChat(latest.id);
     if (native) await ensureChat();
     await nextTick();
     composer.value?.focus();
     stick.force();
   }
 }
+// Phase 45 (F064): ⌘K in the companion finds its conversations and opens the workspace; settings live there.
+const paletteExtras = computed(() => [
+  { key: "workspace", title: "Open the full workspace", detail: "Window", run: "workspace", words: "settings expand window" },
+  { key: "new", title: "New conversation", detail: "Companion", run: "new", words: "chat start" },
+  ...(state.value?.chats || []).map((c: any, i: number) => ({ key: "chat-" + c.id, title: c.title || "Conversation",
+    detail: "Conversation", run: "chat:" + c.id, words: "conversation chat history", recent: i < 5 })),
+]);
+async function runLauncher(id: string) {
+  palette.value = false;
+  if (id === "workspace") await workspace();
+  else if (id === "new") await newChat();
+  else if (id.startsWith("chat:")) await selectChat(id.slice(5));
+}
 async function workspace() {
-  if (native)
-    await invoke("open_workspace", { chatId: chat.value?.id || null });
+  // Phase 45 (F057, audit round R2): a half-typed message goes along to the same conversation in the workspace
+  // (before, it stayed here and the workspace showed an empty box).
+  // F088: an empty companion conversation does not take the workspace away from the one it shows (a running or
+  // blocked task)
+  const draft = input.value, id = chat.value?.messages?.length || draft.trim() ? chat.value?.id || null : null;
+  if (native) {
+    await invoke("open_workspace", { chatId: id });
+    if (draft.trim() && id && typeof emitTo === "function") {
+      try {
+        await emitTo("main", "workspace-draft", { chatId: id, text: draft });
+        input.value = "";
+      } catch {
+        // the draft stays here
+      }
+    }
+  }
   await toggle(false);
 }
 async function send() {
@@ -333,7 +435,8 @@ async function newChat() {
   panel.value = null;
   chat.value = await rpc("new_chat");
   localStorage.setItem(SAVED, chat.value!.id);
-  input.value = "";
+  pickedAt = Date.now();
+  // Phase 45 (F050): the words being written move to the new conversation instead of being thrown away
   error.value = "";
   selectedView.value = "";
   await refresh();
@@ -412,6 +515,12 @@ function clearQuizDrafts(ids: unknown) {
 // Notices from the Markdown renderer (a refused link, a copied code block): fixed host words.
 const note = ref("");
 let noteTimer = 0;
+// Phase 45 (F130): a reply's source marker; the sources are listed in the workspace (this window cannot read them)
+function sourceNote(event: Event) {
+  const id = (event as CustomEvent).detail;
+  if (typeof id === "string" && /^S[1-9]\d{0,2}$/.test(id))
+    showNote(new CustomEvent("pebble-notice", { detail: `${id} is listed with this reply's sources in the workspace: Details › Sources.` }));
+}
 function showNote(event: Event) {
   const text = (event as CustomEvent).detail;
   if (typeof text !== "string") return;
@@ -468,6 +577,9 @@ async function connectProject() {
       const c = await ensureChat();
       chat.value = await rpc("set_workspace", { id: c.id, path });
       panel.value = null;
+      // Phase 45 (F068, audit round R2): connecting a project here gave no sign it happened
+      if (projectName.value)
+        showNote(new CustomEvent("pebble-notice", { detail: `This conversation is now in ${projectName.value}. Source reads stay inside that folder.` }));
     }
   } catch (e) {
     error.value = String(e);
@@ -480,6 +592,7 @@ async function readUrl() {
     sources.value.push(await rpc("attach_url", { id: c.id, url: url.value }));
     url.value = "";
     panel.value = null;
+    nextTick(() => composer.value?.focus());  // Phase 45 (F052): the keyboard back in the message box
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -525,13 +638,27 @@ async function move(e: PointerEvent) {
     if (native) await getCurrentWindow().startDragging();
   }
 }
+// Phase 45 (F059): the second click of a double click is not a second toggle (it closed the chat it had just opened).
+let lastTap = 0;
 function tap() {
   start = null;
-  if (!dragged) {
+  if (!dragged && Date.now() - lastTap > 400) {
+    lastTap = Date.now();
     companion.interact("tap");
     toggle(!expanded.value).catch((e) => (error.value = String(e)));
   }
   dragged = false;
+}
+// Phase 45 (F054): every reply has its own Copy, as in the workspace.
+const copied = ref("");
+async function copyReply(m: { id: string; content: string }) {
+  try {
+    await navigator.clipboard.writeText(m.content);
+    copied.value = m.id;
+    setTimeout(() => { if (copied.value === m.id) copied.value = ""; }, 1800);
+  } catch (e) {
+    error.value = String(e);
+  }
 }
 function keyboard(e: KeyboardEvent) {
   const shortcut = expanded.value ? matchShortcut(e, "pet") : null;
@@ -539,7 +666,10 @@ function keyboard(e: KeyboardEvent) {
   if (shortcut !== "close") e.preventDefault();
   if (shortcut === "close") {
     if (palette.value) palette.value = false;
-    else if (panel.value) panel.value = null;
+    else if (panel.value) {
+      panel.value = null;
+      nextTick(() => composer.value?.focus()); // Phase 45 (F046): typing goes on in the message box
+    }
     else if (sidebar.value) toggleSidebar(false);
     else toggle(false);
   } else if (shortcut === "palette") {
@@ -547,6 +677,31 @@ function keyboard(e: KeyboardEvent) {
     palette.value = !palette.value;
   } else runShortcut(shortcut);
 }
+// A window without event support (a test stub) has no menu bar to listen to.
+function safeListen(start: (handler: (event: { payload: string }) => void) => unknown, handler: (event: { payload: string }) => void) {
+  try {
+    void start(handler);
+  } catch {
+    // nothing to listen to
+  }
+}
+// Phase 45 (F025): the menu bar's command palette and task activity, when the companion is the window in use (main.rs
+// sends only these two here; every other item runs in the workspace).
+if (native) safeListen((handler) => getCurrentWindow().listen<string>("pebble-menu", handler), (event) => {  // Phase 45 (F072): this window only
+  const id = String(event.payload);
+  if (id === "palette") palette.value = true;
+  else if (id === "activity") runShortcut("activity");
+});
+// Phase 45 (F044): who answers for the model in use, short for the label and in full for the tooltip.
+const modelSource = computed(() => {
+  const p = (state.value?.profiles || []).find((x: any) => x.id === state.value?.model.profile_id);
+  if (!p) return { short: "", long: "" };
+  const [account] = String(p.provider_name || p.name || "").split(" · ");
+  const who = account.includes("@") ? account.split("@")[0] : account;
+  if (p.kind === "chatgpt") return { short: "ChatGPT", long: who + " (ChatGPT plan)" };
+  if (p.kind === "gguf") return { short: "this Mac", long: "On this Mac" };
+  return { short: "API", long: who + " (API key, billed by the provider per use)" };
+});
 function runShortcut(id: ShortcutId) {
   palette.value = false;
   if (id === "stop" && working.value) stop().catch((e) => (error.value = String(e)));
@@ -567,6 +722,7 @@ onMounted(async () => {
   document.addEventListener("keydown", keyboard);
   document.addEventListener("pointerdown", outside);
   document.addEventListener("pebble-notice", showNote);
+  document.addEventListener("pebble-source", sourceNote);
   if (!native) {
     theme();
     return;
@@ -582,6 +738,7 @@ onMounted(async () => {
   });
   off = await subscribe(async ({ event, data: d }) => {
     companion.accept({ event, data: d });
+    activityStore.accept({ event, data: d }); // Phase 46 (1.9.29): run, activity and plan events for the strip
     if (event === "settings") await refresh();
     if (event === "offline") {
       error.value = "The local service stopped. Restart Pebble to reconnect.";
@@ -589,6 +746,8 @@ onMounted(async () => {
       return;
     }
     if (event === "model" && state.value) state.value.model = d;
+    // Phase 45 (F225, audit round R9): the companion covered a spot Pebble had to click in an allowed window
+    if (event === "make_room" && expanded.value) await toggle(false);
     if (event === "progress") {
       if (state.value) state.value.active = d.chat_id;
       activity.value.push({ ...d, at: Date.now() });
@@ -648,6 +807,7 @@ onUnmounted(() => {
   document.removeEventListener("keydown", keyboard);
   document.removeEventListener("pointerdown", outside);
   document.removeEventListener("pebble-notice", showNote);
+  document.removeEventListener("pebble-source", sourceNote);
   window.clearTimeout(noteTimer);
 });
 </script>
@@ -691,7 +851,8 @@ onUnmounted(() => {
             :outcome="outcome"
             :mode="companionSetting.status_words"
             :reduced="reducedMotion"
-          /><small v-if="!companion.pose.value.status || companionSetting.status_words === 'off'">A little help, right here.</small>
+          /><small v-if="!companion.pose.value.status || companionSetting.status_words === 'off'" :title="chat?.workspace || undefined">{{
+            projectName ? "In " + projectName : "A little help, right here." }}</small>
         </div>
         <button
           title="New conversation"
@@ -714,6 +875,7 @@ onUnmounted(() => {
           <PhX :size="16" />
         </button>
       </header>
+      <WorkStrip :record="workRecord" :reduced="reducedMotion" />
       <!-- F9: the feed is not a live region; StatusLine announces the status and "Reply finished" once. -->
       <div ref="feed" class="quick-feed">
         <div v-if="!chat?.messages.length" class="pet-greeting">
@@ -732,10 +894,16 @@ onUnmounted(() => {
             </span>
           </div>
           <h3 class="pet-sr">{{ m.role === "user" ? "You said:" : "Pebble said:" }}</h3>
-          <Markdown v-if="m.role === 'assistant'" :text="m.content" /><p v-else class="pet-user-text">{{ m.content }}</p><TokenStats
+          <ReplyBody v-if="m.role === 'assistant'" :text="m.content" /><p v-else class="pet-user-text">{{ m.content }}</p><TokenStats
             v-if="m.usage"
             :usage="m.usage"
-          />
+          /><button
+            v-if="m.role === 'assistant' && m.content"
+            type="button"
+            class="pet-copy"
+            :aria-label="copied === m.id ? 'Copied' : 'Copy this reply'"
+            @click="copyReply(m)"
+          >{{ copied === m.id ? "Copied" : "Copy" }}</button>
         </article>
         <PetRunSummary v-if="chat" :chat="chat" @workspace="workspace"
           :refresh-key="goalRevision + ':' + (chat.runs || []).map((r) => r.id + ':' + r.state).join() + ':' + (chat.questions || []).length" />
@@ -749,9 +917,18 @@ onUnmounted(() => {
           <PhSquaresFour :size="13" />{{ view.title }}
         </button>
       </div>
-      <button v-if="pending" class="pet-review" @click="workspace">
-        <PhShieldCheck :size="15" />{{ pending }}
-        {{ pending === 1 ? "action needs" : "actions need" }}
+      <section v-if="simpleCard" class="pet-card" :aria-label="cardTitle(simpleCard)">
+        <strong>{{ cardTitle(simpleCard) }}</strong>
+        <p>{{ cardNote(simpleCard) }}</p>
+        <div class="pet-card-actions">
+          <button type="button" class="pet-link" @click="workspace">Details</button>
+          <button type="button" class="secondary-button" :disabled="!!deciding" @click="decideSimple(simpleCard, false)">Deny</button>
+          <button type="button" class="primary-button" :disabled="!!deciding" @click="decideSimple(simpleCard, true)">Allow</button>
+        </div>
+      </section>
+      <button v-if="otherPending > 0" class="pet-review" @click="workspace">
+        <PhShieldCheck :size="15" />{{ otherPending }}
+        {{ otherPending === 1 ? "action needs" : "actions need" }}
         review<PhArrowUpRight :size="14" />
       </button>
       <p v-if="deviceNotice && panel !== 'model'" class="pet-device-note" role="status">
@@ -1018,14 +1195,16 @@ onUnmounted(() => {
           >
             <PhShieldCheck :size="18" />
           </button>
-          <span class="pet-model-label">{{
+          <!-- Phase 45 (F044): the model and who answers (and bills) for it: a ChatGPT plan, an API key or this Mac -->
+          <span class="pet-model-label" :title="modelSource.long">{{
             state?.model.name || "Choose a model"
-          }}</span>
+          }}<small v-if="modelSource.short" class="pet-model-source"> · {{ modelSource.short }}</small></span>
           <button
             type="button"
             aria-label="Model and reasoning"
             :title="
               (state?.model.name || 'Model') +
+              (modelSource.long ? ' · ' + modelSource.long : '') +
               ' · ' +
               effortName(state?.model.effort || 'default')
             "
@@ -1053,12 +1232,17 @@ onUnmounted(() => {
         </div>
       </form>
       <CommandPalette v-if="palette" surface="pet" :platform="state?.platform" :running="working"
-        @close="palette = false" @choose="chooseCommand" @action="runShortcut" />
+        :extras="paletteExtras" @close="palette = false" @choose="chooseCommand" @action="runShortcut" @run="runLauncher" />
     </main>
     <!-- Collapsed: one status region stays mounted (it announces "Reply finished"); it is a pill while a status shows. -->
+    <!-- Phase 45 (F186, audit round R6): while a card waits, the pill ("Waiting for your review") opens the companion on
+         it; otherwise it lets clicks through as before -->
     <StatusLine
       v-if="!expanded"
       class="pet-pill"
+      :class="{ 'pet-pill-open': waiting }"
+      :title="waiting ? 'Open the companion to review' : undefined"
+      @click="waiting && toggle(true)"
       :pill="collapsedStatus"
       :status="collapsedStatus ? companion.pose.value.status : null"
       :started-at="companion.pose.value.startedAt"
@@ -1069,7 +1253,7 @@ onUnmounted(() => {
     />
     <button
       class="pet-avatar"
-      :title="expanded ? 'Minimize to pebble' : 'Tap to chat · drag to move'"
+      :title="expanded ? 'Minimize to pebble' : 'Click to chat · drag to move'"
       :aria-label="expanded ? 'Minimize to pebble' : 'Chat with Pebble'"
       @pointerdown="down"
       @pointermove="move"
@@ -1114,6 +1298,10 @@ html.pet-surface #app {
   bottom: 0;
   width: 112px;
   height: 112px;
+  /* Phase 45 (F186, audit round R6): macOS lets a click through a window's transparent pixels; drawn as a thin "!" the
+     pebble lost its clicks, so its whole circle keeps a fill no one can see */
+  background: radial-gradient(circle closest-side, rgba(0, 0, 0, 0.012) 98%, transparent 100%);
+  border-radius: 50%;
   display: grid;
   place-items: center;
   padding: 0;
@@ -1136,6 +1324,10 @@ html.pet-surface #app {
   justify-content: center;
   pointer-events: none;
   font-size: 11px;
+}
+.pet-pill.pet-pill-open {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .quick-chat header .pet-status {
   min-height: 0;
@@ -1306,6 +1498,28 @@ html.pet-surface #app {
   color: var(--on-accent);
   border-radius: 10px;
 }
+/* Phase 45 (D133): a simple card answered in the companion */
+.pet-card {
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 12px;
+}
+.pet-card p {
+  margin: 4px 0 8px;
+  color: var(--secondary);
+}
+.pet-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.pet-card-actions .pet-link {
+  margin-right: auto;
+}
 .pet-review {
   margin: 0 12px 6px;
   display: flex;
@@ -1428,7 +1642,7 @@ html.pet-surface #app {
   bottom: 108px;
   left: 10px;
   right: 10px;
-  max-height: 220px;
+  max-height: min(220px, calc(100vh - 190px)); /* Phase 45 (F051): never over the header */
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1567,5 +1781,20 @@ html.pet-surface #app {
   width: 24px;
   height: 24px;
   font-size: 14px;
+}
+/* Phase 45 (F054) */
+.pet-copy {
+  display: block;
+  margin: 4px 0 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-radius: 6px;
+  opacity: 0.75;
+}
+.pet-copy:hover,
+.pet-copy:focus-visible {
+  opacity: 1;
+  background: var(--hover);
 }
 </style>

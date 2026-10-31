@@ -30,8 +30,15 @@ async function load() {
   try {
     const page = await rpc<{ items: Item[] }>('run_readback', { id: props.chatId, run_id: props.runId });
     if (version === generation) { items.value = Array.isArray(page?.items) ? page.items : []; loaded.value = true; }
-  } catch (error) { if (version === generation) { items.value = []; emit('error', String(error)); } }
+  } catch (error) {
+    if (version !== generation) return;
+    items.value = [];
+    // Phase 45 (F224, audit round R9): while another task runs the readback waits; that is not an error
+    if (/Stop the active run/.test(String(error))) { waiting.value = true; return; }
+    emit('error', String(error));
+  }
 }
+const waiting = ref(false);
 async function settle(item: Item, effect: string, note: string) {
   if (busy.value) return;
   busy.value = item.call_id;
@@ -54,7 +61,8 @@ watch(() => [props.chatId, props.runId], load);
 <template>
   <section class="run-reconcile" aria-label="Uncertain outcomes">
     <p>Pebble lost track of these actions before it could confirm their outcome. Nothing is retried. Settle each one before resuming.</p>
-    <p v-if="loaded && !items.length" role="status">No uncertain outcome is waiting.</p>
+    <p v-if="waiting" role="status">Pebble reads these back once the current task ends.</p>
+    <p v-else-if="loaded && !items.length" role="status">No uncertain outcome is waiting.</p>
     <ul v-else>
       <li v-for="item in items" :key="item.call_id">
         <strong>{{ label(item) }}</strong>

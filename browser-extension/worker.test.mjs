@@ -30,7 +30,7 @@ class Port {
 function fake({ paired = true } = {}) {
   const f = { tabs: new Map(), attached: new Set(), commands: [], own: [], ports: [], timers: [], session: {}, local: {},
     indicator: [], facts: new Map(), failIndicator: false, updates: [], groups: [], ungrouped: [], tabGroups: [], answers: {},
-    otherDebugger: new Set(), loader: new Map(), clock: 1_000_000 };
+    otherDebugger: new Set(), loader: new Map(), clock: 1_000_000, nextTab: 100, created: [], removed: [] };
   if (paired) f.local.pairing = { id: PAIRING_ID, key: KEY.toString('hex') };
   const evaluate = ({ expression, contextId }) => {
     if (contextId !== WORLD) throw new Error('Cannot find context with specified id');
@@ -52,6 +52,10 @@ function fake({ paired = true } = {}) {
       update: async (id, props) => { f.updates.push([id, props]); return { id, windowId: 1 }; },
       group: async options => { f.groups.push(options); return 900; },
       ungroup: async id => { f.ungrouped.push(id); },
+      // Phase 43: Pebble's own tabs (the fake keeps the address only for chrome.debugger, as Chrome does without `tabs`).
+      create: async props => { const id = f.nextTab++; f.tabs.set(id, { id, url: props.url, title: '', windowId: 1, groupId: -1 });
+        f.created.push([id, props]); return { id, windowId: 1 }; },
+      remove: async id => { f.removed.push(id); f.tabs.delete(id); },
     },
     tabGroups: { update: async (id, props) => { f.tabGroups.push([id, props]); } },
     windows: { update: async () => ({}) },
@@ -98,7 +102,7 @@ function fake({ paired = true } = {}) {
     const hello = f.port().sent[0];
     const session = hmac(KEY, `session|${hello.nonce}|${LINK}`);
     f.svc = { session, sendSeq: 0, read: 1, hello };
-    f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/1', instance: 'i', link_nonce: LINK, paused: false,
+    f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/2', instance: 'i', link_nonce: LINK, paused: false,
       paired: true, pairing_id: PAIRING_ID, proof: hmac(KEY, `svc|${hello.nonce}|${LINK}`).toString('hex'), ...overrides });
     await settle();
   };
@@ -190,7 +194,7 @@ test('pairing: the person types the code Pebble shows; nothing else crosses befo
   f.chrome.runtime.onConnect.emit(popup);
   const hello = f.port().sent[0];
   assert.equal(hello.pairing_id, null);
-  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/1', instance: 'i', link_nonce: LINK, paired: false, paused: false });
+  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/2', instance: 'i', link_nonce: LINK, paired: false, paused: false });
   await settle();
   let view = await f.ask({ type: 'popup:state', tabId: 5 });
   assert.equal(view.connection, 'unpaired');
@@ -233,7 +237,7 @@ test('pairing: the person types the code Pebble shows; nothing else crosses befo
 test('a locked pairing says so and accepts no code until Pebble asks again', async () => {
   const f = await started({ paired: false });
   await f.ask({ type: 'popup:share', tabId: 5, scope: 'tab' });
-  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/1', instance: 'i', link_nonce: LINK, paired: false });
+  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/2', instance: 'i', link_nonce: LINK, paired: false });
   await settle();
   await f.ask({ type: 'popup:pair_start', tabId: 5 });
   f.port().onMessage.emit({ type: 'pair_result', ok: false, reason: 'locked', attempts_left: 0, retry_in: 1800 });
@@ -250,7 +254,7 @@ test('a locked pairing says so and accepts no code until Pebble asks again', asy
 test('a pairing result with a wrong confirmation, or a welcome with a wrong proof, ends the link', async () => {
   let f = await started({ paired: false });
   await f.ask({ type: 'popup:share', tabId: 5, scope: 'tab' });
-  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/1', instance: 'i', link_nonce: LINK, paired: false });
+  f.port().onMessage.emit({ type: 'welcome', protocol: 'pebble-browser/2', instance: 'i', link_nonce: LINK, paired: false });
   await settle();
   await f.ask({ type: 'popup:pair_start', tabId: 5 });
   f.port().onMessage.emit({ type: 'pair_challenge', expires_in: 120, attempts: 5 });
@@ -573,4 +577,190 @@ test('shares survive a worker restart only while their tab is still on the site;
   assert.equal(g.local.pairing, undefined);
   assert.equal(g.ports.at(-2).closed, true);
   assert.equal(g.port().sent[0].pairing_id, null, 'the next hello asks to pair again');
+});
+
+// ---- Phase 43 (1.9.0): Pebble for Chrome 2: the protocol, site grants and Pebble's own tabs ----------------------------
+
+const GRANT = 'e'.repeat(32);
+const SITE = { type: 'control', action: 'site_grant', grant_id: GRANT, act: ['https://shop.example'],
+  read: ['https://shop.example', 'https://docs.example'], expires_in: 600 };
+
+async function sited() {
+  const f = await shared();
+  await f.toWorker(SITE);
+  return f;
+}
+
+async function opened(url = 'https://docs.example/guide') {
+  const f = await sited();
+  const reply = await f.call({ id: 300, op: 'create_tab', grant_id: GRANT, url });
+  assert.equal(reply[0].ok, true, JSON.stringify(reply[0]));
+  return { f, tabId: Number(reply[0].result.tab_id) };
+}
+
+test('protocol 2: the hello names the browser inside its extension facts; another protocol is an upgrade, never a retry loop', async () => {
+  const f = await started();
+  await f.ask({ type: 'popup:share', tabId: 5, scope: 'tab' });
+  const hello = f.port().sent[0];
+  assert.equal(hello.protocol, 'pebble-browser/2');
+  assert.deepEqual(Object.keys(hello).sort(), ['extension', 'nonce', 'pairing_id', 'protocol', 'type'], 'the hello keeps its keys');
+  assert.equal(hello.extension.browser, 'unknown', 'Chromium alone names no browser until the person says');
+  f.port().onMessage.emit({ type: 'status', state: 'upgrade', message: 'This copy of Pebble for Chrome is older than Pebble. Reload it.' });
+  await settle();
+  f.port().onDisconnect.emit();
+  await settle();
+  const view = await f.ask({ type: 'popup:state', tabId: 5 });
+  assert.equal(view.connection, 'upgrade');
+  assert.match(view.message, /older than Pebble/);
+  assert.equal(f.timers.filter(t => t.live && t.ms >= 2000 && t.ms <= 60000 && t.ms !== IDLE_MS).length, 0, 'no retry loop');
+  const picked = await f.ask({ type: 'popup:browser', tabId: 5, browser: 'comet' });
+  assert.equal(picked.ok, true);
+  assert.equal(picked.view.browser.id, 'comet');
+  assert.equal(f.local.browser, 'comet', "the person's choice is kept");
+  assert.equal((await f.ask({ type: 'popup:browser', tabId: 5, browser: 'safari<script>' })).ok, false);
+});
+
+test('a helper from an older Pebble that ends the hello without a word is said plainly', async () => {
+  const g = await started();
+  await g.ask({ type: 'popup:share', tabId: 5, scope: 'tab' });
+  g.chrome.runtime.lastError = { message: 'Native host has exited.' };
+  g.port().onDisconnect.emit();
+  await settle();
+  assert.match((await g.ask({ type: 'popup:state', tabId: 5 })).message, /older than this extension/);
+});
+
+test("Pebble opens its own tab only at a read site of a live site grant, inactive, in its group, and reports it", async () => {
+  const { f, tabId } = await opened();
+  assert.deepEqual(f.created.at(-1), [tabId, { url: 'https://docs.example/guide', active: false }]);
+  assert.ok(f.groups.some(options => options.tabIds === tabId), "it joins Pebble's tab group");
+  const owned = f.sent('owned').at(-1).tabs;
+  assert.deepEqual(owned.map(t => [t.tab_id, t.grant_id, t.origin, t.state]), [[String(tabId), GRANT, 'https://docs.example', 'ready']]);
+  for (const [id, url, code] of [[301, 'https://evil.example/', 'refused'], [302, 'https://shop.example/checkout', 'handback'],
+    [303, 'chrome://settings', 'refused'], [304, 'http://docs.example/', 'refused']]) {
+    const reply = await f.call({ id, op: 'create_tab', grant_id: GRANT, url });
+    assert.equal(reply[0].error.code, code, url);
+  }
+  const unknown = await f.call({ id: 305, op: 'create_tab', grant_id: 'f'.repeat(32), url: 'https://docs.example/' });
+  assert.equal(unknown[0].error.code, 'not_granted');
+  assert.equal(f.created.length, 1, 'nothing else was opened');
+  const list = await f.call({ id: 306, op: 'list_owned', grant_id: GRANT });
+  assert.deepEqual(list[0].result.tabs.map(t => t.tab_id), [String(tabId)]);
+  await f.toWorker({ type: 'control', action: 'pause' });
+  assert.equal((await f.call({ id: 307, op: 'create_tab', grant_id: GRANT, url: 'https://docs.example/' }))[0].error.code, 'paused');
+});
+
+test('on a read site Pebble reads but never acts; on an act site it acts; the debugger stays for the grant', async () => {
+  const { f, tabId } = await opened();
+  let reply = await f.call({ id: 310, op: 'attach', tab_id: String(tabId) });
+  assert.equal(reply[0].ok, true, JSON.stringify(reply[0]));
+  reply = await f.call({ id: 311, op: 'cdp', tab_id: String(tabId), method: 'Accessibility.getFullAXTree', params: { frameId: 'F' } });
+  assert.equal(reply[0].ok, true, 'reading a read site');
+  reply = await f.call({ id: 312, op: 'cdp', tab_id: String(tabId), method: 'Input.insertText', params: { text: 'x' } });
+  assert.equal(reply[0].error.code, 'read_only');
+  assert.ok(!f.commands.some(c => c[1] === 'Input.insertText'), 'nothing typed on a read-only site');
+  f.fire(IDLE_MS);
+  await settle();
+  assert.ok(f.attached.has(tabId), "an owned tab keeps the debugger while its grant lives");
+  reply = await f.call({ id: 313, op: 'navigate', tab_id: String(tabId), url: 'https://shop.example/item' });
+  assert.equal(reply[0].ok, true);
+  f.tabs.set(tabId, { id: tabId, url: 'https://shop.example/item', title: 'Item', windowId: 1 });
+  f.chrome.tabs.onUpdated.emit(tabId, { status: 'loading' }, { id: tabId });
+  await settle();
+  reply = await f.call({ id: 314, op: 'cdp', tab_id: String(tabId), method: 'Input.insertText', params: { text: 'x' } });
+  assert.equal(reply[0].ok, true, 'an act site takes input');
+  for (const url of ['https://evil.example/', 'https://shop.example/checkout']) {
+    reply = await f.call({ id: 315, op: 'navigate', tab_id: String(tabId), url });
+    assert.equal(reply[0].error.code, 'refused', url);
+  }
+});
+
+test('an owned tab that lands off the read sites lets go and says so; one the person moves in is never Pebble\'s', async () => {
+  const { f, tabId } = await opened();
+  await f.call({ id: 320, op: 'attach', tab_id: String(tabId) });
+  f.tabs.set(tabId, { id: tabId, url: 'https://evil.example/landing', title: 'Evil', windowId: 1 });
+  f.chrome.tabs.onUpdated.emit(tabId, { status: 'loading' }, { id: tabId });
+  await settle();
+  assert.equal(f.attached.has(tabId), false, 'detached off the read sites');
+  assert.deepEqual(f.sent('detached').at(-1), { type: 'detached', tab_id: String(tabId), reason: 'away' });
+  const row = f.sent('owned').at(-1).tabs[0];
+  assert.deepEqual([row.state, row.origin, row.url, row.title], ['away', null, null, ''], 'nothing of that site leaves');
+  assert.equal((await f.call({ id: 321, op: 'attach', tab_id: String(tabId) }))[0].error.code, 'away');
+  f.tabs.set(77, { id: 77, url: 'https://docs.example/mine', title: 'Mine', windowId: 1, groupId: 900 });  // the person's own tab, in the group
+  assert.equal((await f.call({ id: 322, op: 'attach', tab_id: '77' }))[0].error.code, 'not_shared');
+  assert.equal((await f.call({ id: 323, op: 'close_tab', tab_id: '77' }))[0].error.code, 'refused');
+  assert.deepEqual(f.removed, [], "the person's tab is never closed");
+  assert.equal((await f.call({ id: 324, op: 'close_tab', tab_id: String(tabId) }))[0].ok, true);
+  assert.deepEqual(f.removed, [tabId]);
+  f.chrome.tabs.onRemoved.emit(tabId);
+  await settle();
+  assert.deepEqual(f.sent('owned').at(-1).tabs, []);
+});
+
+test("a site grant's end, Pebble's end of it and Stop leave Pebble's tabs open as the person's own", async () => {
+  for (const how of ['expiry', 'ungrant', 'stop', 'link']) {
+    const { f, tabId } = await opened();
+    await f.call({ id: 330, op: 'attach', tab_id: String(tabId) });
+    if (how === 'expiry') { f.clock += 600_000; f.fire(600_000); }
+    if (how === 'ungrant') await f.toWorker({ type: 'control', action: 'site_ungrant', grant_id: GRANT });
+    if (how === 'stop') await f.ask({ type: 'popup:stop', tabId: 5 });
+    if (how === 'link') { f.port().onDisconnect.emit(); }
+    await settle();
+    assert.equal(f.attached.has(tabId), false, how);
+    assert.ok(f.ungrouped.includes(tabId), how + ': it leaves the group');
+    assert.deepEqual(f.removed, [], how + ': it stays open');
+    assert.equal(f.worker.liveFor(tabId), false, how);
+    assert.equal((await f.ask({ type: 'popup:state', tabId })).owned.length, 0, how);
+  }
+});
+
+test("the person's switch keeps the link open for Pebble's tabs; nothing runs before it", async () => {
+  const f = await started();
+  assert.equal(f.ports.length, 0);
+  const on = await f.ask({ type: 'popup:own_tabs', tabId: 5, on: true });
+  assert.equal(on.ok, true);
+  assert.equal(f.ports.length, 1, 'the link opens without a shared tab');
+  assert.equal(f.local.own_tabs, true);
+  await f.welcome();
+  await f.toWorker(SITE);
+  const reply = await f.call({ id: 340, op: 'create_tab', grant_id: GRANT, url: 'https://docs.example/' });
+  assert.equal(reply[0].ok, true);
+  await f.ask({ type: 'popup:stop', tabId: 5 });
+  await settle();
+  assert.equal(f.local.own_tabs, false, 'Stop turns it off');
+  assert.equal(f.port().closed, true, 'and with nothing else wanted the link closes');
+});
+
+test('after a worker restart Pebble\'s tabs from this browser session come back without a grant and leave its group', async () => {
+  const { f, tabId } = await opened();
+  const g = fake();
+  Object.assign(g.session, JSON.parse(JSON.stringify(f.session)));
+  g.tabs.set(tabId, { id: tabId, url: 'https://docs.example/guide', title: 'Guide', windowId: 1 });
+  await g.worker.start();
+  assert.ok(g.ungrouped.includes(tabId));
+  assert.equal(g.worker.liveFor(tabId), false);
+  assert.equal((await g.ask({ type: 'popup:state', tabId })).owned.length, 0);
+  const h = fake();
+  Object.assign(h.session, { ...JSON.parse(JSON.stringify(f.session)), incarnation: 'd'.repeat(32) });
+  h.tabs.set(tabId, { id: tabId, url: 'https://docs.example/guide', title: 'Guide', windowId: 1 });
+  await h.worker.start();
+  assert.deepEqual(h.ungrouped, [], 'a tab ID from another browser session is not even touched');
+});
+
+test('Phase 44: with no window open (macOS keeps the browser running) Pebble\'s tab opens in a new window of its own', async () => {
+  const f = await sited();
+  const windows = [];
+  f.chrome.tabs.create = async () => { throw new Error('No current window'); };
+  f.chrome.windows.create = async props => {
+    const id = f.nextTab++;
+    f.tabs.set(id, { id, url: props.url, title: '', windowId: 2, groupId: -1 });
+    windows.push(props);
+    return { id: 2, tabs: [{ id, windowId: 2 }] };
+  };
+  const reply = await f.call({ id: 360, op: 'create_tab', grant_id: GRANT, url: 'https://docs.example/guide' });
+  assert.equal(reply[0].ok, true, JSON.stringify(reply[0]));
+  assert.deepEqual(windows, [{ url: 'https://docs.example/guide', focused: false }], 'unfocused unless Pebble asked for active');
+  assert.ok(f.tabs.has(Number(reply[0].result.tab_id)));
+  f.chrome.windows.create = async () => { throw new Error('No windows allowed'); };
+  const refused = await f.call({ id: 361, op: 'create_tab', grant_id: GRANT, url: 'https://docs.example/guide' });
+  assert.equal(refused[0].error.code, 'refused');
 });

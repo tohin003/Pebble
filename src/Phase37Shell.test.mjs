@@ -47,5 +47,5 @@ test("turning stealth off returns the workspace to full screen once Pebble is in
   const policy = apply.indexOf("set_activation_policy(");
   const back = apply.indexOf("RETURN_TO_FULL_SCREEN.swap(false, Ordering::SeqCst)");
   assert.ok(policy >= 0 && back > policy, "full screen after the Regular activation policy");
-  assert.match(fn("open_workspace"), /if !stealth_on\(\) && !main\.is_fullscreen\(\)/, "still opens windowed under stealth");
+  assert.match(fn("open_workspace"), /if full && !stealth_on\(\) && !main\.is_fullscreen\(\)/, "still opens windowed under stealth");
 });

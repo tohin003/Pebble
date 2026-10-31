@@ -3,7 +3,10 @@
 Inventory. These are every person-facing setting that exists, with the validators the app already uses:
 ``theme``, ``reduced_motion``, ``memory_enabled``, ``memory_layers``, ``permissions``, ``companion``,
 ``notifications`` and ``stealth`` (App.setting; Stealth Lockdown, Phase 33), plus ``storage`` (the Documents copies, new in
-Phase 22). Models, effort
+Phase 22), ``fast_replies`` (OpenAI's Fast tier on the ChatGPT sign-in, Phase 46, D166) and ``git_decisions`` (the Git
+actions that are the person's decision, each off until they turn it on, Phase 46, D159) and ``work_view`` (Pebble's
+work as cards or as rows of text, Phase 46, 1.9.29) and ``visual_answers`` (when the model is offered visual answers,
+Phase 46, 1.9.29). Models, effort
 and accounts stay with Providers and the Keychain; telemetry needs the consent notice the app shows;
 connectors and skills are reviewed in the app; internal state (permissions_version, memory_initialized,
 model_handoff_chats, notification_mutes, plan_credentials, recently_deleted...) never leaves the database.
@@ -40,9 +43,17 @@ from pathlib import Path
 from . import data_home
 
 KEYS = ('theme', 'reduced_motion', 'memory_enabled', 'memory_layers', 'permissions', 'companion', 'notifications',
-        'stealth', 'storage')
+        'stealth', 'storage', 'fast_replies', 'git_decisions',
+        'work_view',  # Phase 46 (1.9.29, D206): Pebble's work as cards (on) or as rows of text; presentation only
+        'visual_answers')  # Phase 46 (1.9.29, D195): artifact_schema.visual_offer; 'ask' unless the person chooses
+VISUAL_ANSWERS = ('ask', 'auto')  # artifact_schema.VISUAL_SETTINGS
+VISUAL_DEFAULT = 'ask'  # D216/D217 (the lead, 2026-10-30): 'auto' is the design for later, off by default
 STORAGE = 'storage'
 STORAGE_DEFAULT = {'documents_mirror': True, 'documents_folder': None}
+FAST = ('off', 'follow_ups', 'long_tasks', 'always')  # Phase 46 (D166): runner.fast_now
+FAST_DEFAULT = 'long_tasks'
+# Phase 46 (D159): the reviewed Git actions that are the person's decision (git_plans.GitPlans._decided), all off
+GIT_DECISIONS = ('force_push', 'delete_remote_branch', 'repository_identity', 'clean')
 LAYERS = ('working', 'episodic', 'semantic', 'procedural', 'temporal', 'profile')
 THEMES = ('system', 'light', 'dark')
 MODES = {'ask': 0, 'auto': 1, 'full': 2}
@@ -63,7 +74,7 @@ def default(key):
         return 'system'
     if key in ('reduced_motion', 'stealth'):
         return False
-    if key == 'memory_enabled':
+    if key in ('memory_enabled', 'work_view'):
         return True
     if key == 'memory_layers':
         return {k: True for k in LAYERS}
@@ -78,6 +89,12 @@ def default(key):
         return validate_settings(DEFAULT_SETTINGS)
     if key == STORAGE:
         return dict(STORAGE_DEFAULT)
+    if key == 'fast_replies':
+        return FAST_DEFAULT
+    if key == 'git_decisions':
+        return {k: True for k in GIT_DECISIONS}  # D174 (the person, 2026-10-28): on, so runs that need them go on
+    if key == 'visual_answers':
+        return VISUAL_DEFAULT
     raise KeyError(key)
 
 
@@ -87,7 +104,7 @@ def validate(key, value):
         if value not in THEMES:
             raise ValueError('theme is "system", "light" or "dark".')
         return value
-    if key in ('reduced_motion', 'memory_enabled', 'stealth'):
+    if key in ('reduced_motion', 'memory_enabled', 'stealth', 'work_view'):
         if type(value) is not bool:
             raise ValueError(f'{key} is true or false.')
         return value
@@ -106,6 +123,18 @@ def validate(key, value):
         return validate_settings(value)
     if key == STORAGE:
         return validate_storage(value)
+    if key == 'fast_replies':
+        if not isinstance(value, str) or value not in FAST:
+            raise ValueError('fast_replies is "off", "follow_ups", "long_tasks" or "always".')
+        return value
+    if key == 'git_decisions':
+        if not isinstance(value, dict) or set(value) != set(GIT_DECISIONS) or any(type(v) is not bool for v in value.values()):
+            raise ValueError('git_decisions needs true or false for each of: ' + ', '.join(GIT_DECISIONS) + '.')
+        return {k: value[k] for k in GIT_DECISIONS}
+    if key == 'visual_answers':
+        if not isinstance(value, str) or value not in VISUAL_ANSWERS:
+            raise ValueError('visual_answers is "ask" or "auto".')
+        return value
     raise ValueError(f'{key} is not a Pebble setting.')
 
 
@@ -180,11 +209,15 @@ def widening(key, old, new):
             reasons.append(f'notifications show more ({old["preview"]} to {new["preview"]})')
         reasons += [f'"{kind}" notifications turn on' for kind, on in new['kinds'].items()
                     if on and not old['kinds'].get(kind, False) and new['enabled']]
+        if new.get('replies', True) and not old.get('replies', True) and new['enabled']:
+            reasons.append('reply notifications turn on')  # Phase 45 (D134)
     elif key == STORAGE:
         if new['documents_mirror'] and not old['documents_mirror']:
             reasons.append('copies in Documents turn on')
         if new['documents_folder'] != old['documents_folder'] and new['documents_mirror']:
             reasons.append('copies go to ' + (new['documents_folder'] or 'the default ~/Documents/Pebble'))
+    elif key == 'git_decisions':
+        reasons += [f'the Git decision "{name}" turns on' for name in GIT_DECISIONS if new[name] and not old[name]]
     return reasons
 
 
@@ -292,6 +325,13 @@ def schema():
             '$schema': {'type': 'string'},
             'theme': {'description': 'Colour theme.', 'enum': list(THEMES)},
             'reduced_motion': {**flag, 'description': 'Stop animations and the companion\'s eye movement.'},
+            # Phase 46 (1.9.29): how the windows show Pebble's work; the work itself and what it may do are the same
+            'work_view': {**flag, 'description': 'Show what Pebble is doing as cards (true) or as rows of text (false).'},
+            # Phase 46 (1.9.29, D195): what the model is offered, not what Pebble may do; tables and diagrams already
+            # in a reply are drawn either way
+            'visual_answers': {'description': 'When Pebble may answer with a chart, diagram or comparison: ask (when '
+                                              'you ask for one) or auto (also when a request suits one; uses more '
+                                              'tokens).', 'enum': list(VISUAL_ANSWERS)},
             # Phase 33: privacy, not access. Turning it on gives Pebble nothing more, so it needs no confirmation.
             'stealth': {**flag, 'description': 'Stealth Lockdown: keep Pebble out of screen capture, screen sharing, the '
                                               'Dock and Cmd-Tab, and never take focus from the app in front. Not hidden '
@@ -310,9 +350,10 @@ def schema():
                           'required': ['pointer', 'reactions', 'status_words', 'ui_guidance'],
                           'properties': {'pointer': flag, 'reactions': flag, 'ui_guidance': flag,
                                          'status_words': {'enum': ['rotate', 'fixed', 'off']}}},
-            'notifications': {'description': 'macOS notifications for scheduled work.', 'type': 'object',
+            'notifications': {'description': 'macOS notifications for scheduled work, and (replies) for a task that ends '
+                                             'or waits while Pebble is in the background.', 'type': 'object',
                               'additionalProperties': False, 'required': ['enabled', 'kinds', 'preview', 'quiet_hours'],
-                              'properties': {'enabled': flag, 'preview': {'enum': list(PREVIEWS)},
+                              'properties': {'enabled': flag, 'replies': flag, 'preview': {'enum': list(PREVIEWS)},
                                              'kinds': {'type': 'object', 'additionalProperties': flag},
                                              'quiet_hours': {'type': ['object', 'null'],
                                                              'properties': {'start': {'type': 'string'},
@@ -323,6 +364,22 @@ def schema():
                         'properties': {'documents_mirror': flag,
                                        'documents_folder': {'type': ['string', 'null'],
                                                             'description': 'null means ~/Documents/Pebble.'}}},
+            # Phase 46 (D166): speed, not access. No confirmation: turning it up gives Pebble nothing more.
+            'fast_replies': {'description': "OpenAI's Fast tier with your ChatGPT sign-in: off, follow_ups (every "
+                                            'request after your first message in a conversation), long_tasks (those '
+                                            'and a long task\'s later steps) or always. The same model, served faster; '
+                                            'OpenAI prices Fast at twice the standard rate for API use and may count it '
+                                            "against your plan's limits faster. Other providers are unaffected.",
+                             'enum': list(FAST)},
+            # Phase 46 (D159): access. Turning one on waits for your confirmation in the app.
+            'git_decisions': {'description': 'Git actions that are your decision, each on unless you turn it off: '
+                                             "force_push (replace a remote branch's history, with a lease on the commit "
+                                             'seen at review), delete_remote_branch, repository_identity (this '
+                                             "repository's user.name and user.email) and clean (delete the untracked "
+                                             'files git clean lists). Forced pushes, deletions and cleans still wait for '
+                                             'your review each time.',
+                              'type': 'object', 'additionalProperties': False, 'required': list(GIT_DECISIONS),
+                              'properties': {k: flag for k in GIT_DECISIONS}},
         },
     }
 

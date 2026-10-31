@@ -42,9 +42,13 @@ def _sha(value):
 
 
 def _table():
-    """The prediction table for this source: after t24-gate once its adapter lifecycle exists, else 0.6.1's."""
+    """The prediction table for this source: after prefetch while runner.PREFETCH is on (Phase 46), after t24-gate once
+    its adapter lifecycle exists, else 0.6.1's."""
+    from pebble import runner
     from pebble.guard import GuardAdapter
     merged = hasattr(GuardAdapter, 'unstage') and hasattr(GuardAdapter, 'end')
+    if merged and getattr(runner, 'PREFETCH', False):
+        return 'after_prefetch', corpus_24g.PREDICTED_AFTER_PREFETCH
     return ('after_t24_gate', corpus_24g.PREDICTED_AFTER_T24_GATE) if merged else ('0.6.1', corpus_24g.PREDICTED_0_6_1)
 
 
@@ -57,7 +61,8 @@ def make_plan(repetitions=3, seed=None):
     body = {'schema': PLAN_SCHEMA, 'corpus': corpus_24g.CORPUS_VERSION, 'cases': cases, 'arms': list(LIVE_ARMS),
             'bench_source': bp.bench_source_fingerprint(),
             'repetitions': repetitions, 'seed': seed, 'predictions': {'0.6.1': corpus_24g.PREDICTED_0_6_1,
-                                                                    'after_t24_gate': corpus_24g.PREDICTED_AFTER_T24_GATE},
+                                                                    'after_t24_gate': corpus_24g.PREDICTED_AFTER_T24_GATE,
+                                                                    'after_prefetch': corpus_24g.PREDICTED_AFTER_PREFETCH},
             'claims': {'claimed': 'AgentGuard prevented N of M paired false-completion opportunities (CI), at X ms per '
                                   'message and Y extra requests per held completion, with Z false blocks per 100 runs',
                        'not_claimed': 'any security protection'},

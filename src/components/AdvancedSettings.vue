@@ -5,6 +5,7 @@ import MemoryContests from "./MemoryContests.vue";
 import MemoryArchive from "./MemoryArchive.vue";
 import ConnectorRouteSettings from "./ConnectorRouteSettings.vue";
 import StorageSettings from "./StorageSettings.vue";
+import RemoteSettings from "./RemoteSettings.vue";
 import {
   PhPlus,
   PhTrash,
@@ -15,16 +16,22 @@ import {
   PhArrowClockwise,
   PhFolder,
   PhSlidersHorizontal,
+  PhEyeSlash,
+  PhPalette,
+  PhGearSix,
+  PhLayout,
+  PhDeviceMobile,
 } from "@phosphor-icons/vue";
 import { rpc, selectFile } from "../bridge";
 import { EVERY_MODE, MODES, MODE_IDS } from "../permissionModes";
-import type { State, Permissions, ModelProfile } from "../types";
+import type { State, Permissions, ModelProfile, FastReplies } from "../types";
 const props = defineProps<{
   state: State;
   chatId?: string;
   initialTab?: string;
+  intent?: string; // Phase 45 (F002): "add-provider" opens the provider form (the welcome's "Use an API key")
 }>();
-const emit = defineEmits<{ refresh: [] }>();
+const emit = defineEmits<{ refresh: []; tab: [string] }>();
 const tab = ref(props.initialTab || "models"),
   error = ref(""),
   busy = ref(false),
@@ -66,6 +73,12 @@ const TAB_LABELS: Record<string, string> = {
   extensions: "Skills & connectors",
   mods: "Views",
   storage: "Data & storage",
+  // Phase 45 (F006, D129): the sections that used to trail under every tab have their own tabs
+  privacy: "Privacy & Stealth",
+  // Phase 46 (1.9.29, D214): Pebble Remote, the iPhone's control of this Mac's Pebble
+  iphone: "iPhone",
+  appearance: "Appearance",
+  general: "General",
 };
 const tabs = computed(() => [
   "models",
@@ -74,6 +87,10 @@ const tabs = computed(() => [
   "extensions",
   ...(developer.value || tab.value === "mods" ? ["mods"] : []),
   "storage",
+  "privacy",
+  "iphone",
+  "appearance",
+  "general",
 ]);
 const form = ref({
   name: "",
@@ -307,6 +324,9 @@ function editModel(p: NonNullable<State["profiles"]>[number]) {
     .map((x) => x.model || "");
   adding.value = true;
 }
+onMounted(() => {
+  if (props.intent === "add-provider" && tab.value === "models") newProvider();
+});
 function newProvider() {
   form.value = {
     name: "",
@@ -341,8 +361,25 @@ const toolLabels: Record<string, string> = {
   terminal: "Use terminal commands",
   plugins: "Use connectors you enabled",
   views: "Create interactive views",
-  screen: "Screen control: Chrome tabs you share",
+  screen: "Screen control: app windows and Chrome tabs you share",
+  capture: "Take screenshots when a task needs them",
 };
+// Phase 40 (1.6.0, D91-D93): what the Companion's Shell may do, said where it is turned on.
+const TERMINAL_NOTE = "In a conversation without a project, commands run in a sandbox that writes only in ~/Pebble Workbench and has no network. Pebble asks before it writes elsewhere or reaches a website.";
+// Phase 45 (F180, audit round R6): macOS asks for this more than once (its window-picker alert comes back about monthly)
+const CAPTURE_NOTE = "macOS asks too: allow Pebble in System Settings > Privacy & Security > Screen & System Audio Recording. From time to time macOS also asks whether Pebble may “bypass the system private window picker”; choose Allow if you want Pebble to see the windows you share. Pebble takes pictures of a shared window only, never sound.";
+// Phase 42 (1.8.0): app windows need macOS's Accessibility permission too; every press asks.
+// Phase 45 (F165, F181): keys of a keypad and squares of a board are pressed without asking
+const SCREEN_NOTE = "App windows also need Pebble in System Settings > Privacy & Security > Accessibility. Pebble uses only the window you allow. Keys of a keypad and squares of a game board are pressed without asking. In Full access Pebble also runs the presses, sends, saves and deletes your messages ask for, and anything that may spend money asks you first; in the other modes anything that may send, buy, delete, save, sign in or share asks you first. A window or site you allow stays allowed in that conversation for up to 15 minutes.";
+const PROTECTED_PLACES = "Keys and passwords, browser data, Messages, Mail, Pebble's own data, other assistants' sign-ins and your shell history are never read or written, whatever you allow.";
+const shellGrants = ref<{ hosts: Record<string, string>; folders: Record<string, string> }>({ hosts: {}, folders: {} });
+async function loadShellGrants() {
+  try { shellGrants.value = await rpc("shell_grants", {}); }
+  catch { /* an older service has no grants route */ }
+}
+async function removeShellGrant(kind: "hosts" | "folders", value: string) {
+  await run(async () => { shellGrants.value = await rpc("shell_grant_remove", { kind, value }); });
+}
 // V1-113 (D9): where a web search goes, said where the person turns it on.
 const WEB_DESTINATION =
   "Searches send your search words to Microsoft Bing (its RSS results feed). Pages Pebble reads are fetched from their own sites.";
@@ -374,6 +411,28 @@ async function removeModel(id: string) {
   await run(async () => {
     await rpc("model_remove", { profile_id: id });
   });
+}
+// Phase 45 (F010): each API format fills its usual address; an address the person typed is never replaced.
+const PRESET_URLS: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com/v1" };
+watch(() => form.value.kind, (kind) => {
+  const url = (form.value.url || "").trim();
+  if ((!url || Object.values(PRESET_URLS).includes(url)) && PRESET_URLS[kind]) form.value.url = PRESET_URLS[kind];
+});
+function localServer(name: string, url: string) {
+  form.value.kind = "openai";
+  form.value.url = url;
+  if (!form.value.name) form.value.name = name;
+}
+// Phase 45 (F011): what a failed fetch means, in words, with the provider's own text kept beside it.
+function plainProviderError(raw: string) {
+  const s = raw || "";
+  if (/HTTP 40[13]\b/.test(s)) return "The provider refused the API key. Check that the key is right and belongs to this provider.";
+  if (/HTTP 404\b/.test(s)) return "Nothing answered at this address. Check the API base URL (it usually ends in /v1).";
+  if (/HTTP 429\b/.test(s)) return "The provider is limiting requests right now. Wait a moment and try again.";
+  if (/HTTP 5\d\d\b/.test(s)) return "The provider had a problem answering. Try again in a moment.";
+  if (/(refused|unreachable|timed out|timeout|resolve|could not connect|connection)/i.test(s))
+    return "Pebble couldn't reach this address. Check the URL, and that the server is running.";
+  return "";
 }
 // Phase 24 (parent): a failed model fetch is shown by its button, where the person is looking, not only at the top of
 // Settings (which is scrolled out of view while the provider form is open). Editing the URL, format or key clears it.
@@ -469,6 +528,28 @@ function focusId(id: string) {
   void nextTick(() => {
     if (typeof document !== "undefined") document.getElementById?.(id)?.focus?.();
   });
+}
+// Phase 46 (D166): which requests ask for OpenAI's Fast tier on the ChatGPT sign-in (runner.fast_now). No speed or
+// price numbers here until a benchmark measures them (the public-wording rule).
+const FAST_IDS: FastReplies[] = ["off", "follow_ups", "long_tasks", "always"];
+const FAST: Record<FastReplies, { name: string; detail: string }> = {
+  off: { name: "Off", detail: "Every request at the standard speed." },
+  follow_ups: { name: "Follow-up messages", detail: "Fast for every request after your first message in a conversation." },
+  long_tasks: { name: "Follow-ups and long tasks", detail: "Also Fast from the fourth step of a long first task. The default." },
+  always: { name: "Always", detail: "Fast for every request." },
+};
+const fastReplies = computed<FastReplies>(() => props.state.settings.fast_replies ?? "long_tasks");
+const hasChatGPT = computed(() => connectionRows.value.some(p => p.kind === "chatgpt"));
+async function fast(id: FastReplies) {
+  await run(async () => {
+    await rpc("setting", { key: "fast_replies", value: id });
+  });
+}
+async function fastKey(event: KeyboardEvent) {
+  const next = step(event, FAST_IDS, fastReplies.value);
+  if (!next || next === fastReplies.value || disabled.value || busy.value) return;
+  focusId("fast-replies-" + next);
+  await fast(next as FastReplies);
 }
 async function modeKey(event: KeyboardEvent) {
   const next = step(event, MODE_IDS, props.state.settings.permissions.mode);
@@ -585,6 +666,7 @@ async function saveMemory() {
     await listMemories(type.value);
   });
 }
+const confirmForget = ref("");
 async function forget(id: string) {
   if (props.state.active) return;
   await run(async () => {
@@ -593,6 +675,9 @@ async function forget(id: string) {
     memoryCandidates.value = await rpc('memory_candidates', { id: props.chatId });
   });
 }
+// Phase 45 (F016): what Forget all did is said where it was asked, and an old "archive saved" card goes away.
+const forgotAll = ref(""),
+  archiveKey = ref(0);
 async function clear() {
   await run(async () => {
     await rpc("memory_clear");
@@ -600,19 +685,22 @@ async function clear() {
     memoryCandidates.value = [];
     memoryMore.value = false;
     clearConfirm.value = false;
+    forgotAll.value = "Forgot all saved memories and task checkpoints. Your conversations are still here.";
+    archiveKey.value += 1;
   });
 }
 async function changeTab(value: string) {
   tab.value = value;
+  emit("tab", value); // Phase 45 (D129): App.vue shows its own sections under Privacy, Appearance and General
   error.value = "";
   if (value === "memory") await getMemories();
   if (value === "extensions") await loadExtensions();
-  if (value === "permissions") await loadPlanCredentials();
+  if (value === "permissions") { await loadPlanCredentials(); await loadShellGrants(); }
 }
 onMounted(() => {
   if (tab.value === 'memory') getMemories();
   if (tab.value === 'extensions') loadExtensions();
-  if (tab.value === 'permissions') loadPlanCredentials();
+  if (tab.value === 'permissions') { loadPlanCredentials(); loadShellGrants(); }
 });
 // Command credentials for reviewed typed plans: names here, values only in the OS keychain.
 const planCredentialNames = ref<string[]>([]), planCredentialName = ref(''), planCredentialSecret = ref('');
@@ -801,6 +889,28 @@ async function loadExtensions() {
     extensions.value = await rpc("extensions");
     await refreshConnectorInfo();
   });
+  await loadToolbox();
+}
+// Phase 41 (1.7.0, Pebble's Workshop): the tools Pebble made and kept; View code and Remove, main window only.
+interface KeptTool { name: string; purpose: string; kept_by: string; uses: number; state: string }
+// Phase 45 (F178): tools removed in the last ten minutes, which Put back restores from Pebble's own copy
+interface RemovedTool { name: string; purpose: string; seconds_left: number }
+const toolbox = ref<{ tools: KeptTool[]; pending: unknown[]; removed?: RemovedTool[] }>({ tools: [], pending: [] });
+const toolboxCode = reactive<Record<string, string>>({});
+async function loadToolbox() {
+  try { toolbox.value = await rpc("toolbox_list", {}); }
+  catch { /* an older service has no Toolbox */ }
+}
+async function viewTool(name: string) {
+  if (toolboxCode[name]) { delete toolboxCode[name]; return; }
+  try { toolboxCode[name] = String((await rpc<{ code?: string }>("toolbox_get", { name })).code || ""); }
+  catch (failure) { error.value = String(failure); }
+}
+async function removeTool(name: string) {
+  await run(async () => { toolbox.value = await rpc("toolbox_remove", { name }); });
+}
+async function putBackTool(name: string) {
+  await run(async () => { toolbox.value = await rpc("toolbox_undo_remove", { name }); });
 }
 async function importSkill() {
   await run(async () => {
@@ -864,16 +974,35 @@ async function inspectReference(id: string, digest: string, reference: string, o
 const words = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const ACTION_NOUNS: Record<string, string> = {
   edit: "File edit", tests: "Test run", command: "Command", app: "App launch", git: "Git change", plugin: "Connector call",
-  worktree: "Helper worktree", install: "Install", screen: "Chrome tab action",
+  // Phase 45 (F214, audit round R8): a press in an app window read "Chrome tab action" (screen sessions began as tabs)
+  worktree: "Helper worktree", install: "Install", screen: "Window or tab action", screen_grant: "Window allowed",
+  browser_grant: "Sites allowed", screen_raise: "Window brought forward", url: "Link opened", app_action: "App action",
+  shell: "Shell command", file: "File change",
 };
 const ACTION_STATES: Record<string, string> = {
   applied: "done", completed: "done", rejected: "declined", failed: "failed", pending: "waiting for you", running: "running",
   awaiting_user_approval: "waiting for you", superseded: "replaced", cancelled: "stopped", uncertain: "outcome unknown",
 };
 const OUTCOMES: Record<string, string> = {
-  completed: "finished", failed: "failed", stopped: "stopped", cancelled: "stopped", interrupted: "interrupted",
+  completed: "finished", not_completed: "not completed", // Phase 45 (F201): the reply said it was not finished
+  needs_reconciliation: "not completed: an app step's result was uncertain", // Phase 45 (F228, R9; F256, R11)
+  failed: "failed", stopped: "stopped", cancelled: "stopped", interrupted: "interrupted",
   budget_exhausted: "ran out of time or steps", verification_required: "held for a check", paused: "paused",
 };
+// Phase 45 (F228, audit round R9): a task's finished steps that needed no card, by kind ("3 commands, 1 file")
+const STEP_NOUNS: Record<string, [string, string]> = {
+  command: ["command", "commands"], "test run": ["test run", "test runs"], file: ["file written", "files written"],
+  app_step: ["step in an app window", "steps in app windows"], app_opened: ["app opened", "apps opened"],
+  link: ["link opened", "links opened"], script: ["script", "scripts"],
+  refused: ["step refused", "steps refused"], // Phase 45 (F242, audit round R10): Pebble's own checks refused them
+};
+function stepWords(steps: unknown): string {
+  if (!steps || typeof steps !== "object" || Array.isArray(steps)) return "";
+  const parts = Object.entries(steps as Record<string, unknown>)
+    .filter(([kind, n]) => Object.hasOwn(STEP_NOUNS, kind) && typeof n === "number" && Number.isInteger(n) && n > 0)
+    .map(([kind, n]) => `${n} ${STEP_NOUNS[kind][(n as number) === 1 ? 0 : 1]}`);
+  return parts.length ? "Steps: " + parts.join(", ") + "." : "";
+}
 function where(scope: unknown) {
   return typeof scope === "string" && scope.startsWith("chat:") ? "this conversation" : "this project";
 }
@@ -906,9 +1035,12 @@ function memoryText(m: any): string {
       return [
         words(v.user_request) ? "Asked: " + words(v.user_request) : "An earlier request",
         "Result: " + (OUTCOMES[v.task_outcome] || words(v.task_outcome).replaceAll("_", " ") || "not recorded"),
-        actions.length
-          ? actions.map((a: any) => (ACTION_NOUNS[a.kind] || "Action") + " · " + (ACTION_STATES[a.status] || words(a.status) || "unknown")).join("; ")
-          : "No file, command or app actions.",
+        // Phase 45 (F243, audit round R10): a task with approvals keeps its Steps line too ("App launch · done;
+        // Window allowed · done" hid Chess's two presses)
+        ...(actions.length
+          ? [actions.map((a: any) => (ACTION_NOUNS[a.kind] || "Action") + " · " + (ACTION_STATES[a.status] || words(a.status) || "unknown")).join("; ")]
+          : []),
+        ...(stepWords(v.tool_steps) ? [stepWords(v.tool_steps)] : actions.length ? [] : ["No file, command or app actions."]),  // Phase 45 (F228)
       ].join("\n");
     }
     if (words(v.observation)) return words(v.observation);
@@ -1034,7 +1166,7 @@ async function power() {
 <template>
   <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
     <!-- The tab list StorageSettings.test.mjs pins; Views (mods) is listed only with Developer features (tabs). -->
-    <template v-for="t in ['models', 'permissions', 'memory', 'extensions', 'mods', 'storage']" :key="t">
+    <template v-for="t in ['models', 'permissions', 'memory', 'extensions', 'mods', 'storage', 'privacy', 'iphone', 'appearance', 'general']" :key="t">
     <button
       v-if="tabs.includes(t)"
       :id="'settings-tab-' + t"
@@ -1053,7 +1185,10 @@ async function power() {
       /><PhBrain v-else-if="t === 'memory'" :size="15" /><PhFolder
         v-else-if="t === 'storage'"
         :size="15"
-      /><PhPlugs
+      /><PhEyeSlash v-else-if="t === 'privacy'" :size="15" /><PhDeviceMobile v-else-if="t === 'iphone'" :size="15" /><PhPalette
+        v-else-if="t === 'appearance'"
+        :size="15"
+      /><PhGearSix v-else-if="t === 'general'" :size="15" /><PhLayout v-else-if="t === 'mods'" :size="15" /><PhPlugs
         v-else
         :size="15"
       />{{ TAB_LABELS[t] || t }}
@@ -1187,6 +1322,35 @@ async function power() {
       or approved private clients. Plan limits and model availability apply. API
       billing stays separate.
     </p>
+    <template v-if="hasChatGPT">
+      <div id="fast-replies-label" class="section-label section-break">FAST REPLIES</div>
+      <div role="radiogroup" aria-labelledby="fast-replies-label" aria-describedby="fast-replies-note" class="permission-modes">
+        <button
+          v-for="id in FAST_IDS"
+          :id="'fast-replies-' + id"
+          :key="id"
+          type="button"
+          role="radio"
+          :aria-checked="fastReplies === id"
+          :tabindex="fastReplies === id ? 0 : -1"
+          class="permission-choice"
+          :class="{ selected: fastReplies === id }"
+          :disabled="disabled || busy"
+          @click="fast(id)"
+          @keydown="fastKey"
+        >
+          <i /><span
+            ><strong>{{ FAST[id].name }}</strong
+            ><small>{{ FAST[id].detail }}</small></span
+          >
+        </button>
+      </div>
+      <p id="fast-replies-note" class="setting-note">
+        Uses OpenAI's Fast tier with your ChatGPT sign-in: the same model, served
+        faster. OpenAI prices Fast at twice the standard rate for API use and may
+        count it against your plan's limits faster. Other providers are unaffected.
+      </p>
+    </template>
     <form v-if="adding" class="provider-form" @submit.prevent="saveModel">
       <label
         >Connection name<input
@@ -1216,10 +1380,16 @@ async function power() {
           :disabled="form.kind === 'chatgpt'"
           @blur="autoDiscover"
           type="url"
-          placeholder="https://api.openai.com/v1 or http://localhost:1234/v1"
+          :placeholder="form.kind === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1 or http://localhost:1234/v1'"
           required /></label
+      ><p v-if="form.kind === 'openai' && !form.profile_id" class="setting-note local-presets">
+        A server on this Mac:
+        <button type="button" class="text-button" @click="localServer('Ollama', 'http://localhost:11434/v1')">Ollama</button>
+        ·
+        <button type="button" class="text-button" @click="localServer('LM Studio', 'http://localhost:1234/v1')">LM Studio</button>
+      </p
       ><label v-if="form.kind !== 'chatgpt'"
-        >API key <span class="optional">optional for local servers</span
+        >API key <span class="optional">{{ form.kind === "anthropic" ? "needed for Anthropic" : "optional for local servers" }}</span
         ><input
           v-model="form.api_key"
           @blur="autoDiscover"
@@ -1235,7 +1405,8 @@ async function power() {
         <PhArrowClockwise :size="14" />{{
           busy ? "Connecting…" : "Fetch available models"
         }}</button
-      ><p v-if="discoverError" class="settings-error discover-error" role="alert">{{ discoverError }}</p
+      ><p v-if="discoverError" class="settings-error discover-error" role="alert">{{ plainProviderError(discoverError) || discoverError
+        }}<small v-if="plainProviderError(discoverError)" class="discover-detail"> The provider said: {{ discoverError }}</small></p
       ><label
         >Inspect model<select
           v-if="fetched.length"
@@ -1346,14 +1517,17 @@ async function power() {
         excerpts included in a request. Models in a provider's catalogue may not
         all support chat or tools.
       </p>
-      <button
-        class="primary-button"
-        :disabled="
-          busy || disabled || (fetched.length > 0 && !selectedModels.length)
-        "
-      >
-        Save selected models
-      </button>
+      <div class="setting-actions">
+        <button type="button" class="secondary-button" @click="adding = false">Cancel</button
+        ><button
+          class="primary-button"
+          :disabled="
+            busy || disabled || (fetched.length > 0 && !selectedModels.length)
+          "
+        >
+          Save selected models
+        </button>
+      </div>
     </form>
     <p class="setting-note">
       One model runs at a time. Local GGUF models use a 4K context and unload
@@ -1388,8 +1562,9 @@ async function power() {
     <p class="setting-note">{{ EVERY_MODE }}</p>
     <div v-if="state.settings.permissions.mode === 'full'" class="access-note">
       Full access increases the impact of mistakes and prompt injection.
-      AgentGuard is a reliability check; it cannot guarantee that every command
-      or answer is safe.
+      Pebble checks each step that would ask against your own messages and
+      runs only what they ask for, never spending money; the check, like
+      AgentGuard, can be wrong and cannot guarantee that every step is safe.
     </div>
     <div class="section-label tool-label">AVAILABLE TOOLS</div>
     <button
@@ -1405,6 +1580,9 @@ async function power() {
       <div>
         <strong>{{ toolLabels[tool] || tool }}</strong>
         <small v-if="tool === 'web'">{{ WEB_DESTINATION }}</small>
+        <small v-if="tool === 'terminal'">{{ TERMINAL_NOTE }}</small>
+        <small v-if="tool === 'capture'">{{ CAPTURE_NOTE }}</small>
+        <small v-if="tool === 'screen'">{{ SCREEN_NOTE }}</small>
       </div>
       <span class="toggle" :class="{ on: enabled }" aria-hidden="true" />
     </button>
@@ -1412,6 +1590,20 @@ async function power() {
       Only this settings screen can grant access. Documents, web pages,
       memories, models and extensions cannot change permissions. Changing access
       takes effect on the next task.
+    </p>
+    <div class="section-label">PEBBLE'S SHELL</div>
+    <p class="setting-note">{{ PROTECTED_PLACES }}</p>
+    <template v-for="kind in (['hosts', 'folders'] as const)" :key="kind">
+      <div v-for="(scope, value) in shellGrants[kind]" :key="kind + value" class="setting-row">
+        <div>
+          <strong>{{ value }}</strong>
+          <small>{{ kind === 'hosts' ? 'Website' : 'Folder Pebble may write in' }} · {{ scope === 'always' ? 'always allowed' : 'allowed until Pebble quits' }}</small>
+        </div>
+        <button type="button" class="secondary-button" :disabled="disabled || busy" @click="removeShellGrant(kind, String(value))">Remove</button>
+      </div>
+    </template>
+    <p v-if="!Object.keys(shellGrants.hosts).length && !Object.keys(shellGrants.folders).length" class="setting-note">
+      Nothing is always allowed yet. When Pebble asks, "Always allow" adds a website or folder here.
     </p>
     <div class="section-label">COMMAND CREDENTIALS</div>
     <p class="setting-note">
@@ -1478,15 +1670,22 @@ async function power() {
           <p>{{ memoryText(m) }}</p>
         </div>
         <button
+          v-if="confirmForget !== m.id"
           class="icon-button"
           type="button"
           :disabled="busy || !!state.active"
           :title="state.active ? 'Available when the task is idle' : 'Forget this memory'"
           :aria-label="forgetLabel(m)"
-          @click="forget(m.id)"
+          @click="confirmForget = m.id"
         >
           <PhTrash :size="14" />
         </button>
+        <!-- Phase 45 (F014): a forgotten memory is not learnt again from the same place, so Forget asks once. -->
+        <div v-else class="forget-confirm" role="group" :aria-label="'Forget ' + memoryText(m).slice(0, 40) + '?'">
+          <!-- Phase 45 (audit rounds R5-R7): each confirm button names its record, as the trash button does -->
+          <button type="button" class="secondary-button" :aria-label="forgetLabel(m).replace('Forget this memory', 'Keep this memory')" @click="confirmForget = ''">Keep</button
+          ><button type="button" class="secondary-button danger" :aria-label="forgetLabel(m)" :disabled="busy || !!state.active" @click="confirmForget = ''; forget(m.id)">Forget</button>
+        </div>
       </article>
       <p v-if="!memories.length" class="empty-memory">
         {{ memorySearched ? "No memories in this layer match “" + memorySearched + "”." : "Nothing saved here yet." }}
@@ -1544,14 +1743,17 @@ async function power() {
       current model, ranked by relevance and scope (the amount depends on the model). Recovery journals remain
       available while personalized memory is off.
     </p>
-    <MemoryArchive :active="!!state.active" @changed="getMemories()" @error="error = $event" />
+    <MemoryArchive :key="archiveKey" :active="!!state.active" @changed="getMemories()" @error="error = $event" />
     <button class="text-button danger" :disabled="!!state.active" :title="state.active ? 'Available when the task is idle' : undefined" @click="clearConfirm = true">
       Forget all memories
     </button>
+    <p v-if="forgotAll" class="setting-note" role="status">{{ forgotAll }}</p>
     <div v-if="clearConfirm" class="delete-confirmation">
+      <!-- Phase 45 (F015): say plainly that an exported archive will not bring these back -->
       <p>
         Delete all saved memories and task checkpoints? Conversations stay
-        available.
+        available. Pebble won't learn these again from the same conversations,
+        and an archive you exported earlier won't restore them.
       </p>
       <div class="setting-actions">
         <button class="secondary-button" @click="clearConfirm = false">
@@ -1565,15 +1767,53 @@ async function power() {
   <ModsSettings v-else-if="tab === 'mods'" :active="!!state.active" :allowed="state.settings.permissions.tools.views" @refresh="emit('refresh')" />
   <!-- Phase 22 (s22-storage): Data & storage, main window only. -->
   <section v-else-if="tab === 'storage'" class="advanced-section"><StorageSettings @refresh="emit('refresh')" /></section>
-  <section v-else class="advanced-section">
-    <div class="section-label">SKILLS AND CONNECTORS</div>
+  <section v-else-if="tab === 'iphone'" class="advanced-section"><RemoteSettings /></section>
+  <!-- Phase 45 (F063): only its own tab; the catch-all showed Skills & connectors above Privacy, Appearance and General. -->
+  <section v-else-if="tab === 'extensions'" class="advanced-section">
+    <div class="section-label">PEBBLE'S TOOLBOX</div>
+    <!-- Phase 45 (F040): the features' own names, and how to start -->
     <p class="setting-note">
-      Skills are reusable task instructions. Connectors are MCP servers that give
-      Pebble tools. Both start disabled: review their contents before enabling
-      them. Imported skills keep a pinned snapshot. Hooks (advanced) are rules
-      that run at task steps in an isolated Python worker with no project or
-      network access; they need terminal permission. Skills, connectors and
-      hooks cannot expand permissions.
+      <strong>Pebble's Workshop.</strong> When a task needs exact numbers, Pebble writes and runs a little code (Code
+      Mode), and it can turn a calculation it trusts into a tool kept here. Try: “Make a tool that converts Celsius to
+      Fahrenheit and keep it.”
+    </p>
+    <p class="setting-note">
+      Small tested calculations Pebble made while working. Pebble keeps one on its own only when it passed every check
+      and always tells you; any other keep asks you first. They run only inside Pebble's sandbox, with no network or files.
+    </p>
+    <div v-for="tool in toolbox.tools" :key="tool.name" class="setting-row">
+      <div>
+        <strong>{{ tool.name }}</strong>
+        <small>{{ tool.purpose }} · kept by {{ tool.kept_by === 'pebble' ? 'Pebble' : 'you' }} · used {{ tool.uses }} {{ tool.uses === 1 ? 'time' : 'times' }}{{ tool.state === 'needs_attention' ? ' · needs attention: it failed its re-check and is not used' : '' }}</small>
+        <pre v-if="toolboxCode[tool.name]" class="command-preview">{{ toolboxCode[tool.name] }}</pre>
+      </div>
+      <div>
+        <!-- Phase 45 (F161): each button names its tool for VoiceOver -->
+        <button type="button" class="text-button" :aria-label="(toolboxCode[tool.name] ? 'Hide the code of ' : 'View the code of ') + tool.name" @click="viewTool(tool.name)">{{ toolboxCode[tool.name] ? 'Hide code' : 'View code' }}</button>
+        <button type="button" class="secondary-button" :aria-label="'Remove ' + tool.name + ' from the Toolbox'" :disabled="disabled || busy" @click="removeTool(tool.name)">Remove</button>
+      </div>
+    </div>
+    <div v-for="tool in toolbox.removed || []" :key="'removed-' + tool.name" class="setting-row">
+      <div>
+        <strong>{{ tool.name }}</strong>
+        <small>Removed · you can put it back for {{ Math.max(1, Math.ceil(tool.seconds_left / 60)) }} more {{ Math.ceil(tool.seconds_left / 60) > 1 ? 'minutes' : 'minute' }}</small>
+      </div>
+      <div>
+        <button type="button" class="secondary-button" :aria-label="'Put ' + tool.name + ' back in the Toolbox'" :disabled="disabled || busy" @click="putBackTool(tool.name)">Put back</button>
+      </div>
+    </div>
+    <p v-if="!toolbox.tools.length" class="setting-note">{{ (toolbox.removed || []).length ? 'No kept tools.' : 'No kept tools yet.' }}</p>
+    <!-- Phase 45 (F179, audit round R6): a new section, with the rule CONNECTOR PACKAGES has -->
+    <div class="section-label section-break">SKILLS AND CONNECTORS</div>
+    <!-- Phase 45 (F018): said for a person first; the mechanics stay in each item's Review. -->
+    <p class="setting-note">
+      Skills teach Pebble a way of doing a task, such as your team's release
+      checklist. Connectors plug Pebble into other apps and services, such as
+      GitHub or Notion, through the MCP standard. Everything you add starts
+      switched off until you have looked at it, and nothing here can give Pebble
+      more access than Permissions allow. Hooks (advanced) are small rules that
+      run at task steps in a sealed-off Python worker; they need terminal
+      permission.
     </p>
     <article v-for="x in extensions" :key="x.id" class="extension-card">
       <div>
@@ -1767,6 +2007,25 @@ async function power() {
   </div>
 </template>
 <style scoped>
+/* Phase 45 (F010, F011, F014) */
+.forget-confirm {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.local-presets {
+  margin: -2px 0 2px;
+}
+.local-presets .text-button {
+  padding: 0 2px;
+}
+.discover-detail {
+  display: block;
+  margin-top: 4px;
+  opacity: 0.75;
+  font-size: 11px;
+}
 .settings-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1883,6 +2142,11 @@ async function power() {
   flex-direction: column;
   gap: 12px;
   padding: 16px 0;
+}
+.section-break {
+  border-top: 1px solid var(--border);
+  margin-top: 22px;
+  padding-top: 20px;
 }
 .package-panel {
   border-top: 1px solid var(--border);
@@ -2047,9 +2311,14 @@ async function power() {
   padding: 7px 9px;
   font-size: 12px;
 }
+/* Phase 45 (F215, audit round R8): the list scrolled inside the scrolling Settings sheet, and a row's Forget icon took no
+   mouse click (Accessibility placed it off the inner scroll; the click landed beside the sheet). One scroll: the sheet's;
+   "Load more" keeps the list short. */
 .memory-items {
-  max-height: 250px;
-  overflow: auto;
+  min-width: 0;
+}
+.memory-items article > .icon-button {
+  flex: none;
 }
 .memory-items article {
   display: flex;

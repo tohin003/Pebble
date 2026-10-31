@@ -1,0 +1,1093 @@
+{
+  "header": {
+    "elapsed": 72.4,
+    "plan": {
+      "done": 2,
+      "steps": [
+        {
+          "status": "completed",
+          "title": "Read the middleware"
+        },
+        {
+          "status": "completed",
+          "title": "Find the bug"
+        },
+        {
+          "status": "in_progress",
+          "title": "Fix the refresh"
+        },
+        {
+          "status": "pending",
+          "title": "Run the tests"
+        },
+        {
+          "status": "pending",
+          "title": "Commit"
+        }
+      ],
+      "total": 5
+    },
+    "state": "running"
+  },
+  "items": {
+    "agent": {
+      "at": 11.238,
+      "detail": null,
+      "duration": 42.0,
+      "kind": "child",
+      "label": "Agent tests",
+      "seq": 899,
+      "status": "done",
+      "view": {
+        "depth": 1,
+        "name": "tests",
+        "parent": "root",
+        "seconds": 42.0,
+        "state": "done",
+        "tokens": 5200,
+        "type": "agent",
+        "v": 1
+      }
+    },
+    "checks": {
+      "at": 12.0,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "check",
+      "label": "Verified · pytest 42 passed on current files",
+      "seq": 960,
+      "status": "done",
+      "view": {
+        "files_changed": 2,
+        "issues": 0,
+        "repaired": true,
+        "requirements": [
+          {
+            "state": "met",
+            "text": "The whole test suite passes"
+          },
+          {
+            "state": "met",
+            "text": "The tests stay unchanged"
+          },
+          {
+            "state": "met",
+            "text": "The output of make report matches samples/report.txt"
+          }
+        ],
+        "tests": {
+          "current": true,
+          "failed": 0,
+          "passed": 42,
+          "runner": "pytest"
+        },
+        "type": "checks",
+        "v": 1,
+        "verdict": "Verified · pytest 42 passed on current files"
+      }
+    },
+    "checks_open": {
+      "at": 12.8,
+      "detail": "1 item to resolve",
+      "duration": 1.2,
+      "kind": "check",
+      "label": "A check asked for more evidence",
+      "seq": 1024,
+      "status": "done",
+      "view": {
+        "issues": 1,
+        "repairable": true,
+        "requirements": [
+          {
+            "state": "open",
+            "text": "The whole test suite passes"
+          }
+        ],
+        "type": "checks",
+        "unmet": 1,
+        "v": 1,
+        "verdict": "A check asked for more evidence"
+      }
+    },
+    "command": {
+      "at": 5.6,
+      "detail": null,
+      "duration": 4.6,
+      "kind": "tool",
+      "label": "Reviewing terminal command",
+      "seq": 448,
+      "status": "done",
+      "view": {
+        "action_id": "act_command",
+        "command": "npm run build",
+        "exit": 0,
+        "network": false,
+        "seconds": 4.6,
+        "state": "done",
+        "tail": [
+          "> app@1.0.0 build",
+          "> vite build",
+          "vite v7.1.9 building for production...",
+          "dist/app.js 182 kB",
+          "Done in 4.2 s"
+        ],
+        "type": "command",
+        "v": 1,
+        "where": "Project folder"
+      }
+    },
+    "command_failed": {
+      "at": 6.4,
+      "detail": null,
+      "duration": 0.8,
+      "kind": "tool",
+      "label": "Reviewing terminal command",
+      "seq": 512,
+      "status": "failed",
+      "view": {
+        "action_id": "act_deploy",
+        "command": "python3 scripts/deploy.py --token=***",
+        "exit": 2,
+        "network": false,
+        "seconds": 0.8,
+        "state": "failed",
+        "tail": [
+          "Using API_KEY=***",
+          "Traceback (most recent call last):",
+          "ValueError: no deploy target"
+        ],
+        "type": "command",
+        "v": 1,
+        "where": "Project folder › scripts"
+      }
+    },
+    "edit": {
+      "at": 4.0,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Preparing an edit to src/auth/session.py",
+      "seq": 320,
+      "status": "done",
+      "view": {
+        "action_id": "act_edit",
+        "added": 4,
+        "path": "src/auth/session.py",
+        "removed": 2,
+        "state": "done",
+        "type": "edit",
+        "v": 1
+      }
+    },
+    "edit_waiting": {
+      "at": 4.8,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Drafting tests/test_session.py",
+      "seq": 384,
+      "status": "done",
+      "view": {
+        "action_id": "act_write",
+        "added": 2,
+        "new": true,
+        "path": "tests/test_session.py",
+        "removed": 0,
+        "state": "waiting",
+        "type": "edit",
+        "v": 1
+      }
+    },
+    "git_commit": {
+      "at": 8.8,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Preparing a reviewed Git plan",
+      "seq": 704,
+      "status": "done",
+      "view": {
+        "action_id": "act_git",
+        "branch": "feat/session-refresh",
+        "commit": "a1b2c3d4e5f6",
+        "destructive": false,
+        "op": "commit",
+        "publication": false,
+        "state": "done",
+        "summary": "Commit 2 files to feat/session-refresh: 'Refresh sessions in the middleware'",
+        "type": "git",
+        "v": 1
+      }
+    },
+    "git_status": {
+      "at": 8.0,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Reading Git status",
+      "seq": 640,
+      "status": "done",
+      "view": {
+        "ahead": 3,
+        "behind": 2,
+        "branch": "feat/session-refresh",
+        "changed": 4,
+        "op": "status",
+        "type": "git",
+        "upstream": "origin/feat/session-refresh",
+        "v": 1
+      }
+    },
+    "question": {
+      "at": 15.2,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Preparing a clarification form",
+      "seq": 1216,
+      "status": "done",
+      "view": {
+        "questions": 1,
+        "state": "done",
+        "type": "question",
+        "v": 1
+      }
+    },
+    "read": {
+      "at": 0.8,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Reading src/auth/session.py",
+      "seq": 64,
+      "status": "done",
+      "view": {
+        "path": "src/auth/session.py",
+        "start": 1,
+        "total": 212,
+        "type": "read",
+        "v": 1
+      }
+    },
+    "read_private": {
+      "at": 1.6,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Reading .env",
+      "seq": 128,
+      "status": "done",
+      "view": {
+        "private": true,
+        "type": "read",
+        "v": 1
+      }
+    },
+    "review": {
+      "at": 13.6,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "approval",
+      "label": "Approved by Pebble (you asked: “run the tests”): Requesting isolated tests",
+      "seq": 1088,
+      "status": "done",
+      "view": {
+        "action": "tests",
+        "action_id": "act_tests",
+        "decided_by": "pebble",
+        "quote": "run the tests",
+        "state": "done",
+        "type": "review",
+        "v": 1
+      }
+    },
+    "review_waiting": {
+      "at": 14.4,
+      "detail": null,
+      "duration": null,
+      "kind": "approval",
+      "label": "Waiting for your approval: Drafting tests/test_session.py",
+      "seq": 1152,
+      "status": "running",
+      "view": {
+        "action": "edit",
+        "action_id": "act_write",
+        "state": "waiting",
+        "type": "review",
+        "v": 1
+      }
+    },
+    "search": {
+      "at": 2.4,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Searching project source",
+      "seq": 192,
+      "status": "done",
+      "view": {
+        "hits": 7,
+        "query": "refresh_session",
+        "tool": "Grep",
+        "type": "search",
+        "v": 1
+      }
+    },
+    "tests": {
+      "at": 7.2,
+      "detail": null,
+      "duration": 12.4,
+      "kind": "tool",
+      "label": "Requesting isolated tests",
+      "seq": 576,
+      "status": "done",
+      "view": {
+        "action_id": "act_tests",
+        "errors": 0,
+        "exit": 1,
+        "failed": 1,
+        "failing": [
+          "tests/test_session.py::test_refresh_expired_session"
+        ],
+        "passed": 41,
+        "recipe": "python-pytest",
+        "seconds": 12.4,
+        "skipped": 0,
+        "state": "failed",
+        "total": 42,
+        "type": "tests",
+        "v": 1
+      }
+    },
+    "unknown": {
+      "at": 16.0,
+      "detail": "A view type this window does not know: it shows this row.",
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Planting a tree in the garden",
+      "seq": 1280,
+      "status": "done",
+      "view": {
+        "trees": 3,
+        "type": "hologram",
+        "v": 1
+      }
+    },
+    "web": {
+      "at": 3.2,
+      "detail": null,
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Searching the web",
+      "seq": 256,
+      "status": "done",
+      "view": {
+        "query": "session refresh token rotation",
+        "sites": [
+          "rfc-editor.org",
+          "docs.python.org",
+          "example.org"
+        ],
+        "type": "web",
+        "v": 1
+      }
+    },
+    "window": {
+      "at": 9.6,
+      "detail": "12*7 → 84",
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Pressed “=”",
+      "seq": 768,
+      "status": "done",
+      "view": {
+        "after": "84",
+        "app": "Calculator",
+        "before": "12*7",
+        "picture": {
+          "height": 480,
+          "ref": "4f1c2a9e0b7d6c5e3a21",
+          "width": 320
+        },
+        "target": "=",
+        "title": "Calculator",
+        "type": "window",
+        "v": 1,
+        "verb": "Pressed",
+        "verdict": "happened"
+      }
+    },
+    "window_click": {
+      "at": 10.4,
+      "detail": "Nothing changed.",
+      "duration": 1.2,
+      "kind": "tool",
+      "label": "Clicked “Save”",
+      "seq": 832,
+      "status": "done",
+      "view": {
+        "app": "TextEdit",
+        "picture": {
+          "height": 420,
+          "ref": "9a8b7c6d5e4f3a2b1c0d",
+          "width": 640
+        },
+        "point": {
+          "x": 212.0,
+          "y": 388.0
+        },
+        "target": "Save",
+        "title": "Notes.txt",
+        "type": "window",
+        "v": 1,
+        "verb": "Clicked",
+        "verdict": "nothing_changed"
+      }
+    }
+  },
+  "native": {
+    "chart": {
+      "labels": {
+        "runs": "Runs"
+      },
+      "rows": [
+        {
+          "day": "Mon",
+          "runs": 4
+        },
+        {
+          "day": "Tue",
+          "runs": 7
+        },
+        {
+          "day": "Wed",
+          "runs": 5
+        }
+      ],
+      "type": "bar",
+      "x_key": "day",
+      "y_keys": [
+        "runs"
+      ]
+    },
+    "compare": {
+      "caption": "For a desktop app with one person writing",
+      "criteria": [
+        {
+          "label": "Setup",
+          "values": [
+            "None",
+            "A running server"
+          ]
+        },
+        {
+          "label": "Writers at once",
+          "values": [
+            1,
+            100
+          ]
+        },
+        {
+          "label": "Works offline",
+          "values": [
+            true,
+            true
+          ]
+        }
+      ],
+      "options": [
+        {
+          "id": "sqlite",
+          "label": "SQLite",
+          "summary": "One file, no server"
+        },
+        {
+          "id": "postgres",
+          "label": "PostgreSQL",
+          "summary": "A server, many writers"
+        }
+      ],
+      "recommended": "sqlite"
+    },
+    "dashboard": {
+      "columns": 2,
+      "panels": [
+        {
+          "data": {
+            "delta": 3,
+            "unit": "runs",
+            "value": 16
+          },
+          "id": "runs",
+          "kind": "metric",
+          "title": "Runs this week"
+        },
+        {
+          "data": {
+            "columns": [
+              {
+                "id": "name",
+                "label": "Name"
+              }
+            ],
+            "rows": [
+              {
+                "name": "session.py"
+              }
+            ]
+          },
+          "id": "files",
+          "kind": "table",
+          "title": "Files"
+        }
+      ]
+    },
+    "diagram": {
+      "edges": [
+        {
+          "from": "req",
+          "label": "checks session",
+          "to": "mw"
+        },
+        {
+          "from": "mw",
+          "label": "passes on",
+          "to": "app"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "req",
+          "label": "Request"
+        },
+        {
+          "id": "mw",
+          "label": "Auth middleware"
+        },
+        {
+          "id": "app",
+          "label": "App"
+        }
+      ]
+    },
+    "evidence": {
+      "items": [
+        {
+          "evidence_id": "3:call_tests",
+          "id": "e1",
+          "label": "Tests passed",
+          "summary": "42 passed on current files"
+        }
+      ]
+    },
+    "form": {
+      "fields": [
+        {
+          "id": "scope",
+          "label": "Which files should the fix cover?",
+          "options": [
+            {
+              "id": "auth",
+              "label": "Only the auth folder"
+            },
+            {
+              "id": "all",
+              "label": "The whole project"
+            }
+          ],
+          "required": true,
+          "type": "choice"
+        }
+      ],
+      "submit_label": "Continue"
+    },
+    "metrics": {
+      "tiles": [
+        {
+          "better": "up",
+          "delta": 3,
+          "label": "Tests passed",
+          "value": 41
+        },
+        {
+          "format": "percent",
+          "label": "Pass rate",
+          "value": 0.976
+        },
+        {
+          "better": "down",
+          "delta": -0.4,
+          "label": "Median time",
+          "unit": "s",
+          "value": 3.12
+        }
+      ]
+    },
+    "plan": {
+      "steps": [
+        {
+          "evidence_ids": [],
+          "id": "read",
+          "status": "in_progress",
+          "title": "Read the middleware"
+        },
+        {
+          "evidence_ids": [],
+          "id": "fix",
+          "status": "pending",
+          "title": "Fix the refresh"
+        }
+      ]
+    },
+    "prototype": {
+      "screens": [
+        {
+          "components": [
+            {
+              "text": "Welcome",
+              "type": "heading"
+            },
+            {
+              "goto": "settings",
+              "label": "Settings",
+              "type": "button"
+            }
+          ],
+          "id": "home",
+          "title": "Home"
+        },
+        {
+          "components": [
+            {
+              "label": "Dark mode",
+              "type": "toggle"
+            }
+          ],
+          "id": "settings",
+          "title": "Settings"
+        }
+      ],
+      "start": "home",
+      "viewport": "phone"
+    },
+    "quiz": {
+      "duration_minutes": 5,
+      "questions": [
+        {
+          "answer": 1,
+          "choices": [
+            "3",
+            "4"
+          ],
+          "explanation": "2 + 2 is 4.",
+          "question": "What is 2 + 2?"
+        }
+      ]
+    },
+    "record": {
+      "fields": [
+        {
+          "label": "Name",
+          "value": "Asha Rao"
+        },
+        {
+          "label": "Team",
+          "value": "Platform"
+        },
+        {
+          "label": "Desk",
+          "value": 412
+        }
+      ],
+      "subtitle": "New starter"
+    },
+    "table": {
+      "caption": "Files the fix touches",
+      "columns": [
+        {
+          "id": "file",
+          "label": "File"
+        },
+        {
+          "id": "lines",
+          "label": "Lines"
+        }
+      ],
+      "rows": [
+        {
+          "file": "session.py",
+          "lines": 212
+        },
+        {
+          "file": "middleware.py",
+          "lines": 96
+        }
+      ]
+    },
+    "timeline": {
+      "events": [
+        {
+          "date": "2026-10-01",
+          "title": "Design agreed"
+        },
+        {
+          "date": "2026-10-20",
+          "detail": "Cards on the Mac",
+          "title": "First build"
+        },
+        {
+          "date": "2026-10-31",
+          "title": "Release",
+          "tone": "accent"
+        }
+      ]
+    }
+  },
+  "native_variants": {
+    "chart_area": {
+      "data": {
+        "format": "compact",
+        "rows": [
+          {
+            "month": "2026-07",
+            "users": 1200
+          },
+          {
+            "month": "2026-08",
+            "users": 2600
+          },
+          {
+            "month": "2026-09",
+            "users": 4100
+          },
+          {
+            "month": "2026-10",
+            "users": 6900
+          }
+        ],
+        "type": "area",
+        "x_key": "month",
+        "y_keys": [
+          "users"
+        ]
+      },
+      "kind": "chart"
+    },
+    "chart_donut": {
+      "data": {
+        "format": "percent",
+        "rows": [
+          {
+            "part": "Model",
+            "share": 0.72
+          },
+          {
+            "part": "Tools",
+            "share": 0.21
+          },
+          {
+            "part": "Pebble",
+            "share": 0.07
+          }
+        ],
+        "type": "donut",
+        "x_key": "part",
+        "y_keys": [
+          "share"
+        ]
+      },
+      "kind": "chart"
+    },
+    "chart_line": {
+      "data": {
+        "labels": {
+          "p50": "Median",
+          "p95": "Slowest 5%"
+        },
+        "rows": [
+          {
+            "day": "Mon",
+            "p50": 120,
+            "p95": 480
+          },
+          {
+            "day": "Tue",
+            "p50": 110,
+            "p95": 390
+          },
+          {
+            "day": "Wed",
+            "p50": 135,
+            "p95": 520
+          }
+        ],
+        "type": "line",
+        "unit": "ms",
+        "x_key": "day",
+        "y_keys": [
+          "p50",
+          "p95"
+        ]
+      },
+      "kind": "chart"
+    },
+    "chart_scatter": {
+      "data": {
+        "labels": {
+          "seconds": "Seconds",
+          "size": "Files"
+        },
+        "rows": [
+          {
+            "seconds": 1.2,
+            "size": 10
+          },
+          {
+            "seconds": 3.9,
+            "size": 40
+          },
+          {
+            "seconds": 8.4,
+            "size": 80
+          },
+          {
+            "seconds": 11.1,
+            "size": 120
+          }
+        ],
+        "type": "scatter",
+        "x_key": "size",
+        "y_keys": [
+          "seconds"
+        ]
+      },
+      "kind": "chart"
+    },
+    "chart_stacked": {
+      "data": {
+        "labels": {
+          "failed": "Failed",
+          "passed": "Passed"
+        },
+        "rows": [
+          {
+            "failed": 2,
+            "passed": 40,
+            "week": "W1"
+          },
+          {
+            "failed": 1,
+            "passed": 41,
+            "week": "W2"
+          },
+          {
+            "failed": 0,
+            "passed": 42,
+            "week": "W3"
+          }
+        ],
+        "type": "stacked",
+        "x_key": "week",
+        "y_keys": [
+          "passed",
+          "failed"
+        ]
+      },
+      "kind": "chart"
+    },
+    "diagram_flow": {
+      "data": {
+        "direction": "right",
+        "edges": [
+          {
+            "from": "a",
+            "label": "",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "label": "yes",
+            "to": "c"
+          },
+          {
+            "from": "b",
+            "label": "no",
+            "to": "d"
+          },
+          {
+            "from": "d",
+            "label": "",
+            "to": "a"
+          }
+        ],
+        "layout": "flow",
+        "nodes": [
+          {
+            "id": "a",
+            "label": "Draft"
+          },
+          {
+            "id": "b",
+            "label": "Review"
+          },
+          {
+            "id": "c",
+            "label": "Approved",
+            "tone": "ok"
+          },
+          {
+            "id": "d",
+            "label": "Changes asked",
+            "tone": "warn"
+          }
+        ]
+      },
+      "kind": "diagram"
+    },
+    "diagram_layers": {
+      "data": {
+        "caption": "How a request reaches the model",
+        "edges": [
+          {
+            "from": "ui",
+            "label": "",
+            "to": "shell"
+          },
+          {
+            "from": "shell",
+            "label": "allowed",
+            "to": "run"
+          },
+          {
+            "from": "run",
+            "label": "checks",
+            "to": "guard"
+          },
+          {
+            "from": "run",
+            "label": "asks",
+            "to": "model"
+          }
+        ],
+        "layout": "layers",
+        "nodes": [
+          {
+            "group": "Mac",
+            "id": "ui",
+            "label": "Window"
+          },
+          {
+            "group": "Mac",
+            "id": "shell",
+            "label": "Shell",
+            "sub": "Checks each request"
+          },
+          {
+            "group": "Pebble",
+            "id": "run",
+            "label": "Runner"
+          },
+          {
+            "group": "Pebble",
+            "id": "guard",
+            "label": "AgentGuard",
+            "tone": "ok"
+          },
+          {
+            "group": "Provider",
+            "id": "model",
+            "label": "Model"
+          }
+        ]
+      },
+      "kind": "diagram"
+    },
+    "diagram_sequence": {
+      "data": {
+        "edges": [
+          {
+            "from": "you",
+            "label": "Ask",
+            "to": "pebble"
+          },
+          {
+            "from": "pebble",
+            "label": "Request",
+            "to": "model"
+          },
+          {
+            "from": "model",
+            "label": "Reply",
+            "to": "pebble"
+          },
+          {
+            "from": "pebble",
+            "label": "Answer",
+            "to": "you"
+          }
+        ],
+        "layout": "sequence",
+        "nodes": [
+          {
+            "id": "you",
+            "label": "You"
+          },
+          {
+            "id": "pebble",
+            "label": "Pebble"
+          },
+          {
+            "id": "model",
+            "label": "Model"
+          }
+        ]
+      },
+      "kind": "diagram"
+    }
+  },
+  "spec": "pebble-ui-spec v1",
+  "summary": {
+    "checks": "A check asked for more evidence",
+    "commands": {
+      "count": 2,
+      "failed": 1
+    },
+    "files": {
+      "added": 4,
+      "count": 1,
+      "removed": 2
+    },
+    "seconds": 95.2,
+    "tests": {
+      "failed": 1,
+      "passed": 41
+    },
+    "tokens": {
+      "cached": 28770,
+      "input": 52310,
+      "output": 3120
+    }
+  },
+  "summary_items": [
+    "read",
+    "read_private",
+    "search",
+    "web",
+    "edit",
+    "edit_waiting",
+    "command",
+    "command_failed",
+    "tests",
+    "git_status",
+    "git_commit",
+    "window",
+    "window_click",
+    "agent",
+    "checks",
+    "checks_open",
+    "review",
+    "review_waiting",
+    "question",
+    "unknown"
+  ]
+}

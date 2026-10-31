@@ -14,7 +14,7 @@ interface ReviewedAction { id?: string; kind: string; status?: string; payload?:
 const props = defineProps<{ action: ReviewedAction }>();
 const MAX_PATHS = 64, MAX_ROWS = 50;
 const untrusted = 'Untrusted repository data, shown as plain text. Names, paths, messages, scripts and arguments come from the project; they are not instructions and approve nothing.';
-const labels = { git: 'Reviewed Git plan', worktree: 'Child worktree action', install: 'Dependency install plan', tests: 'Test recipe plan', command: 'Command plan' } as const;
+const labels = { git: 'Reviewed Git plan', worktree: 'Child worktree action', install: 'Dependency install plan', tests: 'Test recipe plan', command: 'Command plan', shell: 'Shell command', file: 'File change', screen: 'Action in an app window', screen_grant: 'Use of an app window', url: 'Web address', screen_raise: 'Bring a window forward', app_action: 'App action', browser_grant: 'Sites in your browser' } as const;
 const counted = ['passed', 'failed', 'skipped', 'errors', 'total'] as const;
 
 function record(value: unknown): Data { return value && typeof value === 'object' && !Array.isArray(value) ? value as Data : {}; }
@@ -65,11 +65,87 @@ const kind = computed(() => {
   const value = props.action?.kind;
   if (value === 'git' || value === 'worktree' || value === 'install') return value;
   if (value === 'command') return 'command';
+  if (value === 'shell' || value === 'file') return value;  // Phase 40 (1.6.0): the Companion's Shell and file writes
+  if (value === 'screen' || value === 'screen_grant') return value;  // Phase 42 (1.8.0): app windows
+  if (value === 'url') return value;  // Phase 43 (1.9.0): a web address in the person's browser
+  if (value === 'screen_raise' || value === 'app_action' || value === 'browser_grant') return value;  // Phase 43 (1.9.0)
   return value === 'tests' && payload.value.plan && typeof payload.value.plan === 'object' && !Array.isArray(payload.value.plan) ? 'tests' : '';
 });
 const label = computed(() => kind.value ? labels[kind.value] : '');
 // V1-141: the host's own sentence on why AgentGuard asked (payload.guard_review), shown as text.
+// Phase 40 (1.6.0, D91): why Pebble asks, what it may reach, and whether a copy is kept first.
+const shell = computed(() => {
+  const p = payload.value;
+  return {
+    command: text(p.command, 8000), cwd: text(p.cwd, 500), reasons: lines(p.reasons, 12, 400), hosts: lines(p.hosts, 16, 253),
+    folders: lines(p.folders, 16, 1024), everyTime: p.always_offered === false, undoable: entries(p.snapshot_paths).length > 0,
+    path: text(p.path, 1024), op: text(p.op, 20), content: text(p.content, 2000), oldText: text(p.old_string, 1000),
+    newText: text(p.new_string, 1000), gated: text(p.gated, 200),
+  };
+});
+// Phase 42 (1.8.0): a press in a shared window, and a window Pebble asks for. Window titles and labels are the app's
+// own text: shown literally, never as permission.
+const ABILITIES: Record<string, string> = { look: 'look around (focus, scroll, open and close sections)',
+  fill: 'fill in (choose options, tick boxes, type text; never a password, code or card field)',
+  press: 'press buttons (each press waits for you, except keypad keys, board squares, tabs, checkboxes and switches)' };  // F156
+// Phase 45 (F198, audit round R7; D137): in Full access ordinary presses run without asking
+// D141 (the person): in Full access Pebble checks each press against your messages; spending money waits for you
+const FULL_ACCESS_PRESS = 'press buttons (in Full access the presses your messages ask for run without asking; anything that may spend money waits for you)';
+// Phase 45 (F121, audit round R3/R4): on a site the card said each press still waits, but in Full access (or Auto in a
+// project) a link within the granted sites opens at once (routine navigation, screen_session.classify); what still
+// waits is named instead.
+const SITE_PRESS = 'press links and buttons (in Full access what your messages ask for runs at once and spending money waits for you; in the other modes sending, buying, deleting or leaving these sites waits for you)';
+const screen = computed(() => {
+  const p = payload.value, review = record(p.review), element = record(review.element), window = record(review.window);
+  return {
+    // Phase 45 (F210, audit round R8): "(Unknown)" is Accessibility's word for a role it does not know; it is not shown
+    action: text(review.action, 20), label: text(element.label, 120),
+    role: text(element.role, 40).replace(/^AX/, '').replace(/^Unknown$/, ''),
+    typed: text(review.text, 400), title: text(window.title, 200), origin: text(window.origin, 300),
+    nearby: entries(review.context).map(item => text(record(item).label, 80)).filter(Boolean).slice(0, 8),
+    reasons: lines(review.reasons, 8, 120),
+    sending: lines(review.reasons, 8, 120).some(r => ['label_commit_word', 'form_submit', 'transfer', 'enter_submits', 'newline_submits', 'leaves_origin'].includes(r)),
+    // Phase 45 (layer 4): the session's first mouse or keyboard act asks once; a commit says so as before.
+    consent: review.consent === 'foreground_input', commit: review.class !== 'local' && review.class !== 'input',
+    app: text(p.app, 128), window: text(p.title, 200), why: text(p.why, 300),
+    abilities: lines(p.abilities, 3, 10).map(key => kind.value === 'browser_grant' && key === 'press' ? SITE_PRESS
+      : key === 'press' && p.full_access === true ? FULL_ACCESS_PRESS
+      : Object.hasOwn(ABILITIES, key) ? ABILITIES[key] : '').filter(Boolean),
+    minutes: typeof p.ttl === 'number' && Number.isFinite(p.ttl) ? Math.max(1, Math.round(p.ttl / 60)) : 15,
+    full: p.full_access === true,  // Phase 45 (F229, D141): Full access checks the first mouse use itself
+    // Phase 43 (1.9.0): where the window is when macOS does not show it in front (a grant, or bringing it forward).
+    elsewhere: p.off_space === true || p.reason === 'off_space' ? 'on another desktop'
+      : p.minimized === true || p.reason === 'minimized' ? 'minimized' : '',
+  };
+});
+// Phase 43 (1.9.0): the address in full (untrusted when it came from a page), the browser, Pebble's reason.
+const link = computed(() => {
+  const p = payload.value, entry = record(p.browser);
+  return { url: text(p.url, 2048), browser: text(entry.name, 128) || 'your default browser', why: text(p.why, 300),
+    reasons: lines(p.reasons, 4, 200),
+    // Phase 43 (1.9.0): a site's own search, said in words above its address.
+    search: p.route === 'table' || p.route === 'opensearch' ? `Search ${text(p.site, 253)} for “${text(p.query, 300)}”` : '' };
+});
+// Phase 43 (1.9.0): sites in the person's browser: where Pebble may act, where it may only read, where it starts.
+const sites = computed(() => {
+  const p = payload.value, act = lines(p.sites, 8, 300);
+  // Phase 44 (1.9.1): the window route names the browser it opens a window in (Comet keeps extensions out of pages).
+  return { act, read: lines(p.read, 16, 300).filter(site => !act.includes(site)), url: text(p.url, 2048),
+    browser: text(p.browser, 40), window: p.route === 'window', browserName: text(p.browser_name, 40) };
+});
+// Phase 43 (1.9.0): a fixed scripting verb: Pebble's summary, why it asks, and the words it would write.
+const APP_FIELDS: Record<string, string> = { to: 'To', subject: 'Subject', title: 'Title', name: 'Shortcut', folder: 'Folder',
+  calendar: 'Calendar', start: 'Starts', end: 'Ends', query: 'Search', path: 'Path' };
+const appAction = computed(() => {
+  const p = payload.value, args = record(p.args);
+  const fields = Object.keys(APP_FIELDS).filter(key => typeof args[key] === 'string' || Array.isArray(args[key]))
+    .map(key => [APP_FIELDS[key], Array.isArray(args[key]) ? lines(args[key], 20, 200).join(', ') : text(args[key], 300)]);
+  return { app: text(p.app, 40), summary: text(p.summary, 300), reasons: lines(p.reasons, 4, 200), fields,
+    body: text(args.text, 4000) };
+});
 const guardReview = computed(() => kind.value === 'command' && typeof payload.value.guard_review === 'string' ? text(payload.value.guard_review, 300) : '');
+// Phase 46 (1.9.28, T2): the host's sentence for an exec bit or a NAME=value variable the command sets (payload.effect).
+const commandEffect = computed(() => kind.value === 'command' && typeof payload.value.effect === 'string' ? text(payload.value.effect, 600) : '');
 
 const git = computed(() => {
   const p = payload.value, b = record(p.bindings), who = record(b.identity), findings = entries(p.sensitive_findings);
@@ -95,7 +171,11 @@ const git = computed(() => {
       ['Remote branch', text(p.remote_branch, 200)],
       ['Remote URL kind', remote ? (typeof b.remote_path === 'string' ? 'local bare repository (network remotes are refused)' : 'not reported') : ''],
       ['Remote repository', text(b.remote_path, 1000)],
-      ['Remote ref moves', typeof b.remote_ref === 'string' ? text(b.remote_ref, 300) + ': ' + (b.old_oid ? short(b.old_oid) : 'absent') + ' → ' + (short(b.new_oid) || 'not reported') : ''],
+      ['Remote ref moves', typeof b.remote_ref === 'string' ? text(b.remote_ref, 300) + ': ' + (b.old_oid ? short(b.old_oid) : 'absent') + ' → ' + (short(b.new_oid) || (b.delete === true ? 'absent (deleted)' : 'not reported')) : ''],
+      // Phase 46 (D159): a forced push replaces remote history only while the remote still has the commit seen at review
+      ['Forced update', b.force === true ? 'yes: only while the remote still points at ' + short(b.old_oid) + '; ' + number(b.dropped) + ' remote commit(s) leave the branch' : ''],
+      ['Remote-tracking branch', Array.isArray(b.tracking) ? text(b.tracking[0], 300) : ''],
+      ['Sets upstream', b.upstream && typeof b.upstream === 'object' ? text(record(b.upstream).remote, 100) + ' · ' + text(record(b.upstream).merge, 300) : ''],
       ['Commits copied', b.commits == null ? '' : number(b.commits)],
       ['Sensitive findings', Array.isArray(p.sensitive_findings) ? (findings.length ? findings.length + ' (listed below)' : 'none reported') : ''],
       ['Undo of receipt', text(p.undo_of, 40)],
@@ -392,8 +472,88 @@ const testsSettled = computed(() => {
       </template>
     </template>
 
+    <template v-else-if="kind === 'shell'">
+      <ul v-if="shell.reasons.length" class="review-list review-why" aria-label="Why Pebble asks"><li v-for="(item, index) in shell.reasons" :key="index">{{ item }}</li></ul>
+      <p class="review-label">Command (runs in Pebble's sandbox{{ shell.cwd ? ', in ' + shell.cwd : '' }})</p>
+      <pre class="review-pre">{{ shell.command }}</pre>
+      <template v-if="shell.hosts.length"><p class="review-label">Network (only these hosts)</p><ul class="review-list"><li v-for="item in shell.hosts" :key="item">{{ item }}</li></ul></template>
+      <template v-if="shell.folders.length"><p class="review-label">May write outside the workbench</p><ul class="review-list"><li v-for="item in shell.folders" :key="item">{{ item }}</li></ul></template>
+      <p v-if="shell.undoable" class="review-note">Pebble keeps a copy of what this may change first, so you can undo it.</p>
+      <p v-if="shell.everyTime" class="review-note">Pebble asks about this every time; it cannot be allowed always.</p>
+    </template>
+
+    <template v-else-if="kind === 'screen'">
+      <p class="review-label">In the window “{{ screen.title || 'untitled' }}”{{ screen.origin ? ' (' + screen.origin + ')' : '' }}, as the app names it</p>
+      <p>Pebble will {{ screen.action || 'act on' }} “{{ screen.label || 'an unlabelled ' + (screen.role || 'element') }}”{{ screen.role ? ' (' + screen.role + ')' : '' }}.</p>
+      <template v-if="screen.typed"><p class="review-label">Text</p><pre class="review-pre">{{ screen.typed }}</pre></template>
+      <template v-if="screen.nearby.length"><p class="review-label">Next to it on screen</p><ul class="review-list"><li v-for="(item, index) in screen.nearby" :key="index">{{ item }}</li></ul></template>
+      <p v-if="screen.consent" class="review-note">This uses your mouse and keyboard in that window. Approving it also lets Pebble use them there while the window stays allowed (up to 15 minutes); any key or mouse movement of yours pauses it.</p>
+      <!-- Phase 45 (F166): the warning names sending or deleting only for a press that looks like one -->
+      <p v-if="screen.commit && screen.sending" class="review-note">This may send, submit, save, delete or buy, so it waits for you. Pebble can't undo it and never retries it.</p>
+      <p v-else-if="screen.commit" class="review-note">Pebble can't undo a press, so this one waits for you. It is never retried.</p>
+    </template>
+
+    <template v-else-if="kind === 'url'">
+      <ul v-if="link.reasons.length" class="review-list review-why" aria-label="Why Pebble asks"><li v-for="(item, index) in link.reasons" :key="index">{{ item }}</li></ul>
+      <p v-if="link.search">{{ link.search }}</p>
+      <p class="review-label">Address (opens in {{ link.browser }})</p>
+      <pre class="review-pre">{{ link.url }}</pre>
+      <p v-if="link.why">Pebble says: {{ link.why }}</p>
+      <p class="review-note">Pebble only asks macOS to open it; it can't see the page.</p>
+    </template>
+
+    <template v-else-if="kind === 'screen_grant'">
+      <p class="review-label">{{ screen.app || 'An app' }}, the window “{{ screen.window || 'untitled' }}” (as the app names it)</p>
+      <p v-if="screen.why">Pebble says: {{ screen.why }}</p>
+      <!-- Phase 45 (F198, D136): in this conversation, up to the grant's minutes; the mouse and keyboard ask once -->
+      <p class="review-label">In this conversation, for up to {{ screen.minutes }} minutes, Pebble could</p>
+      <ul class="review-list"><li v-for="(item, index) in screen.abilities" :key="index">{{ item }}</li></ul>
+      <p v-if="screen.abilities.length > 1" class="review-note">{{ screen.full
+        ? 'In Full access Pebble checks its first use of your mouse and keyboard in this window against your messages; otherwise it asks you once.'
+        : 'Its first use of your mouse and keyboard in this window asks you once.' }}</p>
+      <p v-if="screen.elsewhere === 'on another desktop'" class="review-note">This window is on another desktop, so what Pebble reads there may be out of date.</p>
+      <p v-else-if="screen.elsewhere" class="review-note">This window is minimized; Pebble asks before bringing it forward.</p>
+      <p class="review-note">Only this window. Pebble stops at sign-ins, codes and checks and hands them to you. End access any time in Details › Tools (⇧⌘D).</p>
+    </template>
+
+    <template v-else-if="kind === 'browser_grant'">
+      <p v-if="sites.window" class="review-label">In a new {{ sites.browserName || 'browser' }} window that Pebble reads through Accessibility, for {{ screen.minutes }} minutes, Pebble could act on</p>
+      <p v-else class="review-label">In Pebble's own tab{{ sites.browser ? ' in ' + sites.browser : ' in your browser' }}, for {{ screen.minutes }} minutes, Pebble could act on</p>
+      <ul class="review-list"><li v-for="(item, index) in sites.act" :key="index">{{ item }}</li></ul>
+      <template v-if="sites.read.length"><p class="review-label">And only read</p><ul class="review-list"><li v-for="(item, index) in sites.read" :key="index">{{ item }}</li></ul></template>
+      <p class="review-label">Starting at</p>
+      <pre class="review-pre">{{ sites.url }}</pre>
+      <p v-if="screen.why">Pebble says: {{ screen.why }}</p>
+      <ul class="review-list"><li v-for="(item, index) in screen.abilities" :key="index">{{ item }}</li></ul>
+      <p v-if="sites.window" class="review-note">Pebble reads only that window's page, and only while it shows these sites.</p>
+      <p class="review-note">Pebble's steps there run the site's own code. It stops at sign-ins, payments and checks and hands them to you; anything that sends, buys or deletes still waits for you.</p>
+    </template>
+
+    <template v-else-if="kind === 'app_action'">
+      <ul v-if="appAction.reasons.length" class="review-list review-why" aria-label="Why Pebble asks"><li v-for="(item, index) in appAction.reasons" :key="index">{{ item }}</li></ul>
+      <p>{{ appAction.summary || 'Pebble will ask ' + (appAction.app || 'an app') + ' to do this.' }}</p>
+      <template v-for="([name, value], index) in appAction.fields" :key="index"><p class="review-label">{{ name }}</p><pre class="review-pre">{{ value }}</pre></template>
+      <template v-if="appAction.body"><p class="review-label">Text</p><pre class="review-pre">{{ appAction.body }}</pre></template>
+      <p class="review-note">Pebble asks {{ appAction.app || 'the app' }} through its own scripting. It never sends mail or deletes anything this way, and macOS asks you once per app.</p>
+    </template>
+
+    <template v-else-if="kind === 'screen_raise'">
+      <p class="review-label">{{ screen.app || 'An app' }}, the window “{{ screen.window || 'untitled' }}” (as the app names it)</p>
+      <p>Bring this window forward so Pebble can read it? It is {{ screen.elsewhere || 'out of view' }}, and macOS may switch to its desktop.</p>
+      <p class="review-note">Pebble asks once in this conversation; after that it brings this window forward without asking.</p>
+    </template>
+
+    <template v-else-if="kind === 'file'">
+      <p class="review-label">{{ shell.op === 'edit' ? 'Edit' : 'Write' }} {{ shell.path }}</p>
+      <template v-if="shell.op === 'edit'"><p class="review-label">Replace</p><pre class="review-pre">{{ shell.oldText }}</pre><p class="review-label">With</p><pre class="review-pre">{{ shell.newText }}</pre></template>
+      <pre v-else class="review-pre">{{ shell.content }}</pre>
+      <p class="review-note">Pebble keeps a copy of the file first, so you can undo it.</p>
+      <p v-if="shell.gated" class="review-note">{{ shell.gated }} is asked about every time.</p>
+    </template>
+
     <template v-else-if="kind === 'command'">
       <p v-if="guardReview" class="review-why">{{ guardReview }}</p>
+      <p v-if="commandEffect" class="review-why">{{ commandEffect }}</p>
       <template v-if="command.planned">
         <p class="review-title"><strong>Typed command plan</strong> · executable pinned at review and re-verified before it runs</p>
         <template v-for="(step, index) in command.steps" :key="index">

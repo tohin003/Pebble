@@ -371,22 +371,38 @@ def test_git_plans_wait_in_ask_and_auto_and_full_mode_runs_only_local_reviewless
     base = host.head()
     (host.project / 'app.py').write_text('VALUE = 2\n')
     commit = {'operation': 'commit', 'paths': '["app.py"]', 'message': 'Reviewed change'}
-    for mode in ('ask', 'auto'):
-        host.permissions(mode)
-        host.root()
-        staged = host.call('ProposeGitChange', commit, 'commit-' + mode)
-        assert staged['status'] == 'awaiting_user_approval' and staged['kind'] == 'git'
-        payload = host.action(staged['action_id'])['payload']
-        assert payload['requires_review'] is False and payload['permission_mode'] == mode
-        assert host.head() == base and host.plans() == []
+    host.permissions('ask')
+    host.root()
+    staged = host.call('ProposeGitChange', commit, 'commit-ask')
+    assert staged['status'] == 'awaiting_user_approval' and staged['kind'] == 'git'
+    payload = host.action(staged['action_id'])['payload']
+    assert payload['requires_review'] is False and payload['permission_mode'] == 'ask'
+    assert host.head() == base and host.plans() == []
+    # Phase 46 (1.9.28, D184; restated): in Auto a plan whose Undo the plans keep (a commit) runs without a card, except
+    # while another step of the task waits for the person's decision (here a push): then it joins that review
+    host.permissions('auto')
+    host.root()
+    push = host.call('ProposeGitChange', {'operation': 'push', 'remote': 'origin', 'branch': 'main'}, 'push-auto')
+    waiting = host.call('ProposeGitChange', commit, 'commit-auto-waiting')
+    assert push['status'] == waiting['status'] == 'awaiting_user_approval'
+    assert host.action(waiting['action_id'])['payload']['requires_review'] is True
+    for action_id in (staged['action_id'], push['action_id'], waiting['action_id']):
+        app.reject(host.chat, action_id)
+    assert host.head() == base and host.plans() == []
+    host.root()
+    applied = host.call('ProposeGitChange', commit, 'commit-auto')
+    assert applied['status'] == 'applied' and applied['result']['state'] == 'applied'
+    assert host.action(applied['action_id'])['payload']['permission_mode'] == 'auto'
+    assert git(host.project, 'show', host.head() + ':app.py').stdout == b'VALUE = 2\n'
+    (host.project / 'app.py').write_text('VALUE = 3\n')
     host.permissions('full')
     host.root()
     applied = host.call('ProposeGitChange', commit, 'commit-full')
     assert applied['status'] == 'applied' and applied['result']['state'] == 'applied'
     assert applied['result']['readback']['verified'] is True and applied['result']['hooks_run'] is False
     new = host.head()
-    assert new != base and git(host.project, 'show', new + ':app.py').stdout == b'VALUE = 2\n'
-    assert [row['state'] for row in host.plans()] == ['applied']
+    assert new != base and git(host.project, 'show', new + ':app.py').stdout == b'VALUE = 3\n'
+    assert [row['state'] for row in host.plans()] == ['applied', 'applied']
     git(host.project, 'branch', 'merged-topic')
     (host.project / 'README.md').write_text('# Unsaved notes\n')
     pending = {}
@@ -403,7 +419,7 @@ def test_git_plans_wait_in_ask_and_auto_and_full_mode_runs_only_local_reviewless
             app.perform_action(host.action(action_id), host.chat)
     assert (host.project / 'README.md').read_text() == '# Unsaved notes\n'
     assert git(host.project, 'rev-parse', '--verify', '-q', 'merged-topic', check=False).returncode == 0
-    assert git(bare, 'for-each-ref').stdout == b'' and len(host.plans()) == 1
+    assert git(bare, 'for-each-ref').stdout == b'' and len(host.plans()) == 2
     # Positive control: only the native approval route publishes the reviewed commit.
     result = host.approve(pending['push'])
     assert result['state'] == 'applied' and git(bare, 'rev-parse', 'refs/heads/main').stdout.decode().strip() == new
@@ -412,7 +428,7 @@ def test_git_plans_wait_in_ask_and_auto_and_full_mode_runs_only_local_reviewless
     with pytest.raises(PolicyError, match='transport_unsupported') as caught:
         host.call('ProposeGitChange', {'operation': 'push', 'remote': 'net', 'branch': 'main'}, 'push-network')
     assert 'hunter2secret' not in str(caught.value) and 'example.invalid' not in str(caught.value)
-    assert len(host.plans()) == 2
+    assert len(host.plans()) == 3
 
 
 @macos

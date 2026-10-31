@@ -20,6 +20,14 @@ browser_connect_status   plan() for Pebble's own data home, or why Chrome cannot
 browser_connect_install  install(confirm=<plan_sha256>).
 
 The extension itself is loaded by the person in Chrome's Developer mode (D6: no Chrome Web Store build for 1.0).
+
+Phase 43 (1.9.0, decision 8, Connect a browser): both routes take `browsers`, the ids the person ticked (Chrome, Comet,
+Brave, Edge, Arc, Chromium and Chrome's Beta and Canary; browser_bridge.BROWSER_FOLDERS). The plan is then the launcher
+plus one manifest per ticked browser, in its own NativeMessagingHosts folder, and only those are written, still with
+the one confirmed digest. Without `browsers` it is Chrome alone, exactly the two files above. `choices` says, per
+browser, whether it has run for this user (its support folder exists, by name only: nothing inside a browser's profile
+is listed or read) and whether Pebble's host manifest is already there; whether a live handshake followed is the
+bridge's (browser_bridge.browser_hosts, in browser_extension_status).
 """
 
 import hashlib
@@ -32,8 +40,8 @@ import sys
 import time
 from pathlib import Path
 
-from .browser_bridge import (BRIDGE_DIR, EXTENSION_ID, EXTENSION_ORIGIN, HOST_FOLDERS, HOST_NAME, HOST_SCRIPT,
-                             own_executable)
+from .browser_bridge import (BRIDGE_DIR, BROWSER_FOLDERS, BROWSER_NAMES, EXTENSION_ID, EXTENSION_ORIGIN, HOST_NAME,
+                             HOST_SCRIPT, browser_hosts, own_executable)
 from .policy import PolicyError
 
 PLAN_FORMAT = 'pebble.connect-chrome/1'
@@ -93,11 +101,22 @@ def host_program():
     return [sys.executable, '-E', '-s', str(Path(__file__).resolve().parents[1] / 'main.py')]
 
 
-def paths(data_home, user_home):
-    data_home, support = Path(data_home), Path(user_home) / SUPPORT / HOST_FOLDERS[BROWSER]
+def paths(data_home, user_home, browser=BROWSER):
+    data_home, support = Path(data_home), Path(user_home) / SUPPORT / BROWSER_FOLDERS[browser]
     return {'data_home': data_home, 'bridge': data_home / BRIDGE_DIR, 'launcher': data_home / BRIDGE_DIR / HOST_SCRIPT,
             'support': support, 'hosts': support / 'NativeMessagingHosts',
             'manifest': support / 'NativeMessagingHosts' / f'{HOST_NAME}.json'}
+
+
+def chosen(browsers):
+    """The ticked browsers in BROWSER_FOLDERS order (Chrome alone when none is named), or SetupRefused."""
+    if browsers is None:
+        return (BROWSER,)
+    if not isinstance(browsers, (list, tuple)) or not browsers or len(set(map(repr, browsers))) != len(browsers) \
+            or any(b not in BROWSER_FOLDERS for b in browsers):
+        raise SetupRefused('browsers', 'Tick one or more of: ' + ', '.join(BROWSER_NAMES.values()) + '. Nothing was '
+                                       'written.')
+    return tuple(b for b in BROWSER_FOLDERS if b in browsers)
 
 
 def _read(path):
@@ -151,17 +170,34 @@ def _folder_ok(path):
     return stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
 
 
-def _wanted(data_home, user_home, program):
-    p = paths(data_home, user_home)
-    return p, (('launcher', p['launcher'], launcher_text(program, p['data_home']).encode('utf-8'), LAUNCHER_MODE),
-               ('manifest', p['manifest'], manifest_bytes(p['launcher']), MANIFEST_MODE))
+# Phase 44 (1.9.1, D118, measured 2026-10-25): Comet looks for helpers in Google Chrome's NativeMessagingHosts folder,
+# not its own (the person's Comet paired only after Connect Chrome), so connecting Comet writes that file too.
+READS_FROM = {'comet': ('chrome',)}
 
 
-def plan(data_home, *, user_home, program):
-    """Read-only: the two files Connect Chrome writes, what stands in the way, and the digest install() needs."""
-    p, wanted = _wanted(data_home, user_home, program)
+def _wanted(data_home, user_home, program, browsers=(BROWSER,)):
+    """(paths of the first browser, [(role, path, bytes, mode, browser)]): the launcher, then a manifest per browser,
+    and (Phase 44) one more in each folder a browser actually reads (READS_FROM), named for the browser ticked."""
+    p = paths(data_home, user_home, browsers[0])
+    files = [('launcher', p['launcher'], launcher_text(program, p['data_home']).encode('utf-8'), LAUNCHER_MODE, None)]
+    seen = set()
+    for browser in browsers:
+        for folder in (browser, *READS_FROM.get(browser, ())):
+            path = paths(data_home, user_home, folder)['manifest']
+            if path not in seen:
+                seen.add(path)
+                files.append(('manifest', path, manifest_bytes(p['launcher']), MANIFEST_MODE,
+                              folder if folder in browsers else browser))
+    return p, tuple(files)
+
+
+def plan(data_home, *, user_home, program, browsers=None):
+    """Read-only: the files Connect writes (the launcher and one manifest per ticked browser; Chrome alone by
+    default), what stands in the way, and the digest install() needs."""
+    ticked = chosen(browsers)
+    p, wanted = _wanted(data_home, user_home, program, ticked)
     files = [{'role': role, 'path': str(path), 'mode': f'{mode:04o}', 'sha256': _sha(data),
-              'state': _state(role, path, data)} for role, path, data, mode in wanted]
+              'state': _state(role, path, data), 'browser': browser} for role, path, data, mode, browser in wanted]
     problems = []
 
     def problem(code, message):
@@ -173,20 +209,32 @@ def plan(data_home, *, user_home, program):
     executable = Path(str(program[0])) if program else None
     if executable is None or not executable.is_file() or not os.access(executable, os.X_OK):
         problem('no_backend', "Pebble's own program was not found where the helper would run it.")
-    if not (_folder_ok(p['support']) and p['support'].is_dir()):
-        problem('chrome_not_found', 'Chrome has not been opened on this Mac yet. Open it once, then try again.')
-    if not _folder_ok(p['hosts']):
-        problem('hosts_folder', "Chrome's NativeMessagingHosts folder is a link or not a folder, so nothing was "
-                                'changed.')
+    for browser in ticked:
+        where, name = paths(data_home, user_home, browser), BROWSER_NAMES[browser]
+        if not (_folder_ok(where['support']) and where['support'].is_dir()):
+            problem('chrome_not_found' if browser == 'chrome' else 'browser_not_found',
+                    f'{name} has not been opened on this Mac yet. Open it once, then try again.')
+        for folder in (browser, *READS_FROM.get(browser, ())):  # Phase 44: and each folder it reads (D118)
+            other = paths(data_home, user_home, folder)
+            if not (_folder_ok(other['support']) and _folder_ok(other['hosts'])):
+                problem('hosts_folder', f"{BROWSER_NAMES[folder]}'s NativeMessagingHosts folder is a link or not a "
+                                        'folder, so nothing was changed.')
     for item in files:
         if item['state'] in ('foreign', 'not_a_file'):
             problem('not_pebbles', f"A file Pebble did not write is at {item['path']}. Pebble never replaces it: "
                                    'remove it yourself if you no longer need it, then try again.')
     digest = _sha(json.dumps({'format': PLAN_FORMAT, 'files': [[f['role'], f['path'], f['mode'], f['sha256']]
                                                                for f in files]}, sort_keys=True).encode('utf-8'))
-    return {'format': PLAN_FORMAT, 'available': True, 'browser': BROWSER, 'extension_id': EXTENSION_ID,
-            'files': files, 'installed': all(f['state'] == 'current' for f in files), 'ready': not problems,
-            'problems': problems, 'plan_sha256': digest, 'never': list(NEVER), 'authorization': 'none'}
+    return {'format': PLAN_FORMAT, 'available': True, 'browser': ticked[0], 'browsers': list(ticked),
+            'extension_id': EXTENSION_ID, 'files': files, 'installed': all(f['state'] == 'current' for f in files),
+            'ready': not problems, 'problems': problems, 'plan_sha256': digest, 'never': list(NEVER),
+            'choices': choices(user_home), 'authorization': 'none'}
+
+
+def choices(user_home):
+    """Per browser: {id, name, present (it has run for this user), installed (Pebble's manifest is there)}."""
+    return [{'id': browser, 'name': row['name'], 'present': row['support'], 'installed': row['host']}
+            for browser, row in browser_hosts(user_home).items()]
 
 
 def _write(path, data, mode):
@@ -214,21 +262,22 @@ def _write(path, data, mode):
         raise SetupRefused('readback', f'{path} did not read back as written. Try Connect Chrome again.')
 
 
-def install(data_home, *, user_home, program, confirm):
+def install(data_home, *, user_home, program, confirm, browsers=None):
     """Write the planned files, only with the digest of the plan the person confirmed. Returns the new status."""
     if not isinstance(confirm, str) or not HEX64.fullmatch(confirm):
         raise SetupRefused('confirm', 'Confirm Connect Chrome in Pebble first. Nothing was written.')
-    shown = plan(data_home, user_home=user_home, program=program)
+    ticked = chosen(browsers)
+    shown = plan(data_home, user_home=user_home, program=program, browsers=list(ticked))
     if confirm != shown['plan_sha256']:
         raise SetupRefused('plan_changed', 'What Pebble would write changed since you confirmed it. Check it again; '
                                            'nothing was written.')
     if shown['problems']:
         first = shown['problems'][0]
         raise SetupRefused(first['code'], first['message'] + ' Nothing was written.')
-    p, wanted = _wanted(data_home, user_home, program)
+    p, wanted = _wanted(data_home, user_home, program, ticked)
     from .browser_bridge import ensure_private_dir
     written = []
-    for role, path, data, mode in wanted:
+    for role, path, data, mode, browser in wanted:
         state = _state(role, path, data)  # again, just before writing: never over a file someone put there meanwhile
         if state == 'current':
             continue
@@ -237,10 +286,10 @@ def install(data_home, *, user_home, program, confirm):
         if role == 'launcher':
             ensure_private_dir(p['bridge'])
         else:
-            os.makedirs(p['hosts'], mode=HOSTS_MODE, exist_ok=True)
+            os.makedirs(path.parent, mode=HOSTS_MODE, exist_ok=True)  # Phase 44: the folder the manifest lives in
         _write(path, data, mode)
         written.append(str(path))
-    after = plan(data_home, user_home=user_home, program=program)
+    after = plan(data_home, user_home=user_home, program=program, browsers=list(ticked))
     return {**after, 'written': written}
 
 
@@ -252,20 +301,20 @@ def routes(app, *, user_home=None, program=None):
         return Path(app.home), Path(user_home) if user_home is not None else Path.home(), \
             list(program) if program is not None else host_program()
 
-    def status(**_):
+    def status(browsers=None, **_):
         found = where()
         if found is None:
-            return {'format': PLAN_FORMAT, 'available': False, 'browser': BROWSER, 'extension_id': EXTENSION_ID,
-                    'files': [], 'installed': False, 'ready': False,
+            return {'format': PLAN_FORMAT, 'available': False, 'browser': BROWSER, 'browsers': [BROWSER],
+                    'extension_id': EXTENSION_ID, 'files': [], 'installed': False, 'ready': False,
                     'problems': [{'code': 'not_pebble_home', 'message': NOT_HERE}], 'plan_sha256': None,
-                    'never': list(NEVER), 'authorization': 'none'}
+                    'never': list(NEVER), 'choices': [], 'authorization': 'none'}
         home, user, command = found
-        return plan(home, user_home=user, program=command)
+        return plan(home, user_home=user, program=command, browsers=browsers)
 
-    def connect(confirm=None, **_):
+    def connect(confirm=None, browsers=None, **_):
         found = where()
         if found is None:
             raise SetupRefused('not_pebble_home', NOT_HERE)
         home, user, command = found
-        return install(home, user_home=user, program=command, confirm=confirm)
+        return install(home, user_home=user, program=command, confirm=confirm, browsers=browsers)
     return {'browser_connect_status': status, 'browser_connect_install': connect}

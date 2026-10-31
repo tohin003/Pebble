@@ -981,6 +981,22 @@ class Campaign:
     def seen(self, tag):
         return self.fixture.state(tag)
 
+    @staticmethod
+    def journal(service, fact):
+        """Phase 46 (D154): this run's tool results as its own journal records them. A run that waits at a staged step
+        (runner.STAGED_STOP) sends no next request, so the fixture's copy (read from requests) can end before the staged
+        result; in Full mode Pebble's own step check (D141) also asks the scripted model, which the fixture reads as the
+        scenario's first step again. The journal is what both copies come from."""
+        tools = service.rpc('run_get', id=fact['cid'], run_id=fact['rid']).get('tools') or []
+        return {str(t.get('call_id', '')).split(':', 1)[-1]: t.get('result') for t in tools}
+
+    def result_of(self, service, fact, tag, ident):
+        got = self.seen(tag).get('results', {}).get(ident)
+        if got:
+            return got
+        value = self.journal(service, fact).get(ident)
+        return summary(value) if value is not None else {}
+
     # Service helpers -------------------------------------------------------------
 
     def boot(self, home):
@@ -1232,7 +1248,7 @@ class Campaign:
             assert fact['first_state'] == 'waiting_approval', fact['first_state']
             assert payload.get('operation') == 'commit' and payload.get('paths') == ['a.txt'], payload.get('paths')
             assert payload.get('requires_review') is False and payload.get('hooks_run') is False, 'A local commit plan changed shape.'
-            got = self.seen('g1').get('results', {}).get('g1-commit') or {}
+            got = self.result_of(service, fact, 'g1', 'g1-commit')
             assert got.get('status') == 'awaiting_user_approval' and got.get('action_present'), got
             return {'first_state': fact['first_state'], 'operation': 'commit', 'paths': payload['paths']}
         self.check('g1_ask_commit_plan_stays_pending_for_native_review', pending)
@@ -1336,7 +1352,7 @@ class Campaign:
             fact['first_state'] = self.settle(service, fact['cid'], fact['rid'], 'g3')['state']
             commits = [a for a in self.actions(service, fact['cid'], 'git') if a['payload'].get('operation') == 'commit']
             assert [a['status'] for a in commits] == ['applied'], [a['status'] for a in commits]
-            got = self.seen('g3').get('results', {}).get('g3-commit') or {}
+            got = self.result_of(service, fact, 'g3', 'g3-commit')
             assert got.get('status') == 'applied' and got.get('result_state') == 'applied', got
             head = self.repo_state(root)['head']
             assert head != before['head'] and self.tree_blob(root, head, 'a.txt') == blob_oid(A_WORK)
@@ -1569,14 +1585,14 @@ class Campaign:
             payload = action['payload']
             assert payload.get('kind') == 'pip-hashes' and payload.get('requires_review') is True, payload.get('kind')
             assert payload.get('network') == 'allowlisted_registry_only' and payload.get('permission_mode') == 'full'
-            got = self.seen('e1').get('results', {}).get('e1-pip') or {}
+            got = self.result_of(service, fact, 'e1', 'e1-pip')
             assert got.get('status') == 'awaiting_user_approval', got
             return {'kind': 'pip-hashes', 'permission_mode': 'full'}
         self.check('e1_install_plan_stays_pending_for_native_review_in_full_mode', pending)
 
         def foreign():
             fact = self.need('e1')
-            got = self.seen('e1').get('results', {}).get('e1-npm') or {}
+            got = self.result_of(service, fact, 'e1', 'e1-npm')
             assert got.get('error') and 'another registry host' in got['error'] and not got.get('action_present'), got
             kinds = [a['payload'].get('kind') for a in self.actions(service, fact['cid'], 'install')]
             assert kinds == ['pip-hashes'], kinds
@@ -1795,6 +1811,9 @@ class Campaign:
             view = self.seen('w3').get('request_view') or {}
             assert view.get('arguments') == WORKTREE_TESTS and view.get('executable') is True, view
             ran = self.seen('w3').get('execute') or {}
+            if not ran:  # Phase 46 (D154): the run waits at the staged tests; its journal holds the result
+                staged = self.journal(service, fact).get('w3-execute')
+                ran = {**summary(staged), 'effect_status': staged.get('effect_status')} if isinstance(staged, dict) else {}
             assert ran.get('status') == 'awaiting_user_approval' and ran.get('action_present'), ran
             return {'root': 'worktree', 'recipe': 'python-unittest', 'permission_mode': payload.get('permission_mode')}
 

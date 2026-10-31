@@ -5,7 +5,10 @@
 // or compromised backend cannot run its own script in a page, rewrite or read a request, act in a tab that is not
 // shared, is on another site, or shows a sign-in or payment page, or learn the other sites a tab visited.
 
-export const PROTOCOL = 'pebble-browser/1';
+// Phase 43 (1.9.0): Pebble for Chrome 2. The hello names this protocol; Pebble answers an older or newer one with an
+// upgrade message instead of a link (browser_bridge.PROTOCOL, pinned equal).
+export const PROTOCOL = 'pebble-browser/2';
+export const PROTOCOL_PATTERN = /^pebble-browser\/[1-9][0-9]{0,2}$/;
 export const HOST_NAME = 'com.pebble.browser';
 export const MAX_FRAME = 1 << 20;            // one native message either way
 export const CHUNK_BYTES = 600 * 1024;       // raw bytes a chunk carries; base64 makes it 800 KiB
@@ -26,14 +29,19 @@ export const ISOLATED_FUNCTIONS = Object.freeze([
   "function(t){if(this.tagName!==\"SELECT\")return false;const w=String(t).trim();for(const o of this.options){if(o.label.trim()===w||o.text.trim()===w){this.value=o.value;this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return true}}return false}",
   "function(){const s=this.closest(\"select\");if(!s)return false;this.selected=true;s.dispatchEvent(new Event(\"input\",{bubbles:true}));s.dispatchEvent(new Event(\"change\",{bubbles:true}));return true}",
   "function(o){const d=this.tagName===\"SUMMARY\"?this.parentElement:this;if(!d||d.tagName!==\"DETAILS\")return false;d.open=o;return true}",
-  "function(){return this.ownerDocument.activeElement===this}"
+  "function(){return this.ownerDocument.activeElement===this}",
+  "function(){this.click();return true}"
 ]);
 // END ISOLATED FUNCTIONS
 // The arguments each isolated function takes, in order.
 const FUNCTION_ARGS = new Map([
   [ISOLATED_FUNCTIONS[0], ['object']], [ISOLATED_FUNCTIONS[1], []], [ISOLATED_FUNCTIONS[2], ['string']],
   [ISOLATED_FUNCTIONS[3], []], [ISOLATED_FUNCTIONS[4], ['boolean']], [ISOLATED_FUNCTIONS[5], []],
+  [ISOLATED_FUNCTIONS[6], []],
 ]);
+// Phase 44 (1.9.1): a hidden tab never answers Input.dispatchMouseEvent (measured), so Pebble presses there with the
+// element's own click, and only that function may carry a user gesture.
+const GESTURE_FUNCTION = ISOLATED_FUNCTIONS[6];
 // DOM attributes BrowserAdapter reads; every other attribute (value, style, data-*) stays in the page.
 export const ATTRIBUTES = new Set(['type', 'placeholder', 'autocomplete', 'href', 'download', 'form', 'id', 'formaction',
   'action', 'method', 'allow', 'title', 'name', 'aria-label', 'multiple']);
@@ -48,6 +56,18 @@ export const RELEASES = new Set(['Fetch.continueRequest', 'Fetch.failRequest', '
 // Commands that change the page; the indicator shows "working" while they run.
 export const EFFECTS = new Set(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'DOM.focus',
   'DOM.scrollIntoViewIfNeeded', 'Runtime.callFunctionOn']);
+// Phase 43 (1.9.0): on a site a grant lets Pebble read but not act on, only what changes nothing passes: every method
+// outside EFFECTS, and Runtime.callFunctionOn with the two functions that only look (contains and focused).
+export const READ_ONLY_FUNCTIONS = new Set([ISOLATED_FUNCTIONS[0], ISOLATED_FUNCTIONS[5]]);
+// Every request Pebble may make of the worker (browser_bridge.OPS, pinned equal). create_tab, close_tab and list_owned
+// act only on the tabs Pebble opened under a live site grant (lib/owned.mjs).
+export const OPS = Object.freeze(['attach', 'tab_info', 'activate', 'navigate', 'detach', 'cdp', 'create_tab', 'close_tab',
+  'list_owned']);
+
+export function changesPage(method, params) {
+  if (!EFFECTS.has(method)) return false;
+  return !(method === 'Runtime.callFunctionOn' && READ_ONLY_FUNCTIONS.has(params?.functionDeclaration));
+}
 
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -81,10 +101,11 @@ export function newTabState() {
 }
 
 function callFunction(params, tab) {
-  if (!only(params, ['functionDeclaration', 'objectId', 'arguments', 'returnByValue'], ['functionDeclaration', 'objectId'])) return false;
+  if (!only(params, ['functionDeclaration', 'objectId', 'arguments', 'returnByValue', 'userGesture'], ['functionDeclaration', 'objectId'])) return false;
   const kinds = FUNCTION_ARGS.get(params.functionDeclaration);
   if (!kinds || !tab.objects.has(params.objectId)) return false;
   if (own(params, 'returnByValue') && params.returnByValue !== true) return false;
+  if (own(params, 'userGesture') && (params.userGesture !== true || params.functionDeclaration !== GESTURE_FUNCTION)) return false;
   const args = own(params, 'arguments') ? params.arguments : [];
   if (!Array.isArray(args) || args.length !== kinds.length) return false;
   return args.every((arg, index) => {
@@ -156,9 +177,10 @@ const COMMANDS = {
 };
 export const METHODS = Object.freeze(Object.keys(COMMANDS));
 
-// {ok: true} or {ok: false, code, message} for one page command. share is the worker's share for the tab; granted
-// says whether Pebble holds a live grant for it (only releases run without one).
-export function checkCommand(share, tab, method, params, { paused = false, granted = false } = {}) {
+// {ok: true} or {ok: false, code, message} for one page command. share is the worker's share for the tab (or a tab
+// Pebble opened, as lib/owned.mjs views it); granted says whether Pebble holds a live grant for it (only releases run
+// without one); readOnly (Phase 43) says the tab is on a site the grant lets Pebble read but not act on.
+export function checkCommand(share, tab, method, params, { paused = false, granted = false, readOnly = false } = {}) {
   if (typeof method !== 'string' || !own(COMMANDS, method)) return { ok: false, code: 'unsupported', message: 'Pebble for Chrome does not run that command.' };
   if (!share) return { ok: false, code: 'not_shared', message: 'This tab is not shared with Pebble.' };
   if (!RELEASES.has(method)) {
@@ -168,6 +190,7 @@ export function checkCommand(share, tab, method, params, { paused = false, grant
     if (share.state === 'handback') return { ok: false, code: 'handback', message: "This page is the person's turn." };
   }
   if (!COMMANDS[method](params ?? {}, tab)) return { ok: false, code: 'invalid', message: 'Pebble for Chrome refused that command.' };
+  if (readOnly && changesPage(method, params)) return { ok: false, code: 'read_only', message: 'Pebble may only read this site in this task.' };
   return { ok: true };
 }
 

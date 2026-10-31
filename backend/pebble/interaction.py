@@ -19,6 +19,63 @@ SECRET = re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-
 SECRET_REQUEST = re.compile(r'\b(?:enter|paste|provide|send|type|submit)\b.{0,40}\b(?:password|api[ -]?key|secret[ -]?key|access[ -]?token|private[ -]?key)\b', re.I)
 
 
+
+def answer_words(items, answers):
+    """Phase 45 (F249, audit round R11): the person's answer as they chose it, for the conversation (it showed as
+    "Clarification answer (native form): {"open": {"option_id": "yes", ...}}"): the chosen option or typed text, with
+    each question's title when there are several."""
+    said = [(item.get('title') or '', (answers.get(item.get('id')) or {}).get('text') or '')
+            for item in items if isinstance(item, dict) and isinstance(answers.get(item.get('id')), dict)]
+    said = [(title, text) for title, text in said if text]
+    if len(said) == 1:
+        return said[0][1]
+    return '\n'.join(f'{title}: {text}' if title else text for title, text in said) or 'Answered.'
+
+
+# Phase 46 (1.9.28, golden held-out parallel_work: one sol cell ended `interrupted`): the inbox stores each input under
+# INPUT_BYTES, and an approved command's or test run's receipt alone can hold 16,000 bytes of output, so a reviewed
+# command that printed more than about 15,600 bytes failed here after its receipt was committed and App._approve ended
+# the run "interrupted". A host or agent input copies a result the host keeps whole (the tool receipt, and HOST ACTION
+# UPDATES on resume), so it is shortened to fit instead of refused; a person's own input stays exact.
+INPUT_BYTES = 16000
+LEFT_OUT = ('[... {count} {unit} left out of this copy; the whole result is in the tool receipt '
+            '(HOST ACTION UPDATES for an approved action) ...]')
+
+
+def _size(value):
+    return len(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode())
+
+
+def _cut(value, keep, depth=0):
+    if isinstance(value, str) and len(value) > 2 * keep + 200:
+        return value[:keep] + '\n' + LEFT_OUT.format(count=len(value) - 2 * keep, unit='characters') + '\n' + value[-keep:]
+    if depth > 8 or not isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, dict):
+        return {key: _cut(item, keep, depth + 1) for key, item in value.items()}
+    items, ends = [_cut(item, keep, depth + 1) for item in value], max(2, keep // 40)
+    if len(items) <= 2 * ends + 1:
+        return items
+    return items[:ends] + [LEFT_OUT.format(count=len(items) - 2 * ends, unit='items')] + items[-ends:]
+
+
+def fitted(payload, limit=INPUT_BYTES):
+    """A host or agent input that fits the inbox: unchanged when it does; else its long texts and lists keep their start
+    and end around a marker, shorter each round; else only its short top-level fields."""
+    if _size(payload) <= limit:
+        return payload
+    if isinstance(payload, dict):
+        for keep in (4000, 1000, 250, 60):
+            cut = {**_cut(payload, keep), 'shortened_for_input': True}
+            if _size(cut) <= limit:
+                return cut
+    short = {}
+    for key, value in payload.items() if isinstance(payload, dict) else ():
+        if (value is None or isinstance(value, (bool, int, float)) or isinstance(value, str) and len(value) <= 200) \
+                and _size({**short, key: value, 'shortened_for_input': True}) <= limit:
+            short[key] = value
+    return {**short, 'shortened_for_input': True}
+
 class WaitingForInput(Exception):
     pass
 
@@ -96,7 +153,7 @@ class RunInteractions:
     @staticmethod
     def _input(db, rid, kind, origin, payload, ident=None):
         ident = ident or uuid.uuid4().hex
-        data = encoded(payload, 16000)
+        data = encoded(payload if origin == 'human' else fitted(payload), INPUT_BYTES)
         old = db.execute('SELECT run_id,kind,origin,payload FROM run_inbox WHERE id=?', (ident,)).fetchone()
         if old:
             if old != (rid, kind, origin, data):
@@ -215,7 +272,7 @@ class RunInteractions:
         if type(revision) is not int or revision != version:
             raise ValueError('This question revision is stale. Refresh it before answering.')
         answer = encoded(self.canonical_answer(json.loads(items), answers))
-        message = {'id': 'answer-' + ident, 'role': 'user', 'content': 'Clarification answer (native form):\n' + answer}
+        message = {'id': 'answer-' + ident, 'role': 'user', 'content': answer_words(json.loads(items), json.loads(answer))}
         if status == 'answered' and answer == old_answer:
             return {'question_id': ident, 'run_id': rid, 'status': 'answered', 'message': message}
         if status != 'pending' or state not in LIVE | RESUMABLE:

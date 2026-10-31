@@ -1,7 +1,8 @@
 // Pairing and sealing for Pebble for Chrome (Phase 22), with WebCrypto only.
 //
 // The same bytes as backend/pebble/browser_bridge.py (both test suites pin shared test vectors):
-//   codeKey   = SHA-256('pebble-browser/1|pair|' + code)
+//   codeKey   = SHA-256('pebble-browser/1|pair|' + code)   (Phase 43: a fixed label, not the link protocol, so pairing
+//                                                          and every existing pairing key are unchanged by protocol 2)
 //   proof     = HMAC(codeKey, 'ext|' + extNonce + '|' + linkNonce)            the person typed Pebble's code
 //   wrapped   = key XOR HMAC(codeKey, 'wrap|' + extNonce + '|' + linkNonce)   the pairing key, carried once
 //   confirm   = HMAC(key, 'confirm|…'), serviceProof = HMAC(key, 'svc|…')     each side proves it holds the key
@@ -9,7 +10,7 @@
 //   sealed    = {type:'sealed', seq, body, mac: HMAC(session, direction + '|' + seq + '|' + body)}
 // direction is 'e2s' (extension to service) or 's2e'. Sequence numbers start at 1 per direction and per link.
 
-export const PROTOCOL = 'pebble-browser/1';
+export const PAIRING_LABEL = 'pebble-browser/1';
 const encoder = new TextEncoder();
 
 export function hex(bytes) {
@@ -42,7 +43,7 @@ export async function mac(keyBytes, text) {
 }
 
 export async function codeKey(code) {
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(`${PROTOCOL}|pair|${code}`)));
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(`${PAIRING_LABEL}|pair|${code}`)));
 }
 
 export async function pairProof(code, extNonce, linkNonce) {

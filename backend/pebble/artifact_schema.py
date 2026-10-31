@@ -12,7 +12,10 @@ import unicodedata
 from .interaction import ID, RESERVED, SECRET, SECRET_REQUEST, bounded_text
 
 
-NATIVE_KINDS = frozenset({'form', 'table', 'chart', 'plan', 'evidence', 'dashboard', 'prototype'})
+# Phase 46 (1.9.29, D195, w25-genui-b): visual answers (layer B), kinds a model fills and Pebble draws in its own design.
+# Their schemas are CATALOG_SCHEMAS, offered only with visual_offer (below), never in SCHEMAS or UI_BRIEF.
+CATALOG_KINDS = ('compare', 'metrics', 'timeline', 'record')
+NATIVE_KINDS = frozenset({'form', 'table', 'chart', 'plan', 'evidence', 'dashboard', 'prototype', *CATALOG_KINDS})
 MAX_DATA_BYTES = 96000
 _CREDENTIAL_FIELD = re.compile(r'\b(?:password|passphrase|api[ _-]?key|secret[ _-]?key|access[ _-]?token|private[ _-]?key|credentials?)\b', re.I)
 
@@ -76,17 +79,105 @@ DASHBOARD_WORDS = re.compile(r'\b(?:dashboards?|kpis?|scorecards?|status boards?
 PROTOTYPE_WORDS = re.compile(r'\b(?:prototypes?|mock-?ups?|wireframes?|app demos?|click-?through)\b', re.I)
 
 
-def offered_kinds(budget, text):
+CHART_TYPES = ('bar', 'line', 'area', 'scatter', 'stacked', 'pie', 'donut')
+NUMBER_FORMATS = ('number', 'percent', 'compact')
+TONES = ('neutral', 'accent', 'ok', 'warn', 'danger')
+DIAGRAM_LAYOUTS = ('flow', 'layers', 'sequence')
+_DATE = re.compile(r'(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?')
+CATALOG_SCHEMAS = {
+    'chart': 'chart type also "area"|"scatter"|"stacked"|"pie"|"donut" (pie, donut: one y_key, 2-8 rows); '
+             'format?:"number"|"percent" (0.25 is 25%)|"compact"; unit?.',
+    'diagram': 'diagram layout?:"flow"|"layers"|"sequence" (sequence: nodes are participants, edges messages in order); '
+               'direction?:"down"|"right"; node group? (its layer), sub? (5 words at most), tone?.',
+    'compare': 'compare:{options:[{id,label,summary?}] (2-4),criteria:[{label,values:[per option: text, number or '
+               'boolean]}] (1-10),recommended?:option id,caption?}.',
+    'metrics': 'metrics:{tiles:[{label,value:number,unit?,delta?,format?,better?:"up"|"down"}] (2-4),caption?}.',
+    'timeline': 'timeline:{events:[{date:"YYYY[-MM[-DD]]",title,detail?,tone?}] (2-20),caption?}.',
+    'record': 'record:{fields:[{label,value:text or number}] (1-12),subtitle?,note?}.',
+}
+# What the model reads with the catalog: when a visual helps, then each kind's shape. Pebble formats dates and numbers.
+CATALOG_BRIEF = ('Visual answers: add one only when it says more than your text, never for code changes or short '
+                 'answers; Pebble draws it and formats numbers and dates. ' + ' '.join(CATALOG_SCHEMAS.values())
+                 + ' tone: "neutral"|"accent"|"ok"|"warn"|"danger".')
+# An ask for a visual in the person's own words: a verb with a visual noun, "visualize", "side by side" or "as a chart".
+# Dashboard words keep their Phase 19 offer exactly (DASHBOARD_WORDS). Not a noun alone ("the chart on page 3", "the commit graph"), and not a request whose visual belongs in
+# a file or in code (VISUAL_ELSEWHERE): there the existing UIRender offer, unchanged, is all the model sees.
+_VISUAL = r'(?:charts?|diagrams?|flow ?charts?|plots?|timelines?|visuals?|visuali[sz]ations?|infographics?|' \
+          r'(?:bar|line|pie) graphs?|graphs? of)'
+# 1.9.29 (the lead): "side by side" asks for a visual only after compare, show, display or view ("Compare these two
+# phones side by side"); alone it is how someone works or arranges things (private d-gw-95: "so I can work on both
+# branches side by side", a linked worktree task, was offered the catalog; "put the two windows side by side").
+_SIDE_BY_SIDE = (r'\b(?:compare|comparing|show|display|view)\b[^.?!\n]{0,60}?\bside[- ]by[- ]side\b'
+                 r'|\bside[- ]by[- ]side\s+(?:comparison|view|table)\b')
+VISUAL_ASK = re.compile(
+    r'\b(?:show|draw|give|make|create|sketch|plot|build|render|produce|generate|put|turn|display|present)\b'
+    r'[^.?!\n]{0,40}?\b' + _VISUAL + r'(?!\w)'
+    r'|\bvisuali[sz]e[sd]?\b|' + _SIDE_BY_SIDE + r'|\b(?:as|in|into) an? (?:\w+ )?' + _VISUAL + r'(?!\w)', re.I)
+VISUAL_ELSEWHERE = re.compile(
+    r'\b(?:files?|xlsx|xls|excel|docx|word (?:document|file)|csv|pptx|powerpoint|keynote|slides?|spreadsheets?|'
+    r'workbooks?|png|jpe?g|svg|pdf|html|markdown|mermaid|graphviz|ascii|matplotlib|plotly|seaborn|code|scripts?|'
+    r'components?|functions?|python|javascript|typescript|react|vue|swift|commits?|tests?)\b', re.I)
+# "Automatically" (the setting's 'auto', off by default, D216/D217): the kinds of first request a visual may suit, the
+# design kept for later. Never a request to change code or Git state, which keeps its own tools.
+SUITS_VISUAL = re.compile(
+    r'\b(?:compare|comparison|versus|vs\.?|pros and cons|trade-?offs?|which is better|how does .{1,60} work|'
+    r'explain how|architecture|lifecycle|breakdown|trends?|statistics|distribution|over time|summari[sz]e|overview)\b',
+    re.I)
+CHANGE_WORDS = re.compile(r'\b(?:fix|edit|change|refactor|implement|add|remove|delete|rename|commit|push|merge|'
+                          r'rebase|branch|install|run|build|deploy|bug|error|failing)\b', re.I)
+VISUAL_SETTINGS = ('ask', 'auto')
+
+
+# Every VISUAL_ASK match holds one of these (lower case): a substring test skips the pattern for most turns.
+_VISUAL_STEMS = ('chart', 'diagram', 'plot', 'timeline', 'visual', 'infographic', 'graph', 'side by side', 'side-by-side')
+
+
+def visual_ask(text):
+    """Whether one human turn asks for a visual answer in Pebble's window (not in a file or in code)."""
+    if not isinstance(text, str) or not any(stem in text.lower() for stem in _VISUAL_STEMS):
+        return False
+    return bool(VISUAL_ASK.search(text)) and not VISUAL_ELSEWHERE.search(text)
+
+
+def visual_offer(budget, turns, setting='ask'):
+    """Phase 46 (1.9.29, D195, w25-genui-b): whether this run's UIRender offer carries the visual catalog.
+
+    Decided from the conversation's human turns (in order, the current one last), so the offer changes at most once in
+    a conversation, at the first turn that asks for a visual, and then stays: the tool list keeps the provider's prompt
+    cache. 'auto' (off by default) also offers it for a first turn whose kind suits a visual, a change at most once more,
+    when the setting changes. Nothing at a budget of 4096 or less, as with every newer view kind.
+    """
+    if type(budget) is not int or budget <= 4096 or not isinstance(turns, (list, tuple)):
+        return False
+    turns = [turn for turn in turns if isinstance(turn, str)]
+    if any(visual_ask(turn) for turn in turns):
+        return True
+    return (setting == 'auto' and bool(turns) and bool(SUITS_VISUAL.search(turns[0]))
+            and not CHANGE_WORDS.search(turns[0]) and not VISUAL_ELSEWHERE.search(turns[0]))
+
+
+def offered_kinds(budget, text, visual=False):
     """Kinds for this request's UIRender/UIUpdate enum: nothing new at a budget of 4096 or less."""
     kinds = list(LEGACY_KINDS)
     if type(budget) is int and budget > 4096 and isinstance(text, str):
         kinds += [kind for kind, words in (('dashboard', DASHBOARD_WORDS), ('prototype', PROTOTYPE_WORDS)) if words.search(text)]
+    if visual is True and type(budget) is int and budget > 4096:
+        kinds += CATALOG_KINDS  # Phase 46 (1.9.29, w25-genui-b): visual_offer
     return tuple(kinds)
+
+
+def offered_brief(kinds):
+    """What UIRender/UIUpdate's description gains for these kinds: dashboard and prototype schemas as in Phase 19, then
+    the catalog's brief when the catalog is offered. Empty for the Phase 18 kinds, so those requests are unchanged."""
+    brief = ''.join(' ' + SCHEMAS[k] for k in kinds if k in NEW_KINDS)
+    return brief + (' ' + CATALOG_BRIEF if any(k in CATALOG_KINDS for k in kinds) else '')
 
 
 def schema_error(kind, error):
     """A validation failure carries the exact schema for that one kind, so it is paid only on failure."""
     message = str(error)
+    if kind in CATALOG_KINDS and 'Schema: ' not in message:
+        return message + ' Schema: ' + CATALOG_SCHEMAS[kind]  # offered only with the catalog (visual_offer)
     return message + ' Schema: ' + SCHEMAS[kind] if kind in SCHEMAS and 'Schema: ' not in message else message
 
 
@@ -200,7 +291,7 @@ def _optional_text(data, key, limit):
 
 
 def validate_native_title(kind, title):
-    title = inert_text(title, 120) if kind in NEW_KINDS else _label(title, 120)
+    title = inert_text(title, 120) if kind in NEW_KINDS or kind in CATALOG_KINDS else _label(title, 120)
     if kind == 'form' and (SECRET_REQUEST.search(title) or _CREDENTIAL_FIELD.search(title)):
         raise ValueError('Credentials belong in native connection settings, not forms.')
     return title
@@ -267,8 +358,9 @@ def validate_native(kind, value):
                 _primitive(cell)
         _optional_text(data, 'caption', 1000)
     elif kind == 'chart':
-        _shape(data, {'type', 'x_key', 'y_keys', 'rows'}, {'labels', 'caption'})
-        if data['type'] not in ('bar', 'line'):
+        _shape(data, {'type', 'x_key', 'y_keys', 'rows'}, {'labels', 'caption', 'format', 'unit'})
+        if data['type'] not in CHART_TYPES:
+            # Phase 46 (1.9.29, w25-genui-b): the Phase 19 words for a request without the catalog's chart types
             raise ValueError('Charts support bar or line displays.')
         x = identifier(data['x_key'], 'Chart axis')
         ys = data['y_keys']
@@ -287,6 +379,7 @@ def validate_native(kind, value):
             _shape(data['labels'], (), {x, *ys})
             data['labels'] = {key: _label(label, 120) for key, label in data['labels'].items()}
         _optional_text(data, 'caption', 1000)
+        _chart_variant(data, x, ys, rows)
     elif kind == 'plan':
         _shape(data, {'steps'})
         steps = data['steps']
@@ -322,8 +415,165 @@ def validate_native(kind, value):
         data = _dashboard(data)
     elif kind == 'prototype':
         data = validate_prototype(data)
+    elif kind in CATALOG_KINDS:
+        rejected_keys(data)
+        data = {'compare': _compare, 'metrics': _metrics, 'timeline': _timeline, 'record': _record}[kind](data)
     else:
         raise ValueError('Unsupported declarative view type.')
+    return data
+
+
+# -- Phase 46 (1.9.29, D195, w25-genui-b): the visual catalog. Every string is inert_text (no link, markup, template or
+# credential); numbers are bounded and finite; lists stay within the design's budget (at most 4 boxes in a row).
+
+def _enum(data, key, choices, message):
+    if key in data and (type(data[key]) is not str or data[key] not in choices):
+        raise ValueError(message)
+
+
+def _inert(data, key, limit):
+    if key in data:
+        data[key] = inert_text(data[key], limit)
+
+
+def _chart_variant(data, x, ys, rows):
+    """The catalog's chart types and formats: pie and donut show one series' parts of a whole, scatter needs numbers on
+    both axes, and stacked parts cannot be negative."""
+    _enum(data, 'format', NUMBER_FORMATS, 'Chart formats are number, percent or compact.')
+    _inert(data, 'unit', 12)
+    if data['type'] in ('pie', 'donut'):
+        if len(ys) != 1 or not 2 <= len(rows) <= 8:
+            raise ValueError('Pie and donut charts show one series in two to eight parts.')
+        if any(row[ys[0]] < 0 for row in rows) or not sum(row[ys[0]] for row in rows) > 0:
+            raise ValueError('Pie and donut parts must be zero or more, with a total above zero.')
+    elif data['type'] == 'scatter':
+        if any(type(row[x]) not in (int, float) or isinstance(row[x], bool) or abs(row[x]) > 1e15 for row in rows):
+            raise ValueError('Scatter charts need a number on both axes.')
+    elif data['type'] == 'stacked' and any(row[key] < 0 for row in rows for key in ys):
+        raise ValueError('Stacked chart parts must be zero or more.')
+    if data['type'] not in ('bar', 'line'):
+        for row in rows:
+            if isinstance(row[x], str):
+                row[x] = inert_text(row[x], 120) if row[x].strip() else row[x]
+
+
+def _cell(value, label):
+    if type(value) is bool:
+        return value
+    if type(value) in (int, float):
+        return _number(value, label)
+    return inert_text(value, 160)
+
+
+def _compare(data):
+    _shape(data, {'options', 'criteria'}, {'recommended', 'caption'})
+    options, criteria = data['options'], data['criteria']
+    if type(options) is not list or not 2 <= len(options) <= 4:
+        raise ValueError('Comparisons need two to four options.')
+    ids = _unique(options, 'Option')
+    for option in options:
+        _shape(option, {'id', 'label'}, {'summary'})
+        option['label'] = inert_text(option['label'], 80)
+        _inert(option, 'summary', 240)
+    if type(criteria) is not list or not 1 <= len(criteria) <= 10:
+        raise ValueError('Comparisons need one to ten criteria.')
+    for row in criteria:
+        _shape(row, {'label', 'values'})
+        row['label'] = inert_text(row['label'], 80)
+        if type(row['values']) is not list or len(row['values']) != len(options):
+            raise ValueError('Each criterion needs one value per option, in the options\' order.')
+        row['values'] = [_cell(value, 'A comparison value') for value in row['values']]
+    if 'recommended' in data and (type(data['recommended']) is not str or data['recommended'] not in ids):
+        raise ValueError('The recommended option must be one of the options\' IDs.')
+    _inert(data, 'caption', 400)
+    return data
+
+
+def _metrics(data):
+    _shape(data, {'tiles'}, {'caption'})
+    tiles = data['tiles']
+    if type(tiles) is not list or not 2 <= len(tiles) <= 4:
+        raise ValueError('Metrics show two to four tiles.')
+    for tile in tiles:
+        _shape(tile, {'label', 'value'}, {'unit', 'delta', 'format', 'better', 'caption'})
+        tile['label'] = inert_text(tile['label'], 60)
+        _number(tile['value'], 'A metric value')
+        if 'delta' in tile:
+            _number(tile['delta'], 'A metric change')
+        _enum(tile, 'format', NUMBER_FORMATS, 'Metric formats are number, percent or compact.')
+        _enum(tile, 'better', ('up', 'down'), 'A metric is better "up" or "down".')
+        _inert(tile, 'unit', 12)
+        _inert(tile, 'caption', 120)
+    _inert(data, 'caption', 400)
+    return data
+
+
+def _date(value):
+    """An ISO date the window formats by the person's preference: a year, a month or a day that exists."""
+    match = _DATE.fullmatch(value) if type(value) is str else None
+    if match:
+        year, month, day = (int(part) if part else None for part in match.groups())
+        days = [31, 29 if year % 4 == 0 and (year % 100 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        if month is None or 1 <= month <= 12 and (day is None or 1 <= day <= days[month - 1]):
+            return value
+    raise ValueError('Timeline dates are "YYYY", "YYYY-MM" or "YYYY-MM-DD".')
+
+
+def _timeline(data):
+    _shape(data, {'events'}, {'caption'})
+    events = data['events']
+    if type(events) is not list or not 2 <= len(events) <= 20:
+        raise ValueError('Timelines need two to twenty events.')
+    for event in events:
+        _shape(event, {'date', 'title'}, {'detail', 'tone'})
+        _date(event['date'])
+        event['title'] = inert_text(event['title'], 120)
+        _inert(event, 'detail', 400)
+        _enum(event, 'tone', TONES, 'Tones are neutral, accent, ok, warn or danger.')
+    _inert(data, 'caption', 400)
+    return data
+
+
+DIAGRAM_KEYS = ('layout', 'direction', 'caption')
+DIAGRAM_NODE_KEYS = ('group', 'sub', 'tone')
+
+
+def diagram_variant(data):
+    """A diagram that names a layout or node details (artifacts.validate has checked its nodes and edges): enumerated
+    tokens and inert text only. Layers need a layer for every node (at most 6); a sequence has at most 8 participants."""
+    rejected_keys(data)
+    _enum(data, 'layout', DIAGRAM_LAYOUTS, 'Diagram layouts are flow, layers or sequence.')
+    _enum(data, 'direction', ('down', 'right'), 'Diagram directions are down or right.')
+    _inert(data, 'caption', 400)
+    for node in data['nodes']:
+        node['label'] = inert_text(node['label'], 180)
+        _inert(node, 'group', 40)
+        _inert(node, 'sub', 60)
+        _enum(node, 'tone', TONES, 'Tones are neutral, accent, ok, warn or danger.')
+    for edge in data['edges']:
+        edge['label'] = inert_text(edge['label'], 100) if edge['label'].strip() else edge['label']
+    layout = data.get('layout', 'flow')
+    if layout == 'layers' and (any('group' not in node for node in data['nodes'])
+                               or len({node['group'] for node in data['nodes']}) > 6):
+        raise ValueError('A layers diagram gives every node a group, with at most six groups.')
+    if layout == 'sequence' and (len(data['nodes']) > 8 or not data['edges']):
+        raise ValueError('A sequence diagram has at most eight participants and at least one message.')
+    return data
+
+
+def _record(data):
+    _shape(data, {'fields'}, {'subtitle', 'note'})
+    fields = data['fields']
+    if type(fields) is not list or not 1 <= len(fields) <= 12:
+        raise ValueError('A record holds one to twelve fields.')
+    for field in fields:
+        _shape(field, {'label', 'value'})
+        field['label'] = inert_text(field['label'], 60)
+        if type(field['value']) is bool:
+            raise ValueError('Record values are text or numbers.')
+        field['value'] = _cell(field['value'], 'A record value')
+    _inert(data, 'subtitle', 80)
+    _inert(data, 'note', 400)
     return data
 
 

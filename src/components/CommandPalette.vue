@@ -18,12 +18,23 @@ interface Entry {
   keys?: string;
   insert?: string;
   action?: ShortcutId;
+  run?: string;
+}
+// Phase 45 (F024): the window may add its own launcher entries (themes, Stealth Lockdown, Settings tabs, the
+// companion, conversations); they run at once, ahead of the slash commands that only fill the message box.
+export interface Extra {
+  key: string;
+  title: string;
+  detail: string;
+  run: string;
+  words?: string;
+  recent?: boolean;
 }
 const props = withDefaults(
-  defineProps<{ surface: Surface; platform?: string; running?: boolean }>(),
-  { platform: "darwin", running: false },
+  defineProps<{ surface: Surface; platform?: string; running?: boolean; extras?: Extra[] }>(),
+  { platform: "darwin", running: false, extras: () => [] },
 );
-const emit = defineEmits<{ close: []; choose: [text: string]; action: [id: ShortcutId] }>();
+const emit = defineEmits<{ close: []; choose: [text: string]; action: [id: ShortcutId]; run: [id: string] }>();
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const MAX_COMMANDS = 200;
 const uid = "command-palette"; // at most one palette per window
@@ -86,6 +97,16 @@ const actions = computed<Entry[]>(() =>
 const entries = computed<Entry[]>(() => {
   const needle = query.value.trim().replace(/^\//, "").toLowerCase();
   const ranked: { rank: number; order: number; entry: Entry }[] = [];
+  // Phase 45 (F024): launcher entries first (rank -1 before the commands' 0); with no words typed only the actions
+  // and the most recent conversations show, so the list stays short.
+  props.extras.forEach((extra, order) => {
+    const title = extra.title.toLowerCase(), words = (extra.words || "").toLowerCase();
+    const rank = !needle ? (extra.recent === false ? -9 : -1)
+      : title.startsWith(needle) ? -1
+      : title.includes(needle) || words.includes(needle) ? -0.5
+      : extra.detail.toLowerCase().includes(needle) ? 2.5 : -9;
+    if (rank > -9) ranked.push({ rank, order, entry: { key: "extra:" + extra.key, title: extra.title, detail: extra.detail, run: extra.run } });
+  });
   catalogue.value.forEach((command, order) => {
     const entry = {
       key: "command:" + command.name,
@@ -109,7 +130,8 @@ watch(query, () => (index.value = 0));
 
 function choose(entry: Entry | undefined) {
   if (!entry) return;
-  if (entry.action) emit("action", entry.action);
+  if (entry.run) emit("run", entry.run);
+  else if (entry.action) emit("action", entry.action);
   else if (entry.insert) emit("choose", entry.insert);
 }
 function move(step: number) {
@@ -157,7 +179,7 @@ onUnmounted(() => {
         :aria-expanded="entries.length > 0"
         :aria-controls="uid + '-options'"
         :aria-activedescendant="active ? uid + '-' + index : undefined"
-        placeholder="Type a command or action…"
+        :placeholder="extras.length ? 'Search actions, settings, conversations and commands…' : 'Type a command or action…'"
         maxlength="80"
         autocomplete="off"
         spellcheck="false"
@@ -182,7 +204,10 @@ onUnmounted(() => {
       </ul>
       <p v-if="!loading && !entries.length" class="palette-note">No matching command or action.</p>
       <p v-if="omitted" class="palette-note">{{ omitted }} catalogue {{ omitted === 1 ? "entry was" : "entries were" }} malformed or duplicated and {{ omitted === 1 ? "is" : "are" }} not shown.</p>
-      <p class="palette-note">
+      <p v-if="extras.length" class="palette-note">
+        Actions run at once. A slash command ({{ catalogue.length }} from this Pebble service) goes into the message box and runs when you send it.
+      </p>
+      <p v-else class="palette-note">
         {{ catalogue.length }} commands from this Pebble service. Enter puts a command in the message box; nothing runs until you send it.
       </p>
     </section>

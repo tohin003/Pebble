@@ -26,6 +26,12 @@ EFFECTS |= {'StartCommand', 'StopProcess'}
 EFFECTS |= {'ProposeGitChange', 'PrepareEnvironment', 'SpawnAgent', 'SpawnWorktreeAgent', 'RunRecipe'}
 # Phase 16 (T7 F11): a screen act may have changed a granted window; a failure mid-act is uncertain.
 EFFECTS |= {'ScreenAct'}
+# Phase 40 (1.6.0): the Companion's Shell and file writes change files on the person's Mac; never replayed blindly.
+EFFECTS |= {'Shell', 'WriteFile', 'EditFile'}
+# Phase 43 (1.9.0): opening a web address acts in the person's browser, as opening an app does.
+EFFECTS |= {'OpenURL'}
+# Phase 43 (1.9.0): a scripting verb may create a note, an event or a draft, or play music.
+EFFECTS |= {'AppAction'}
 
 
 def encoded(value, limit=32_000_000):
@@ -293,6 +299,9 @@ class RunJournal:
         A failed transaction after an effect still requires reconciliation.
         """
         receipt = {'action_id': aid, 'kind': kind, 'status': 'applied', 'result': result}
+        facts = result.get('result') if kind == 'git' and isinstance(result, dict) else None
+        if isinstance(facts, dict):  # Phase 46 (1.9.29): Git's exit code, own words and next step on top, as a command's
+            receipt.update({key: facts[key] for key in ('exit_code', 'output', 'next') if key in facts})
         if owner:
             receipt['receipt_id'] = owner['call_id']
         with self.store.lock, self.store.db as db:

@@ -404,6 +404,8 @@ def _classify(state, result, fields, signal, report):
         return 'pending_approval'
     if status == 'awaiting_user_input':
         return 'pending_input'
+    if status == 'held':  # Phase 46 (1.9.28, D185): Full access's check held it; nothing ran
+        return 'not_executed'
     if status in ('running', 'not_executed', 'rejected', 'applied', 'failed'):
         return status
     if status in ('answered', 'cancelled') and 'question_id' in fields:

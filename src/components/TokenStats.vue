@@ -40,7 +40,11 @@ const meter = computed(() => {
     <span>{{
       route === "memory"
         ? "Memory saved"
-        : route === "weather"
+        : route === "memory_lookup"
+          ? "Memory lookup"
+          : route === "toolbox"
+          ? "Toolbox"
+          : route === "weather"
           ? "Live weather lookup"
           : "Direct app workflow"
     }}</span

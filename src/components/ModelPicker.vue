@@ -14,7 +14,7 @@ const props = defineProps<{
   notice?: string;
   reviewLabel?: string;
 }>();
-const emit = defineEmits<{ select: [id: string]; review: []; dismiss: [] }>();
+const emit = defineEmits<{ select: [id: string]; review: []; dismiss: []; connect: [] }>();
 const provider = ref("all");
 const connection = (p: ModelProfile) =>
   p.connection_id || (p.kind === "gguf" ? "local" : p.id);
@@ -31,8 +31,29 @@ const models = computed(() =>
     (p) => provider.value === "all" || connection(p) === provider.value,
   ),
 );
+// Phase 45 (F119, audit round R3): with All providers, look-alike models (gpt-6-luna on a ChatGPT plan, GPT-6-Luna on
+// an API key) stood one above the other with nothing saying which account answers or bills; the list is grouped by
+// provider, under each provider's short name.
+const groups = computed(() =>
+  provider.value === "all" && providers.value.length > 1
+    ? providers.value
+        .map(([id, name]) => ({ id, label: shortProvider(name), items: props.profiles.filter((p) => connection(p) === id) }))
+        .filter((g) => g.items.length)
+    : [],
+);
 // The selected model is not in the filtered list: the list says so and nothing is selected for the person.
 const outside = computed(() => !!props.current && !models.value.some((p) => p.id === props.current));
+// Phase 45 (F043, F045): a provider reads as its short account name and its kind (never a clipped e-mail), and while
+// the list shows another provider the model still in use is named, so nobody thinks they switched when they did not.
+function shortProvider(name: string) {
+  const [account, kind] = String(name || "").split(" · ");
+  const short = account.includes("@") ? account.split("@")[0] : account;
+  return kind ? short + " · " + kind : short;
+}
+const inUse = computed(() => {
+  const p = props.profiles.find((x) => x.id === props.current);
+  return p ? (p.display_name || p.model || p.name) + " · " + shortProvider(p.provider_name || p.name) : "";
+});
 watch(
   () => props.current,
   () => {
@@ -64,12 +85,16 @@ function selectModel(event: Event) {
           @change="selectProvider"
         >
           <option value="all">All providers</option>
-          <option v-for="[id, name] in providers" :key="id" :value="id">
-            {{ name }}
+          <option v-for="[id, name] in providers" :key="id" :value="id" :title="name">
+            {{ shortProvider(name) }}
           </option></select
         ><PhCaretDown :size="10" />
       </label>
-      <label class="composer-select model-picker"
+      <!-- Phase 45 (F042): no model yet: one button that opens the ways to connect, not a disabled list -->
+      <button v-if="!profiles.length" type="button" class="composer-select model-picker connect-model" @click="emit('connect')">
+        <PhCpu :size="15" />Connect a model…
+      </button>
+      <label v-else class="composer-select model-picker"
         ><PhCpu :size="15" />
         <select
           :value="outside ? '' : current || ''"
@@ -78,10 +103,17 @@ function selectModel(event: Event) {
           @change="selectModel"
         >
           <option v-if="!models.length" value="">Choose model</option>
-          <option v-else-if="outside" value="" disabled>Choose a model from this provider</option>
-          <option v-for="p in models" :key="p.id" :value="p.id">
-            {{ p.display_name || p.model || p.name }}
-          </option></select
+          <option v-else-if="outside" value="" disabled>{{ inUse ? "In use: " + inUse + " · choose one to switch" : "Choose a model from this provider" }}</option>
+          <template v-if="groups.length">
+            <optgroup v-for="g in groups" :key="g.id" :label="g.label">
+              <option v-for="p in g.items" :key="p.id" :value="p.id">{{ p.display_name || p.model || p.name }}</option>
+            </optgroup>
+          </template>
+          <template v-else>
+            <option v-for="p in models" :key="p.id" :value="p.id">
+              {{ p.display_name || p.model || p.name }}
+            </option>
+          </template></select
         ><PhCaretDown :size="10" />
       </label>
     </div>
@@ -112,11 +144,15 @@ function selectModel(event: Event) {
   gap: 5px;
   min-width: 0;
 }
+/* Phase 45 (F084, audit rounds R3-R7): WebKit cuts a select's text without an ellipsis (a connection's name and "· ChatGP");
+   the usual names fit, and the select sizes to its text where WebKit supports it */
 .provider-picker select {
-  max-width: 130px;
+  max-width: 180px;
+  field-sizing: content;
 }
 .model-picker select {
-  max-width: 165px;
+  max-width: 200px;
+  field-sizing: content;
 }
 .compact .provider-picker select {
   max-width: 95px;

@@ -121,6 +121,72 @@ def default_ps():
     return done.stdout.decode('utf-8', 'replace').splitlines()
 
 
+PAGE_FACTS_JS = ('JSON.stringify({visibility:document.visibilityState,has_focus:document.hasFocus(),'
+                 'active:document.activeElement?(document.activeElement.id||document.activeElement.tagName):null,'
+                 'field:(document.getElementById("name")||{}).value||""})')
+
+
+def page_facts(browser, tab_id):
+    """The fixture page's own focus facts (a diagnosis around the input act, never a criterion)."""
+    try:
+        tab, _ = browser.attach(tab_id)
+        result = browser.conn.call('Runtime.evaluate', {'expression': PAGE_FACTS_JS, 'returnByValue': True},
+                                   session=tab.session, timeout=browser.timeout)
+        value = (result.get('result') or {}).get('value')
+        return json.loads(value) if isinstance(value, str) else {'unreadable': 'no value'}
+    except Exception as exc:
+        return {'unreadable': type(exc).__name__}
+
+
+GEOMETRY_JS = ('JSON.stringify({dpr:devicePixelRatio,inner:[innerWidth,innerHeight],'
+               'rect:(()=>{const e=document.getElementById("name");if(!e)return null;'
+               'const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()})')
+
+
+def geometry_facts(browser, tab_id):
+    """Where the fixture's text field is by each measure Pebble uses (a diagnosis for a moved-element refusal)."""
+    facts = {}
+    try:
+        tab, _ = browser.attach(tab_id)
+
+        def call(method, params=None):
+            return browser.conn.call(method, params or {}, session=tab.session, timeout=browser.timeout)
+        value = (call('Runtime.evaluate', {'expression': GEOMETRY_JS, 'returnByValue': True}).get('result') or {}).get(
+            'value')
+        facts['page'] = json.loads(value) if isinstance(value, str) else None
+        metrics = call('Page.getLayoutMetrics')
+        facts['layout_metrics'] = {k: metrics.get(k) for k in ('cssContentSize', 'contentSize', 'cssLayoutViewport',
+                                                                'layoutViewport', 'cssVisualViewport', 'visualViewport')}
+        raw = call('DOMSnapshot.captureSnapshot', {'computedStyles': [], 'includeDOMRects': True})
+        for item in raw.get('documents') or []:
+            facts.setdefault('snapshot_documents', []).append(
+                {k: item.get(k) for k in ('contentWidth', 'contentHeight', 'scrollOffsetX', 'scrollOffsetY')})
+        for doc in bs._documents(raw).values():
+            for node in doc.by_index:
+                if node.name == 'INPUT' and node.attrs.get('id') == 'name':
+                    facts['snapshot_bounds'], facts['snapshot_scroll'] = node.bounds, list(doc.scroll)
+        root = call('DOM.getDocument', {'depth': 0}).get('root', {}).get('nodeId')
+        node = call('DOM.querySelector', {'nodeId': root, 'selector': '#name'}).get('nodeId')
+        quads = call('DOM.getContentQuads', {'nodeId': node}).get('quads')
+        facts['content_quad'] = quads[0] if isinstance(quads, list) and quads else None
+    except Exception as exc:
+        facts['unreadable'] = type(exc).__name__
+    return facts
+
+
+def default_front():
+    """The frontmost app's bundle ID (lsappinfo), or None."""
+    try:
+        asn = subprocess.run(['/usr/bin/lsappinfo', 'front'], stdin=subprocess.DEVNULL, capture_output=True,
+                             timeout=10, check=False).stdout.decode().strip()
+        info = subprocess.run(['/usr/bin/lsappinfo', 'info', '-only', 'bundleid', asn], stdin=subprocess.DEVNULL,
+                              capture_output=True, timeout=10, check=False).stdout.decode()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r'bundleID="([A-Za-z0-9.-]{1,255})"', info)
+    return match.group(1) if match else None
+
+
 def launched_argv(env, pid):
     """The browser's command line as the system reports it (ps), or None."""
     for line in env.ps() if pid else ():
@@ -134,10 +200,11 @@ class Env:
     """What the experiment touches outside Python; tests replace each part with a fake."""
 
     def __init__(self, *, pin=None, launcher=None, lsof=default_lsof, ps=default_ps, fixture=Fixture, clock=time.time,
-                 monotonic=time.monotonic, sleep=time.sleep, tempdir=None, pages=None):
+                 monotonic=time.monotonic, sleep=time.sleep, tempdir=None, pages=None, front=None):
         if pin is None:
             from pebble.native_apps import pin as pin
         self.pin, self.launcher, self.lsof, self.ps, self.fixture = pin, launcher, lsof, ps, fixture
+        self.front = front  # the frontmost app, read only on the Mac (main); tests leave it out
         self.clock, self.monotonic, self.sleep, self.tempdir, self.pages = clock, monotonic, sleep, tempdir, pages
 
 
@@ -218,9 +285,29 @@ def experiment(app, stamp, env):
         checks['snapshot'] = {'passed': view.get('state') == 'active' and all(found.values()), 'found': found,
                               'elements': len(view.get('elements', [])), 'focused': view.get('window', {}).get('focused')}
         field = next((e for e in view.get('elements', []) if e['role'] == 'TextField'), None)
+        # 2026-10-25: the first Mac run's input ended dispatch_stale_ui with no word on which re-check stopped it, so
+        # each refusal's own code, detail and whether anything was sent are kept, with the page's focus facts around
+        # the act. A diagnosis only: the criterion is unchanged.
+        refusals, perform = [], adapter.perform
+
+        def recorded(*args, **kwargs):
+            try:
+                return perform(*args, **kwargs)
+            except Exception as exc:
+                refusals.append({'code': getattr(exc, 'code', type(exc).__name__),
+                                 'detail': ' '.join(str(getattr(exc, 'detail', None) or '').split())[:300],
+                                 'dispatched': (getattr(exc, 'facts', None) or {}).get('dispatched')})
+                raise
+        adapter.perform = recorded
+        before = {'page': page_facts(browser, plain['tab_id']), 'front_app': env.front() if env.front else None}
         result = sessions.act(sid, run, view['observation_id'], field['ref'], 'type', 'Pebble') if field else {}
+        adapter.perform = perform
         checks['input'] = {'passed': result.get('verdict') == 'occurred', 'verdict': result.get('verdict'),
-                           'basis': result.get('basis'), 'blocked_requests': browser.effect_log(plain['tab_id'])}
+                           'basis': result.get('basis'), 'blocked_requests': browser.effect_log(plain['tab_id']),
+                           'diagnosis': {'refusals': refusals, 'before': before,
+                                         'observed_frame': field.get('frame') if field else None,
+                                         'after': {'page': page_facts(browser, plain['tab_id']),
+                                                   'geometry': geometry_facts(browser, plain['tab_id'])}}}
         secure = browser.open_tab(fixture.base + '/secure')
         env.sleep(1.0)
         other = sessions.grant(chat, run, {'kind': 'browser', 'profile': 'pebble', 'tab_id': secure['tab_id'],
@@ -411,7 +498,7 @@ def main(argv=None, out=None, env=None, evidence_dir=None):
         out.write(json.dumps({'format': FORMAT, 'state': 'refused', 'error': 'Evidence for this stamp exists; choose a '
                               'new stamp.'}) + '\n')
         return EXIT_REFUSED
-    record = experiment(args.app, args.stamp, env or Env())
+    record = experiment(args.app, args.stamp, env or Env(front=default_front))
     path, digest = write_evidence(record, evidence_dir, args.stamp)
     out.write(json.dumps({'format': FORMAT, 'state': 'done', 'passed': record['passed'], 'evidence': str(path),
                           'evidence_sha256': digest, 'failed': [n for n in CRITERIA if not record['checks'][n].get('passed')],

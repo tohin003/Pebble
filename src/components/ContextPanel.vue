@@ -17,9 +17,16 @@ type View = {
   over: number | null; categories: Category[]; tools: Tool[]; toolsBasis: string; unidentified: number;
   recorded: { tokens: number | null; method: string; status: string; step: number | null } | null;
   since: { messages: number; tokens: number } | null; compactions: number; compactable: boolean; reason: string;
+  screenshots: number;  // Phase 45 (F213): pictures of windows this task sent; never kept
 };
 type Reply = Record<string, unknown>;
-const props = defineProps<{ chatId: string; runId: string }>();
+const props = defineProps<{ chatId: string; runId: string; request?: string }>();
+// Phase 45 (F141, audit round R4): the heading named the task by its id ("task 4341ed01"); it quotes the message that
+// asked for it when the window knows it, the id staying in the tooltip.
+const heading = computed(() => {
+  const asked = (props.request || '').replace(/\s+/g, ' ').trim();
+  return asked ? '“' + (asked.length > 60 ? asked.slice(0, 59) + '…' : asked) + '”' : 'task ' + props.runId.slice(0, 8);
+});
 const emit = defineEmits<{ refresh: []; error: [message: string] }>();
 const TOP_TOOLS = 8;
 const view = ref<View | null>(null);
@@ -29,7 +36,7 @@ const status = ref('');
 let generation = 0;
 
 const CATEGORY: Record<string, string> = {
-  system: 'System prompt', tool_schemas: 'Tool schemas', memory: 'Memory recall', project_host: 'Project and host messages',
+  system: 'System prompt', tool_schemas: 'Tool descriptions', memory: 'Memory recall', project_host: 'Project and Pebble messages',
   conversation: 'Conversation', tool_results: 'Tool results', framing: 'Estimate margin and framing',
 };
 const PART: Record<string, string> = {
@@ -37,6 +44,7 @@ const PART: Record<string, string> = {
   // Phase 24 (V1-108): plain names where no fixture pins the old words.
   evidence: 'Task checkpoint and evidence', plan_goal: 'Plan and goal', inbox: 'Follow-ups and Pebble notes',
   skills_plugins: 'Skills and connectors', sources: 'Project files and attachments', host_notes: 'Pebble notes',
+  screenshots: 'Screenshots of windows or the screen',  // Phase 45 (audit round R6)
 };
 const BASIS: Record<string, string> = {
   last_request: 'The last request this task sent to the model.',
@@ -52,7 +60,7 @@ const REASON: Record<string, string> = {
   no_window: 'This task has no stored window yet.',
 };
 const METHOD: Record<string, string> = {
-  o200k_local_estimate: 'local o200k estimate', responses_input_tokens: "the provider's own count", llama_template_tokens: 'the local model template',
+  o200k_local_estimate: "Pebble's own estimate", responses_input_tokens: "the provider's own count", llama_template_tokens: 'the local model template',
 };
 const named = (table: Record<string, string>, key: string, fallback = '') => (Object.hasOwn(table, key) ? table[key] : fallback);
 const reply = (value: unknown): Reply => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Reply) : {});
@@ -82,6 +90,7 @@ function review(value: unknown): View {
     recorded: recorded ? { tokens: whole(recorded.input_tokens), method: word(recorded.method), status: word(recorded.status), step: whole(recorded.step) } : null,
     since: since ? { messages: whole(since.messages) ?? 0, tokens: whole(since.tokens) ?? 0 } : null,
     compactions: whole(item.compactions) ?? 0, compactable: compact.available === true, reason: word(compact.reason),
+    screenshots: whole(item.screenshots_sent) ?? 0,
   };
 }
 
@@ -173,7 +182,7 @@ onBeforeUnmount(() => { generation++; });
 <template>
   <section class="context-panel" aria-label="Context use" :aria-busy="!!busy">
     <div class="context-head">
-      <strong>Context use · task {{ runId.slice(0, 8) }}</strong>
+      <strong :title="'Task ' + runId">Context use · {{ heading }}</strong>
       <button type="button" class="secondary-button" :disabled="!!busy" @click="load">{{ busy === 'inspect' ? 'Loading…' : 'Refresh' }}</button>
     </div>
     <p class="context-note">Counted by Pebble from its own records: names and counts only, never message text. Nothing here asks the model.</p>
@@ -184,20 +193,20 @@ onBeforeUnmount(() => { generation++; });
         <div class="context-bar" role="img" :aria-label="barLabel">
           <span v-for="segment in segments" :key="segment.id" :class="['context-seg', 'context-seg-' + segment.id]" :style="{ width: segment.width }" :title="segment.label + ': ' + num(segment.tokens)" />
         </div>
-        <table>
+        <div class="context-table"><table>
           <caption>By category (tokens)</caption>
-          <thead><tr><th scope="col">Category</th><th scope="col">Tokens</th><th scope="col">Share of window</th><th scope="col">Messages</th></tr></thead>
+          <thead><tr><th scope="col">Category</th><th scope="col">Tokens</th><th scope="col" title="Share of the context window">Share</th><th scope="col">Messages</th></tr></thead>
           <tbody>
             <tr v-for="(row, i) in view.categories" :key="row.id" :tabindex="i === 0 ? 0 : -1" @keydown="moveRowFocus">
-              <th scope="row"><span :class="['context-key', 'context-seg-' + row.id]" aria-hidden="true" />{{ named(CATEGORY, row.id) }}</th>
+              <th scope="row"><span class="context-name"><span :class="['context-key', 'context-seg-' + row.id]" aria-hidden="true" />{{ named(CATEGORY, row.id) }}</span></th>
               <td>{{ num(row.tokens) }}</td><td>{{ share(row.tokens) }}</td><td>{{ row.id === 'tool_schemas' ? view.tools.length + ' tools' : row.id === 'framing' ? '—' : num(row.messages) }}</td>
             </tr>
             <tr v-if="view.calibrated" :tabindex="-1" @keydown="moveRowFocus"><th scope="row"><span class="context-key context-seg-calibration" aria-hidden="true" />Route calibration</th><td>{{ num(view.calibrated) }}</td><td>{{ share(view.calibrated) }}</td><td>—</td></tr>
             <tr v-if="view.free !== null" :tabindex="-1" @keydown="moveRowFocus"><th scope="row"><span class="context-key context-seg-free" aria-hidden="true" />Free space</th><td>{{ num(view.free) }}</td><td>{{ share(view.free) }}</td><td>—</td></tr>
           </tbody>
-        </table>
+        </table></div>
         <table v-if="detailed.length">
-          <caption>Conversation and host messages</caption>
+          <caption>Conversation and Pebble messages</caption>
           <thead><tr><th scope="col">Part</th><th scope="col">Tokens</th><th scope="col">Messages</th></tr></thead>
           <tbody>
             <tr v-for="(part, i) in detailed" :key="part.id" :tabindex="i === 0 ? 0 : -1" @keydown="moveRowFocus">
@@ -206,7 +215,7 @@ onBeforeUnmount(() => { generation++; });
           </tbody>
         </table>
         <table v-if="topTools.length">
-          <caption>Largest tool schemas</caption>
+          <caption>Largest tool descriptions</caption>
           <thead><tr><th scope="col">Tool</th><th scope="col">Tokens</th></tr></thead>
           <tbody>
             <tr v-for="(tool, i) in topTools" :key="tool.name + ':' + i" :tabindex="i === 0 ? 0 : -1" @keydown="moveRowFocus">
@@ -216,13 +225,15 @@ onBeforeUnmount(() => { generation++; });
         </table>
         <p v-if="otherTools.count" class="context-note">And {{ otherTools.count }} more {{ otherTools.count === 1 ? 'tool' : 'tools' }}, {{ num(otherTools.tokens) }} tokens.</p>
         <p v-if="view.toolsBasis === 'eligible_offer'" class="context-note">No request was recorded, so these are the tools this task could be offered; a step may send fewer.</p>
-        <p v-if="view.unidentified" class="context-note">{{ view.unidentified }} recorded {{ view.unidentified === 1 ? 'schema is' : 'schemas are' }} no longer stored with this task and {{ view.unidentified === 1 ? 'is' : 'are' }} not counted above.</p>
+        <p v-if="view.unidentified" class="context-note">{{ view.unidentified }} {{ view.unidentified === 1 ? 'tool description sent earlier is' : 'tool descriptions sent earlier are' }} no longer stored with this task and {{ view.unidentified === 1 ? 'is' : 'are' }} not counted above.</p>
         <p v-if="view.recorded && view.recorded.tokens !== null" class="context-note">
-          The host's own count when it sent this window<template v-if="view.recorded.step !== null"> (step {{ view.recorded.step }})</template>: {{ num(view.recorded.tokens) }} tokens, by {{ named(METHOD, view.recorded.method, 'its own estimate') }}<template v-if="view.recorded.status === 'retired'">, after retiring older context</template>.
+          Pebble's own count when it sent this window<template v-if="view.recorded.step !== null"> (step {{ view.recorded.step }})</template>: {{ num(view.recorded.tokens) }} tokens, by {{ named(METHOD, view.recorded.method, 'its own estimate') }}<template v-if="view.recorded.status === 'retired'">, after retiring older context</template>.
         </p>
         <p v-if="view.recorded && view.recorded.status === 'exceeded'" class="context-note">The last request did not fit its window and was not sent.</p>
         <p v-if="view.since && view.since.messages" class="context-note">Added since: {{ num(view.since.messages) }} {{ view.since.messages === 1 ? 'message' : 'messages' }}, {{ num(view.since.tokens) }} tokens. They join the next request.</p>
         <p class="context-note">Context archives for this task: {{ view.compactions }}.</p>
+        <!-- Phase 45 (F213, audit round R8): the pictures sent during a task are not in the stored window above -->
+        <p v-if="view.screenshots" class="context-note">Pictures of windows sent in this task: {{ num(view.screenshots) }}. They are not kept in the conversation, so the window above does not count them.</p>
       </template>
       <div class="context-compact">
         <button v-if="!confirming" ref="askButton" type="button" class="secondary-button" :disabled="!!busy || !view.compactable" :aria-describedby="view.compactable ? undefined : 'context-compact-reason'" @click="ask">Compact…</button>
@@ -243,6 +254,14 @@ onBeforeUnmount(() => { generation++; });
 <style scoped>
 .context-panel { padding: 14px; margin-top: 12px; border: 1px solid var(--border, #b9b9b9); border-radius: 12px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
 .context-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Phase 45 (F172, audit round R5): Refresh broke over three lines (Ref/res/h) and "messages" as message/s at the drawer's
+   normal width; the button keeps its word, the heading and the category names wrap between words */
+.context-head strong { min-width: 0; }
+.context-head .secondary-button { flex: none; white-space: nowrap; }
+.context-panel tbody th { overflow-wrap: normal; word-break: normal; }
+/* Phase 45 (F202, audit round R7): the swatch stays with its name ("Conversation" wrapped below it) */
+.context-name { display: inline-flex; align-items: baseline; }
+.context-name .context-key { flex: none; }
 .context-panel p { margin: 6px 0; }
 .context-note { color: var(--muted); font-size: 11px; }
 .context-summary { font-weight: 600; }
@@ -264,6 +283,10 @@ onBeforeUnmount(() => { generation++; });
 @media (prefers-reduced-motion: reduce) { .context-seg { transition: none; } }
 :global(.reduced-motion) .context-seg { transition: none; }
 .context-panel table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+/* F141: numbers and column headers stay whole (2,444 broke as "2,44" over "4", Tokens as "Toke" over "ns"); a table
+   wider than the drawer scrolls sideways */
+.context-table { overflow-x: auto; }
+.context-panel thead th, .context-panel td { white-space: nowrap; overflow-wrap: normal; }
 .context-panel caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
 .context-panel th, .context-panel td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--border, #b9b9b9); }
 .context-panel th { font-weight: 500; }

@@ -120,3 +120,21 @@ def test_a_handoff_of_a_handoff_does_not_widen_to_the_first_source(app):
     send(app, h2, 'Between us, in H2 on this Mac: CHAIN-4471.', 'device')
     send(app, h2, 'Carry on.', 'luna')
     assert b'CHAIN-4471' not in app.model.http.requests[-1]['body']
+
+
+def test_a_capture_typed_on_this_mac_stays_here_and_one_typed_in_the_cloud_still_travels(app, tmp_path):
+    # Phase 46 (1.9.27, impact run 62): more phrasings are captured now ("Note for later: ..."). One typed to the model on
+    # this Mac is held back from cloud requests like anything learned there (V1-002, Memory.attribute_capture); one
+    # typed on a cloud route reaches the next cloud conversation as before (the memory family's later sessions).
+    project = tmp_path / 'project'
+    project.mkdir()
+    chats = []
+    for _ in range(3):
+        chats.append(app.new_chat()['id'])
+        app.set_workspace(chats[-1], str(project))
+    send(app, chats[0], 'Note for later: the locker code is LOCKER-5521.', 'device')
+    send(app, chats[1], 'Note for later: the ferry leaves at FERRY-0915.', 'luna')
+    send(app, chats[2], 'What did I note for later about the locker code and the ferry?', 'luna')
+    body = app.model.http.requests[-1]['body']
+    assert b'FERRY-0915' in body, 'positive control: the cloud capture travels'
+    assert b'LOCKER-5521' not in body

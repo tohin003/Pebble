@@ -34,6 +34,7 @@ from collections import Counter
 from pathlib import Path
 
 from .policy import PolicyError
+from .zone import person_zone
 
 ENV_SWITCH = 'PEBBLE_CODE_MODE'  # '0' keeps 1.4.0's requests: RunCode is never offered
 CODE_LIMIT = 20_000              # characters of script
@@ -54,11 +55,26 @@ INNER = {
     'read_run_evidence': 'ReadRunEvidence', 'read_attachment': 'ReadAttachment',
     'web_search': 'WebSearch', 'read_url': 'ReadURL',
     'write': 'Write', 'edit': 'Edit', 'append': 'Append', 'plugin_call': 'PluginCall',
+    # Phase 41 (1.7.0): the Companion's tools, when the step offers them (a conversation without a project)
+    'read_file': 'ReadFile', 'write_file': 'WriteFile', 'edit_file': 'EditFile', 'shell': 'Shell',
 }
+WORKSHOP = ('make_tool', 'keep_tool')  # Phase 41: answered by workshop.py, never through INNER
+# Phase 46 (1.9.28, golden dev d-wr-01 on Opus: 11 of 12 turns spent a first script printing what pebble.read returned,
+# or calling open(), which the sandbox refuses; about 10 s of 34 s): the example names the text's key and the limits
+# name open(). Above 8K only, as RunCode is (runner.py). Folded into the sentences, 10 tokens a request rather than a
+# 31-token sentence of its own, which took the shipped offer's context-cost bound (test_context_cost_24) to 2.76.
 DESCRIPTION = (
-    "Run a short Python script that calls this run's tools through `pebble`, e.g. pebble.read(file_path='a.py'), "
+    "Run a short Python script that calls this run's tools through `pebble`, e.g. "
+    "pebble.read(file_path='a.py')['untrusted_source'] (the text), "
     "pebble.grep(pattern='TODO'); pebble.tools() lists them, pebble.Refused is raised on a refusal. Only printed "
-    "output returns. For many reads, searches or filters in one step; same approvals as direct calls; 60 s; no network.")
+    "output returns. For many reads, searches or filters in one step; same approvals as direct calls; 60 s; no network "
+    "or open().")
+# Phase 41 (1.7.0, Pebble's Workshop part 2): one sentence more while tool making is on; PEBBLE_TOOL_MAKING=0 keeps
+# 1.6.0's description (the catalogue is fixed when Pebble starts).
+WORKSHOP_SENTENCE = (" After a task needed a calculation, pebble.make_tool(name, purpose, code, tests, inputs) makes a "
+                     "tested pure tool, used as pebble.mine.<name>(**args); pebble.keep_tool(name, reason) keeps it.")
+if os.environ.get('PEBBLE_TOOL_MAKING', '1') != '0':
+    DESCRIPTION += WORKSHOP_SENTENCE
 SPEC = {'type': 'function', 'function': {'name': 'RunCode', 'description': DESCRIPTION, 'parameters': {
     'type': 'object', 'properties': {
         'code': {'type': 'string', 'maxLength': CODE_LIMIT},
@@ -160,15 +176,46 @@ def run(app, args, ws, cid, call_id, step_tools):
     rid = app.active_run
     if not rid or app.active != cid or not execution or execution.run_id != rid or not isinstance(call_id, str):
         raise PolicyError('RunCode runs only inside its owning root run.')
-    offered = {t['function']['name']: t for t in step_tools or ()}
+    from . import copy_check
+    if copy_check.enabled() and ws is not None:
+        # Phase 46 (1.9.28, b-new C1, behind PEBBLE_1928_COPY_CHECK): a file's lines typed in by hand with a slip are
+        # refused once per run, before anything runs; a check that cannot run never stops the script
+        try:
+            from .requirements import seen_paths
+            refusal = None if app.store.query("SELECT 1 FROM run_events WHERE run_id=? AND kind='copy_slip_refused' "
+                                              'LIMIT 1', (rid,)) else copy_check.check(
+                ws.root, seen_paths(ws.root, app.runs.tools(rid), app.current_text), code)
+        except Exception:
+            refusal = None
+        if refusal:
+            app.runs.note(rid, 'copy_slip_refused', {'call_id': call_id})
+            raise PolicyError(refusal)
+    offered ={t['function']['name']: t for t in step_tools or ()}
     tools = {fn: _help(offered[name]) for fn, name in INNER.items() if name in offered}
+    from . import workshop
+    tool_making = workshop.enabled()
+    mine = workshop.mine_for_run(app, rid, code, validate_tool) if tool_making else None
+    reported = {}  # uses already recorded from this script (keep requests report them mid-script, the done line at the end)
+
+    def sync(counts):
+        if not isinstance(counts, dict):
+            return
+        delta = {}
+        for name, pair in counts.items():
+            if isinstance(pair, list) and len(pair) == 2 and all(isinstance(n, int) and n >= 0 for n in pair):
+                seen = reported.get(name, [0, 0])
+                if pair[0] >= seen[0] and pair[1] >= seen[1]:
+                    delta[name] = [pair[0] - seen[0], pair[1] - seen[1]]
+                    reported[name] = list(pair)
+        workshop.record_uses(app, rid, {k: v for k, v in delta.items() if v != [0, 0]})
     exe, command, runtime, main = _worker_command()
     started, calls, refused, receipts, sent = time.monotonic(), Counter(), 0, [], 0
     done = None
     with tempfile.TemporaryDirectory(prefix='pebble-code-') as folder:
         temp = Path(folder).resolve()
         env = {'HOME': str(temp), 'TMPDIR': str(temp) + '/', 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8',
-               'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONIOENCODING': 'utf-8'}
+               'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONIOENCODING': 'utf-8',
+               **person_zone()}  # Phase 46: the person's TZ (zone.py)
         process = subprocess.Popen(['/usr/bin/sandbox-exec', '-p', profile(exe, runtime, temp, main), *command],
                                    cwd=temp, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
@@ -183,7 +230,10 @@ def run(app, args, ws, cid, call_id, step_tools):
             resident = None
         sampled = 0.0
         try:
-            process.stdin.write((json.dumps({'code': code, 'tools': tools}, ensure_ascii=True) + '\n').encode())
+            header = {'code': code, 'tools': tools}
+            if tool_making:
+                header.update(mine=mine, workshop=True)
+            process.stdin.write((json.dumps(header, ensure_ascii=True) + '\n').encode())
             process.stdin.flush()
             expected = 1
             while done is None and stop is None:
@@ -217,8 +267,13 @@ def run(app, args, ws, cid, call_id, step_tools):
                     if message.get('op') != 'call' or message.get('id') != expected:
                         raise PolicyError('The script broke its protocol; it was stopped.')
                     expected += 1
-                    answer = _serve(app, message, tools, offered, step_tools, ws, cid, rid, call_id, calls,
-                                    receipts, Actor)
+                    if tool_making and message.get('tool') in WORKSHOP:
+                        if message.get('tool') == 'keep_tool':
+                            sync(message.get('uses'))
+                        answer = _workshop(app, message, rid, cid, calls)
+                    else:
+                        answer = _serve(app, message, tools, offered, step_tools, ws, cid, rid, call_id, calls,
+                                        receipts, Actor)
                     if 'error' in answer:
                         refused += 1
                     else:
@@ -253,6 +308,8 @@ def run(app, args, ws, cid, call_id, step_tools):
             for stream in (process.stdin, process.stdout):
                 if stream and not stream.closed:
                     stream.close()
+    if tool_making and isinstance((done or {}).get('mine'), dict):
+        sync(done['mine'])
     printed = (done or {}).get('printed') or ''
     if not isinstance(printed, str):
         printed = ''
@@ -271,29 +328,125 @@ def run(app, args, ws, cid, call_id, step_tools):
     }
 
 
+def _workshop(app, message, rid, cid, calls):
+    """Phase 41: pebble.make_tool and pebble.keep_tool, answered by workshop.py (a made tool is callable at once)."""
+    from . import workshop
+    args = message.get('args')
+    if not isinstance(args, dict):
+        return {'error': 'Give make_tool and keep_tool keyword arguments.'}
+    if sum(calls.values()) >= MAX_CALLS:
+        return {'error': f'A script may make at most {MAX_CALLS} calls.'}
+    calls['MakeTool' if message['tool'] == 'make_tool' else 'KeepTool'] += 1
+    try:
+        if message['tool'] == 'make_tool':
+            before = [t['name'] for t in app.runs.tools(rid)]
+            result, made = workshop.make(app, rid, args, validate_tool, before)
+            return {'result': result, **({'mine': made} if made else {})}
+        return {'result': workshop.keep(app, rid, cid, args, validate_tool)}
+    except PolicyError as exc:
+        return {'error': str(exc)}
+
+
+def validate_tool(code, tests, cases, case_seconds=1.0):
+    """Phase 41: run one tool's tests and generated cases in a fresh worker under the script sandbox (validate mode);
+    returns the worker's report (untrusted data, read by workshop.verdict)."""
+    exe, command, runtime, main = _worker_command()
+    limit = min(WALL_SECONDS, 5 + case_seconds * (len(tests) + 2 * len(cases)) * 1.2)
+    with tempfile.TemporaryDirectory(prefix='pebble-tool-') as folder:
+        temp = Path(folder).resolve()
+        env = {'HOME': str(temp), 'TMPDIR': str(temp) + '/', 'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8',
+               'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONIOENCODING': 'utf-8',
+               **person_zone()}  # Phase 46: the person's TZ (zone.py)
+        process = subprocess.Popen(['/usr/bin/sandbox-exec', '-p', profile(exe, runtime, temp, main), *command],
+                                   cwd=temp, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            header = {'mode': 'validate', 'code': code, 'tests': tests, 'cases': cases, 'case_seconds': case_seconds}
+            out, _ = process.communicate((json.dumps(header, ensure_ascii=True) + '\n').encode(), timeout=limit)
+        except subprocess.TimeoutExpired:
+            return {'op': 'validated', 'load_error': f'validation ran past its {int(limit)}-second limit'}
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            process.wait(timeout=5)
+    try:
+        return json.loads(out.decode('utf-8', 'replace').strip().splitlines()[-1][:LINE_BYTES])
+    except (ValueError, IndexError):
+        return {'op': 'validated', 'load_error': 'the validation worker gave no report'}
+
+
 def _serve(app, message, tools, offered, step_tools, ws, cid, rid, call_id, calls, receipts, Actor):
     """One script call through the direct-call path; returns {'result': ...} or {'error': ...}."""
     function, args = message.get('tool'), message.get('args')
     if function not in tools or not isinstance(args, dict):
         return {'error': f'pebble.{function} is not available in this run; pebble.tools() lists what is.'}
-    if sum(calls.values()) >= MAX_CALLS:
-        return {'error': f'A script may make at most {MAX_CALLS} calls.'}
-    name = INNER[function]
-    inner = f'{call_id}:c{sum(calls.values()) + 1}'
-    calls[name] += 1
-    try:
-        app.validate(name, args, step_tools)
-        app.authorize(name, args, Actor.root(rid), rid, call_id=inner, layers=('schema',))
-        _reserve(app, rid, inner, name, args)
-        receipts.append(inner)
-        app.emit('progress', {'chat_id': cid, 'run_id': rid, 'kind': 'done', 'activity': None,
-                              'label': 'Script: ' + app.tool_label(name, args)})
-        return {'result': app.execute(name, args, ws, cid, call_id=inner)}
-    except PolicyError as exc:
-        return {'error': str(exc)}
-    except InterruptedError:
-        raise
-    except Exception as exc:
-        if _state(app, rid, inner) in ('running', 'uncertain'):
-            raise  # an effect whose outcome is unknown stops the script and the run, as a direct call would
-        return {'error': f'The tool failed ({type(exc).__name__}).'}
+
+    def one(name, args):
+        if sum(calls.values()) >= MAX_CALLS:
+            return {'error': f'A script may make at most {MAX_CALLS} calls.'}
+        inner = f'{call_id}:c{sum(calls.values()) + 1}'
+        calls[name] += 1
+        try:
+            app.validate(name, args, step_tools)
+            app.authorize(name, args, Actor.root(rid), rid, call_id=inner, layers=('schema',))
+            _reserve(app, rid, inner, name, args)
+            receipts.append(inner)
+            app.emit('progress', {'chat_id': cid, 'run_id': rid, 'kind': 'done', 'activity': None,
+                                  'label': 'Script: ' + app.tool_label(name, args)})
+            return {'result': app.execute(name, args, ws, cid, call_id=inner)}
+        except PolicyError as exc:
+            return {'error': str(exc)}
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            if _state(app, rid, inner) in ('running', 'uncertain'):
+                raise  # an effect whose outcome is unknown stops the script and the run, as a direct call would
+            return {'error': f'The tool failed ({type(exc).__name__}).'}
+    answer = one(INNER[function], args)
+    return _whole_read(one, args, answer) if function == 'read' and 'result' in answer else answer
+
+
+# Phase 46 (1.9.28, w10's security review, F1-1): above 8K a Read returns one page (200 lines unless the script gave a
+# limit, and at most a character budget of that span), while the description names ['untrusted_source'] as the text,
+# so a script could total a column over the first page and print a confident wrong number. A pebble.read with no line
+# range returns the whole file, and one with a range returns the whole range: the rest is read page by page through the
+# same path (each page its own Read and receipt, bound to the first page's file_hash), within the bytes a script may
+# receive. A larger file is refused, never cut. A script that pages itself (char_offset) gets the page it asked for.
+WHOLE_READ_TOO_LARGE = ('{path} is larger than a script may receive in one call; read it in parts with offset and limit '
+                        '(at most 2000 lines each) and combine them in the script.')
+
+
+def _whole_read(one, args, answer):
+    first = answer['result']
+    if 'char_offset' in args or not isinstance(first, dict) or not isinstance(first.get('untrusted_source'), str) \
+            or type(first.get('total_lines')) is not int or type(first.get('start_line')) is not int:
+        return answer
+    whole = 'offset' not in args and 'limit' not in args
+    span = {key: args[key] for key in ('file_path', 'offset', 'limit') if key in args}
+    start, text, page, parts = first['start_line'], first['untrusted_source'], first, [first['untrusted_source']]
+    while True:
+        if page.get('next_char_offset') is not None:  # the line range continues by characters
+            nxt = {**span, 'char_offset': page['next_char_offset'], 'expected_hash': first['file_hash']}
+        elif whole and start - 1 + len(text.splitlines(keepends=True)) < first['total_lines']:  # more lines follow
+            start += len(text.splitlines(keepends=True))
+            span, text = {'file_path': args['file_path'], 'offset': start, 'limit': 2000}, ''
+            nxt = {**span, 'expected_hash': first['file_hash']}
+        else:
+            break
+        got = one('Read', nxt)
+        if 'error' in got:
+            return got
+        page = got['result']
+        if not isinstance(page, dict) or not isinstance(page.get('untrusted_source'), str) \
+                or page.get('file_hash') != first['file_hash'] or not page['untrusted_source']:
+            return {'error': 'The file changed while the script read it; read it again.'}
+        text += page['untrusted_source']
+        parts.append(page['untrusted_source'])
+        if sum(len(part) for part in parts) > RESULT_BYTES:
+            return {'error': WHOLE_READ_TOO_LARGE.format(path=args.get('file_path'))}
+    if len(parts) == 1:
+        return answer  # one page held all of it: the result is the Read's own, unchanged
+    return {'result': {**first, 'untrusted_source': ''.join(parts), 'next_char_offset': None, 'excerpt_complete': True,
+                       'pages': len(parts)}}

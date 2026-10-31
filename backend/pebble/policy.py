@@ -46,6 +46,23 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+MAGIC = ((b'\x1f\x8b', 'gzip-compressed data'), (b'PK\x03\x04', 'a ZIP archive'), (b'%PDF', 'a PDF document'),
+         (b'\x89PNG', 'a PNG image'), (b'\xff\xd8\xff', 'a JPEG image'), (b'GIF8', 'a GIF image'),
+         (b'SQLite format 3\x00', 'an SQLite database'), (b'BZh', 'bzip2-compressed data'),
+         (b'\xfd7zXZ\x00', 'xz-compressed data'), (b'\x7fELF', 'an ELF executable'),
+         (b'\xcf\xfa\xed\xfe', 'a Mach-O executable'))
+
+
+def binary_note(name, data):
+    """Why Read shows no text for a file that is not UTF-8, and how to look at it instead."""
+    kind = next((label for magic, label in MAGIC if data.startswith(magic)), None)
+    if kind is None and data[257:262] == b'ustar':
+        kind = 'a tar archive'
+    return (f'{name} is not UTF-8 text ({len(data):,} bytes' + (f', starting like {kind}' if kind else '') + '), so Read '
+            f'cannot show it. Look at it with a read-only command such as `file {name}`, or `xxd -l 256 {name}` for its '
+            'first bytes.')
+
+
 class Workspace:
     def __init__(self, root):
         self.root = Path(root).expanduser().resolve(strict=True)
@@ -75,6 +92,14 @@ class Workspace:
         if not isinstance(name, str) or not name or len(name) > 512:
             raise PolicyError("A relative project file path is required.")
         rel = Path(name)
+        if rel.is_absolute():
+            # Phase 45 (F067, audit R2): the model named a file inside the project by its absolute path and was refused
+            # ("Paths must stay inside the selected project" for a file that was). Inside the root it becomes the same
+            # relative path; every check below still applies to it, symlinks included.
+            raw, root = os.path.normpath(name), str(self.root).rstrip("/")
+            if not raw.startswith(root + "/"):
+                raise PolicyError("Paths must stay inside the selected project.")
+            rel = Path(raw[len(root) + 1:])
         if rel.is_absolute() or ".." in rel.parts:
             raise PolicyError("Paths must stay inside the selected project.")
         for part in rel.parts:
@@ -301,6 +326,39 @@ def installed_apps():
     return sorted(
         {r["id"]: r for r in result}.values(), key=lambda r: r["name"].lower()
     )
+
+
+# Phase 45 (F259): the installed apps' display names, read at most every APP_NAMES_SECONDS (a request names an app)
+APP_NAMES_SECONDS = 600.0
+_app_names = {"at": None, "names": ()}
+
+
+OWN_NAMES = frozenset({'Pebble'})  # Pebble never opens itself (and "my Pebble test inbox" names no app to use)
+
+
+def installed_app_names(clock=None):
+    """The installed apps' display names of 4 or more characters, longest first, Pebble's own left out; read again
+    after APP_NAMES_SECONDS."""
+    import time
+    now = (clock or time.monotonic)()
+    if _app_names["at"] is None or now - _app_names["at"] > APP_NAMES_SECONDS:
+        try:
+            names = {a["name"] for a in installed_apps() if len(a["name"]) >= 4 and a["name"] not in OWN_NAMES}
+        except (OSError, KeyError):
+            names = set()
+        _app_names.update(at=now, names=tuple(sorted(names, key=lambda n: (-len(n), n))))
+    return _app_names["names"]
+
+
+def names_installed_app(text, names=None):
+    """The first installed app the text names by its exact display name (as written: "Use Calculator to ..."), as a
+    whole word or words, or None."""
+    import re
+    text = text or ""
+    for name in installed_app_names() if names is None else names:
+        if name in text and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text):
+            return name
+    return None
 
 
 def launch_app(app_id):

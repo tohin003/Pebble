@@ -411,7 +411,8 @@ def test_the_extension_runs_exactly_the_backends_methods_isolated_functions_and_
     releases = re.search(r"RELEASES = new Set\(\[([^\]]*)\]\)", (EXTENSION / 'lib/policy.mjs').read_text()).group(1)
     assert set(re.findall(r"'([A-Za-z.]+)'", releases)) == bb.RELEASES
     functions = _block(EXTENSION / 'lib/policy.mjs', 'ISOLATED FUNCTIONS')
-    assert functions == [bs.CONTAINS_JS, bs.SELECT_ALL_JS, bs.CHOOSE_JS, bs.OPTION_JS, bs.DETAILS_JS, bs.FOCUSED_JS]
+    assert functions == [bs.CONTAINS_JS, bs.SELECT_ALL_JS, bs.CHOOSE_JS, bs.OPTION_JS, bs.DETAILS_JS, bs.FOCUSED_JS,
+                         bs.CLICK_JS]  # Phase 44: a hidden tab's press
     assert set(functions) == bb.ISOLATED
     lists = _block(EXTENSION / 'lib/credential.mjs', 'CREDENTIAL LISTS')
     assert lists == {'words': list(bb.CREDENTIAL_WORDS), 'hosts': list(bb.CREDENTIAL_HOSTS),
@@ -1186,7 +1187,11 @@ def test_host_only_screenshot_and_navigation_stay_on_the_shared_granted_site(sta
     with pytest.raises(ScreenRefused):
         stack.tabs.screenshot('5')
     tool_names = {t['function']['name'] for t in __import__('pebble.tool_catalogue', fromlist=['TOOLS']).TOOLS}
-    assert not tool_names & {'Screenshot', 'Navigate', 'BrowserNavigate', 'ChromeScreenshot'}, 'no new model tool'
+    # D95 (Phase 40, 1.6.0, the person's D93): 'Screenshot' is now the macOS whole-screen capture, which never uses this
+    # bridge; the bridge's own tab screenshots and navigation stay host-only and per grant, as asserted here.
+    assert not tool_names & {'Navigate', 'BrowserNavigate', 'ChromeScreenshot'}, 'no new model tool'
+    companion = (Path(__file__).resolve().parents[1] / 'pebble/companion_tools.py').read_text(encoding='utf-8')
+    assert 'browser_bridge' not in companion and 'chrome_tabs' not in companion, 'the macOS capture never uses the bridge'
 
 
 def test_pebbles_own_browser_stop_leaves_chrome_sessions_alone(stack):

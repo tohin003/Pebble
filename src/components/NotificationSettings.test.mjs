@@ -174,14 +174,14 @@ try {
   await set('Show macOS notifications', true);
   await click('Save notification preferences');
   assert.equal(asked(), 1);
-  assert.deepEqual(last('setting'), { key: 'notifications', value: { enabled: true, kinds, preview: 'title', quiet_hours: null } });
+  assert.deepEqual(last('setting'), { key: 'notifications', value: { enabled: true, kinds, preview: 'title', quiet_hours: null, replies: true } });
   assert.ok(page().includes('Notification preferences saved.') && page().includes('macOS allows Pebble notifications.'));
   // Later edits do not ask again.
   await set('Failures', false);
   await set('Title and a short preview', true);
   await click('Save notification preferences');
   assert.equal(asked(), 1);
-  assert.deepEqual(last('setting').value, { enabled: true, kinds: { ...kinds, failed: false }, preview: 'body', quiet_hours: null });
+  assert.deepEqual(last('setting').value, { enabled: true, kinds: { ...kinds, failed: false }, preview: 'body', quiet_hours: null, replies: true });
 
   // Quiet hours are validated locally and carry this device's zone.
   await set('Hold banners during quiet hours', true);
@@ -230,7 +230,7 @@ try {
   assert.deepEqual(invokes.at(-1), { command: 'login_item_set', args: { enabled: false } });
   shellState.login = 'not_found';
   await state.load(); await settle();
-  assert.ok(page().includes('Unsigned development builds often report this.'));
+  assert.ok(page().includes('add Pebble in System Settings → General → Login Items'));  // Phase 45 (F008)
   assert.ok(!all(root).some(element => element.type === 'button' && /at login/.test(nameOf(element))), 'no toggle for a login item the build cannot register');
 
   // A malformed host reply is refused and changes nothing.

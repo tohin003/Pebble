@@ -2,7 +2,8 @@
 in the bundle (V1-045), and Pebble's own Apache-2.0 licence (V1-047).
 
 Synthetic stages, node_modules, registries and distributions are built under tmp_path; the repository's real lock
-files and node_modules are read, never written. Nothing is downloaded.
+files and node_modules are read, never written. Nothing is downloaded. The checked-in notices file is
+src-tauri/resources/licenses/THIRD-PARTY-NOTICES.txt (regenerated whenever a lock file changes, as at each version).
 """
 import hashlib
 import importlib.util

@@ -279,13 +279,17 @@ def test_sleep_is_recorded_as_ledger_evidence_for_the_active_root(tmp_path):
 
 def test_system_clocks_are_finite_and_ordered():
     first = system_clocks()
+    time.sleep(0.05)
     second = system_clocks()
     assert all(isinstance(v, float) and v == v and abs(v) != float('inf') for v in first + second)
     assert second[1] >= first[1] and second[2] >= first[2]
     if sys.platform == 'darwin':
-        # Darwin's CLOCK_MONOTONIC counts sleep and time.monotonic does not, so total >= awake.
+        # Darwin's CLOCK_MONOTONIC counts sleep and time.monotonic does not, so over any interval total advances at
+        # least as much as awake; Lifecycle.observe compares only such deltas. Their absolute values have different
+        # bases (Phase 46, measured 2026-10-28 an hour after a restart: CLOCK_MONOTONIC read 5.6 s below
+        # time.monotonic until the Mac first slept), so the old absolute check (total >= awake - 1 s) failed there.
         # This is a sanity check of that assumption only; no real sleep is exercised.
-        assert second[2] >= second[1] - 1.0
+        assert second[2] - first[2] >= (second[1] - first[1]) - 0.02
 
 
 # Scheduler integration

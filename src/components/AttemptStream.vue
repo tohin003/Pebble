@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { rpc, subscribe } from '../bridge';
 import { emptyStream, replayStream } from '../attempt-stream.mjs';
-const props = defineProps<{ chatId: string; runId?: string }>();
+// Loaded when the inline draft first shows (the drawer's literal stream never needs it).
+const Markdown = defineAsyncComponent(() => import('./Markdown.vue'));
+// Phase 45 (F105, audit round R3): inline, in the conversation, only the reply being written shows (rendered like a
+// reply, marked as checked before it is final); a 62-second story used to appear all at once at the end, because the
+// host presents a turn's text only after its checks (H20). The drawer keeps the literal stream.
+const props = defineProps<{ chatId: string; runId?: string; inline?: boolean }>();
 const state = ref(emptyStream());
 const more = ref(false);
 const error = ref('');
@@ -58,6 +63,11 @@ onMounted(async () => {
 onBeforeUnmount(() => { disposed = true; generation++; if (timer) clearTimeout(timer); release(); });
 </script>
 <template>
+  <div v-if="inline" v-show="state.state === 'open' && !!state.text" class="live-draft" aria-label="The reply Pebble is writing">
+    <Markdown :text="state.text" />
+    <small class="live-draft-note">Writing… Pebble checks the reply before it is final.</small>
+  </div>
+  <template v-else>
   <section v-for="draft in withdrawn" :key="draft.attemptId" aria-label="Withdrawn draft">
     <p role="status">Draft withdrawn: a check asked for a fix, so this draft is not the reply. The reply follows it.</p>
     <details>
@@ -69,8 +79,14 @@ onBeforeUnmount(() => { disposed = true; generation++; if (timer) clearTimeout(t
   <section v-if="state.state === 'open' || more || error || ['discarded', 'interrupted'].includes(state.state)" aria-label="Live attempt output">
     <p role="status">{{ state.state === 'open' ? 'Receiving model response' : state.state === 'discarded' ? 'Interrupted response discarded' : state.state === 'interrupted' ? 'Model response interrupted' : 'Response history' }}</p>
     <p v-if="state.partial">Showing the latest part of this response. Earlier text remains in the saved stream.</p>
-    <pre v-if="state.state === 'open'" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ state.text }}</pre>
-    <button class="secondary-button" @click="refresh">{{ more ? 'Replay next page' : 'Refresh response' }}</button>
+    <!-- Phase 45 (F092, audit round R3): the raw text read as broken markdown here; the conversation shows the reply as
+         it is written (F105), so the literal stream waits behind a disclosure -->
+    <details v-if="state.state === 'open'">
+      <summary>Show the response as it arrives (unformatted)</summary>
+      <pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ state.text }}</pre>
+    </details>
+    <button class="secondary-button" @click="refresh">{{ more ? 'Show more of the response' : 'Refresh response' }}</button>
     <p v-if="error" role="alert">{{ error }}</p>
   </section>
+  </template>
 </template>

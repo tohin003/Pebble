@@ -111,7 +111,10 @@ def notes(app, rid, kind):
 
 
 @pytest.mark.parametrize('output', [PLAIN_FAILED, FAILED_OUTPUT], ids=['unittest', 'pytest-summary-canary'])
-def test_a_failing_unittest_through_run_command_holds_completion_and_its_output_is_never_host_voiced(env, output):
+def test_a_failing_unittest_through_run_command_holds_completion_and_its_output_is_never_host_voiced(env, output, monkeypatch):
+    # Phase 46 (1.9.28, D184; restated by the lead): a confined command runs without a card in Auto now; this test is
+    # about what follows the command, on the approval path every step that still asks takes, so it keeps the card
+    monkeypatch.setenv('PEBBLE_AUTO_RISKY_ONLY', '0')
     env.output = output
     app = env.app
     chat = app.new_chat(str(env.project))

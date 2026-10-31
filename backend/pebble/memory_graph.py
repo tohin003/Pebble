@@ -432,6 +432,118 @@ def relate_person(db, mid, now, fingerprint, correction=False):
     return result
 
 
+# Phase 46 (1.9.28, F3; golden held-out memory): an update that names the value it replaces ("dates should be DD.MM.YYYY,
+# not DD/MM/YYYY", "use ISO dates instead of DD.MM.YYYY") left the old record a standing preference beside the new one.
+# Only a distinctive value counts (a digit, '.', '/', '_', '-', ':' or '@', or a capitalised code such as CHF), so
+# "tabs, not spaces" never replaces a record that mentions spaces.
+_REPLACED = re.compile(r"\b(?:instead\s+of|rather\s+than|not|no\s+longer|stop\s+using|in\s+place\s+of|replac\w*)\s+"
+                       r"(?:the\s+|my\s+|using\s+|with\s+)?[`'\"“‘(]*([^\s,;:()`'\"“”‘’]+)", re.I)
+_TOKEN = re.compile(r"[^\s,;:()`'\"“”‘’]+")
+# Follow-up 1 (the w5 security review, finding 6: "the server uses Python 3.11, not 3.12" replaced "my laptop runs
+# Python 3.12"; "my build uses Node 20, not 18", global, replaced another project's record): the older record must have
+# the same subject, the words before its verb ("dates", "payments account"), and the same scope.
+_SUBJECT_LEAD = re.compile(r"^(?:(?:please|also|so|and|actually|correction|update)[,:]? )*(?:(?:remember|note|keep in mind)"
+                           r"(?: that)?[,:]? )?(?:(?:for|in|across) (?:all )?(?:future|later|next|upcoming|our next) "
+                           r"(?:sessions?|time)[,:]? )?", re.I)
+_SUBJECT_VERB = re.compile(r"(?:is|are|was|were|should|must|will|can|may|might|would|could|shall|has|have|had|uses?|used|"
+                           r"runs?|keeps?|lives?|goes|go|moved?|stays?|needs?|means?|points?|holds?|sits?|starts?|works?|"
+                           r"belongs?|listens?|comes?|takes?|gets?|prefers?|wants?|likes?|writes?|now)", re.I)
+_ARTICLES = frozenset('the a an my our your their its this that these those'.split())
+
+
+def replaced_values(content):
+    """The distinctive values a person statement says it replaces, casefolded."""
+    found = []
+    for match in _REPLACED.finditer(content if isinstance(content, str) else ''):
+        value = match[1].rstrip('.!?')
+        if len(value) >= 2 and (re.search(r'[\d./_:@-]', value) or len(value) >= 3 and value.isupper()):
+            found.append(value.casefold())
+    return found
+
+
+def subject_of(content):
+    """The words before a statement's verb, casefolded and without articles ("payments account" for "my payments
+    account is DE89-1234."), or None without a verb among its first ten words."""
+    words = re.findall(r"[\w'’./-]+", _SUBJECT_LEAD.sub('', ' '.join(str(content).split())))[:10]
+    subject = []
+    for word in words:
+        if _SUBJECT_VERB.fullmatch(word):
+            return tuple(subject) or None
+        if word.casefold() not in _ARTICLES:
+            subject.append(word.casefold())
+    return None
+
+
+def supersede_named(db, mid, now, fingerprint):
+    """Phase 46 (1.9.28, F3): the person's statement mid supersedes an older saved record of theirs, or a verified
+    learned profile record, that holds a value mid says it replaces; saying a replaced statement again makes it current
+    again. Follow-up 1: one record at most, in mid's own scope (never another project's, never across global and a
+    project) and with mid's subject (subject_of). The caller holds the transaction. Returns [(ID, content)] replaced."""
+    row = db.execute('SELECT kind,scope,content,created,origin FROM memories WHERE id=?', (mid,)).fetchone()
+    if not row or row[0] not in PERSON_KINDS or row[4] not in PERSON_ORIGINS:
+        return []
+    _, own, content, created, _ = row
+    if status(db, mid) == 'superseded':
+        db.execute("UPDATE memory_evidence SET status='active',superseded_by=NULL,updated=? WHERE memory_id=?", (now, mid))
+        db.execute("DELETE FROM memory_relations WHERE to_id=? AND relation='supersedes'", (mid,))
+    values, subject = replaced_values(content), subject_of(content)
+    if not values or not subject:
+        return []
+    peers = db.execute(
+        "SELECT m.id,m.content FROM memories m LEFT JOIN memory_evidence e ON e.memory_id=m.id "
+        "WHERE m.id<>? AND m.kind IN ('profile','semantic') AND m.scope=? "
+        "AND (m.origin IN (?,?) OR m.origin='auto-learned' AND m.kind='profile') "
+        'AND (e.status IS NULL OR e.status IN (' + LIVE_MARKS + ')) AND m.created<=? ORDER BY m.created DESC LIMIT ?',
+        (mid, own, *PERSON_ORIGINS, *LIVE, created, MAX_PEERS)).fetchall()
+    for peer, text in peers:
+        if not set(values) & {token.casefold().rstrip('.!?') for token in _TOKEN.findall(text)} \
+                or subject_of(text) != subject:
+            continue
+        _person_link(db, mid, now, fingerprint)
+        _person_link(db, peer, now, fingerprint)  # a learned peer has its evidence row already
+        db.execute("UPDATE memory_evidence SET status='superseded',superseded_by=?,updated=? WHERE memory_id=?",
+                   (mid, now, peer))
+        add_edge(db, mid, peer, 'supersedes', {'basis': 'person_replaced_value'}, now)
+        return [(peer, text)]
+    return []
+
+
+def supersede_slot(db, mid, now, fingerprint, learned=False):
+    """Phase 46 (1.9.28, follow-up 2, D183): the person's newer statement of what a slot holds (memory_facts
+    .preference_slots: a date format, a currency, decimals, units, the clock) replaces one older record of theirs, or a
+    verified learned profile record, in mid's own scope that holds another value of those slots and says nothing else
+    (memory_facts.slot_only): "dates should be YYYY-MM-DD from now on" replaces "I want dates written as DD.MM.YYYY.",
+    never "... and my staging settings are in deploy/staging.ini" nor a record about another slot. `learned`: mid is the
+    person's host-verified quote (memory_learning promotes it). The caller holds the transaction. Returns [(ID,
+    content)] replaced. w17 (the follow-ups review's finding 5): mid must be the person's own word on the slot itself
+    (memory_facts.own_slot), so "our invoices are in EUR" never replaces "I want conversions in CHF"."""
+    row = db.execute('SELECT kind,scope,content,created,origin FROM memories WHERE id=?', (mid,)).fetchone()
+    if not row or row[0] not in PERSON_KINDS or row[4] not in PERSON_ORIGINS and not (learned and row[4] == 'auto-learned'):
+        return []
+    _, own, content, created, _ = row
+    new = memory_facts.preference_slots(content)
+    if not new or not memory_facts.own_slot(content) or status(db, mid) not in (None, 'active'):
+        return []
+    peers = db.execute(
+        "SELECT m.id,m.content FROM memories m LEFT JOIN memory_evidence e ON e.memory_id=m.id "
+        "WHERE m.id<>? AND m.kind IN ('profile','semantic') AND m.scope=? "
+        "AND (m.origin IN (?,?) OR m.origin='auto-learned' AND m.kind='profile') "
+        'AND (e.status IS NULL OR e.status IN (' + LIVE_MARKS + ')) AND m.created<=? ORDER BY m.created DESC LIMIT ?',
+        (mid, own, *PERSON_ORIGINS, *LIVE, created, MAX_PEERS)).fetchall()
+    for peer, text in peers:
+        old = memory_facts.preference_slots(text)
+        if not old or not set(old) <= set(new) or all(old[slot] == new[slot] for slot in old) \
+                or not memory_facts.slot_only(text):
+            continue
+        _person_link(db, mid, now, fingerprint)
+        _person_link(db, peer, now, fingerprint)
+        db.execute("UPDATE memory_evidence SET status='superseded',superseded_by=?,updated=? WHERE memory_id=?",
+                   (mid, now, peer))
+        add_edge(db, mid, peer, 'supersedes', {'basis': 'person_slot_value'}, now)
+        return [(peer, text)]
+    return []
+
+
 def disputed(db, notes, limit=MAX_DISPUTED):
     """The person's own values for each disagreement among conflict `notes`
     whose records are both person claims with one key: [{'topic', 'values'}].

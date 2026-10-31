@@ -187,6 +187,31 @@ try {
   await settle();
   assert.equal(late.bindings().catalogue.value.length, 0);
 
+  // Phase 45 (F024): the window's own launcher entries come first and run at once; with no words only the recent
+  // conversations show; slash commands still fill the message box.
+  reply = async () => structuredClone(fixture);
+  const extras = [
+    { key: "theme-dark", title: "Dark theme", detail: "Appearance", run: "theme:dark", words: "appearance mode" },
+    { key: "stealth", title: "Turn Stealth Lockdown on", detail: "Hidden from screen capture", run: "stealth", words: "privacy" },
+    { key: "chat-a", title: "Trip plan", detail: "Conversation", run: "chat:a", words: "conversation", recent: true },
+    { key: "chat-b", title: "Old recipes", detail: "Conversation", run: "chat:b", words: "conversation", recent: false },
+  ];
+  const launcher = mount(reactive({ surface: "main", running: false, extras }));
+  await settle();
+  const l = launcher.bindings();
+  assert.deepEqual(l.entries.value.slice(0, 3).map((e) => e.title), ["Dark theme", "Turn Stealth Lockdown on", "Trip plan"]);
+  assert.ok(!l.entries.value.some((e) => e.title === "Old recipes"), "older conversations wait for words");
+  assert.ok(textOf(launcher.root).includes("Actions run at once."));
+  l.query.value = "dark"; await settle();
+  assert.equal(l.entries.value[0].title, "Dark theme");
+  all(launcher.root).find((el) => el.type === "input").props.onKeydown(keyEvent("Enter"));
+  assert.deepEqual(launcher.emitted.at(-1), ["run", "theme:dark"]);
+  l.query.value = "recipes"; await settle();
+  assert.equal(l.entries.value[0].title, "Old recipes", "every conversation is found by its words");
+  l.query.value = "exp"; await settle();
+  assert.equal(l.entries.value[0].title, "/export view-id pdf|docx", "commands still rank by their names");
+  launcher.unmount();
+
   // Server rendering escapes catalogue text.
   const seeded = { ...Palette, setup(p, context) { const b = Palette.setup(p, context); b.catalogue.value = fixture.slice(0, 5); b.loading.value = false; return b; } };
   const html = await renderToString(createSSRApp(seeded, { surface: "main" }));

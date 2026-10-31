@@ -22,7 +22,7 @@ const ContextPanel = defineAsyncComponent(() => import('./ContextPanel.vue'));
 type Inspect = '' | 'context' | 'usage' | 'memory' | 'rewind';
 type View = 'all' | 'conversation' | 'details' | 'activity' | 'task' | 'context' | 'changes';
 const props = withDefaults(defineProps<{ chat: Chat; memory?: State['memory']; view?: View; focus?: { what: string; n: number } | null }>(), { view: 'all', focus: null });
-const emit = defineEmits<{ refresh: []; error: [message: string]; details: [] }>();
+const emit = defineEmits<{ refresh: []; error: [message: string]; details: []; settled: [] }>();
 const opening = () => (props.view === 'context' ? 'usage' : '') as Inspect;
 const inspect = ref<Inspect>(opening());
 watch(() => props.chat.id, () => (inspect.value = opening()));
@@ -40,6 +40,13 @@ const current = computed(() => {
     || runs.find(r => pending.value.some(q => q.run_id === r.id))
     || runs.find(r => r.state === 'waiting_approval') || runs[0];
 });
+// Phase 45 (F141): the message that asked for a run (the person's last message at its start), to name it by
+function requestFor(run: { created?: number } | undefined) {
+  if (!run || typeof run.created !== 'number') return '';
+  const asked = (props.chat.messages || []).filter(m => m.role === 'user' && typeof m.created === 'number' && m.created <= run.created! + 2);
+  const last = asked.at(-1);
+  return last && typeof last.content === 'string' ? last.content : '';
+}
 const canPause = computed(() => ['queued', 'running', 'retry_wait', 'waiting_input', 'waiting_approval'].includes(current.value?.state || ''));
 // Phase 24 (V1-029): a task held at "verification required" gets three decisions instead of Resume, which only
 // repeated the verdict: run the tests (through the normal approval), ask Pebble to finish (one fresh repair), or
@@ -56,7 +63,25 @@ const SENTENCES: Record<string, string> = {
   budget_exhausted: "Reached this task's limit.", needs_reconciliation: 'One step has an uncertain outcome. Check it before resuming.',
   verification_required: "Pebble's change isn't verified yet.", completed: 'Done.',
 };
-const sentence = computed(() => SENTENCES[current.value?.state || ''] || 'This task is in an unknown state.');
+// Phase 45 (F236, audit round R10): a run that ended on "I'll clear the calculator and enter 123 × 456 again" said
+// "Done."; a finished run whose note is runner.UNFINISHED_NOTE (its reply says the work remains) ends without it
+const UNFINISHED = "Pebble's reply says the task isn't finished.";
+// Phase 45 (F254, audit round R11): after Done on the paused window, the uncertain step reads as checked
+const checked = ref<Set<string>>(new Set());
+const sentence = computed(() => current.value?.state === 'completed' && current.value?.error === UNFINISHED
+  ? 'Ended without finishing.'
+  : current.value?.state === 'needs_reconciliation' && checked.value.has(current.value.id)
+    ? 'Checked: Pebble can use the window again. Send a message to continue.'
+    : SENTENCES[current.value?.state || ''] || 'This task is in an unknown state.');
+// Phase 45 (F070, F087; audit rounds R2 and R3): a run's note is written for the model ("Do not claim ...", "Never say
+// it plays", "ScreenAct focus on its Address row"); the person sees only the sentences meant for them. The same in
+// PetRunSummary.vue and RunPanel.vue (personNote.test.mjs holds them equal).
+const FOR_THE_MODEL = /^(Do not|Don't|Never|Say |Tell the person|Check the|Otherwise)/;
+const TOOL_NAME = /\b(ScreenAct|ScreenObserve|ScreenRequest|BrowserRequest|OpenURL|OpenApp|AppAction|RunTests|RunCode|ReadFile|WriteFile|EditFile|Shell)\b/;
+function personNote(text: unknown) {
+  return String(text || "").split(/(?<=\.)\s+/).filter((s) => !FOR_THE_MODEL.test(s) && !TOOL_NAME.test(s)).join(" ");
+}
+const note = computed(() => personNote(current.value?.error));
 const conversation = computed(() => props.view === 'conversation');
 // States the chat column mentions, with Resume where the task can resume.
 const attention = computed(() => ['paused', 'interrupted', 'failed', 'budget_exhausted', 'verification_required', 'needs_reconciliation'].includes(current.value?.state || ''));
@@ -74,11 +99,43 @@ const show = computed(() => ({
   questionNote: part('details', 'activity', 'task') && !!pending.value.length,
 }));
 const visible = computed(() => {
-  if (conversation.value) return !!pending.value.length || attention.value;
+  // Phase 45 (F255): a paused window from an earlier task shows its Done and End access here too
+  if (conversation.value) return !!pending.value.length || attention.value || !!paused.value.length;
   if (props.view === 'changes') return !!settled.value;
   return !!current.value || !!pending.value.length;
 });
 const newLimits = reactive({ max_steps: 128, max_seconds: 1800 });
+// Phase 45 (F224, audit round R9): after an uncertain step the window Pebble used is paused, and its Done lived only in
+// Details › Tools; the conversation's Needs a check block offers it, so the person can check the window and go on.
+type Paused = { session_id: string; app: string };
+const paused = ref<Paused[]>([]);
+async function loadPaused() {
+  paused.value = [];
+  // Phase 45 (F255, audit round R11): a later task's reply pointed to this block, which showed only while the paused
+  // task was the latest: a paused window in this conversation keeps its Done and End access here
+  if (!conversation.value || !(props.chat.runs || []).some((r) => r.state === 'needs_reconciliation')) return;
+  try {
+    const rows = await rpc<unknown>('screen_sessions', { id: props.chat.id });
+    paused.value = (Array.isArray(rows) ? rows : []).filter((r: any) => r && r.state === 'interrupted'
+      && typeof r.session_id === 'string').map((r: any) => ({ session_id: r.session_id,
+      app: typeof r.target?.bundle_id === 'string' && r.target.bundle_id ? String(r.target.bundle_id).split('.').pop() || 'The app' : 'The app' }));
+  } catch { paused.value = []; }
+}
+watch(() => [props.chat.id, current.value?.id, current.value?.state], loadPaused, { immediate: true });
+// Phase 45 (F239, audit round R10): these two routes take the session alone (as in Details › Tools); action() adds the
+// conversation's id, and Done answered "App._route_table.<locals>.<lambda>() got an unexpected keyword argument 'id'"
+async function decidePaused(item: Paused, done: boolean) {
+  if (busy.value) return;
+  busy.value = done ? 'paused-done' : 'paused-end';
+  try {
+    await rpc(done ? 'screen_handoff_done' : 'screen_session_revoke', { session_id: item.session_id });
+    if (current.value) checked.value = new Set([...checked.value, current.value.id]);
+    emit('settled');
+    emit('refresh');
+  } catch (e) { emit('error', String(e)); }
+  finally { busy.value = ''; }
+  await loadPaused();
+}
 
 function choice(question: string, item: string, value: string) {
   (choices[question] ||= {})[item] = value;
@@ -111,14 +168,20 @@ function submit(question: typeof pending.value[number]) {
 <template>
   <section v-if="visible" class="run-panel" :class="{ 'run-conversation': conversation }" aria-label="Task controls">
     <div v-if="current && show.state" class="run-state">
-      <span role="status">{{ sentence }}<template v-if="conversation && current.error"> · {{ current.error }}</template></span>
+      <span role="status">{{ sentence }}<template v-if="conversation && note"> · {{ note }}</template></span>
       <button v-if="canPause && !conversation" class="secondary-button" :disabled="!!busy" @click="action('pause', 'run_pause', { run_id: current.id })">Pause</button>
       <button v-if="canResume" class="secondary-button" :disabled="!!busy" @click="action('resume', 'run_resume', { run_id: current.id, ...(current.state === 'budget_exhausted' ? { limits: newLimits } : {}) })">Resume</button>
       <button v-if="conversation" type="button" class="text-button run-details" @click="emit('details')">Details</button>
     </div>
+    <div v-for="item in paused" :key="item.session_id" class="run-held" role="group" :aria-label="'Paused window: ' + item.app">
+      <span>{{ item.app }}'s window is paused because the last step's result is uncertain. Look at it: if it looks right, press Done and Pebble can use it again; then send a message to continue.</span>
+      <button type="button" class="secondary-button" :disabled="!!busy" @click="decidePaused(item, true)">Done</button>
+      <button type="button" class="text-button" :disabled="!!busy" @click="decidePaused(item, false)">End access</button>
+    </div>
     <div v-if="current && held && show.state" class="run-held" role="group" aria-label="Finish this task">
       <template v-if="!accepting">
-        <button type="button" class="secondary-button" :disabled="!!busy" @click="action('held-tests', 'run_held_tests', { run_id: current.id })">Run the tests</button>
+        <!-- Phase 43 (1.9.0): tests run only in a project; a Companion task offers the other two decisions -->
+        <button v-if="chat.workspace" type="button" class="secondary-button" :disabled="!!busy" @click="action('held-tests', 'run_held_tests', { run_id: current.id })">Run the tests</button>
         <button type="button" class="secondary-button" :disabled="!!busy" @click="action('held-finish', 'run_held_finish', { run_id: current.id })">Ask Pebble to finish</button>
         <button type="button" class="text-button" :disabled="!!busy" @click="accepting = true">Accept as unverified</button>
       </template>
@@ -140,13 +203,13 @@ function submit(question: typeof pending.value[number]) {
     </div>
     <div v-if="current && show.inspect && inspect && (inspect !== 'rewind' || show.rewindButton)" id="run-inspector">
       <ContextInspector v-if="inspect === 'context'" :chat-id="chat.id" :run-id="current.id" />
-      <ContextPanel v-else-if="inspect === 'usage'" :chat-id="chat.id" :run-id="current.id" @refresh="emit('refresh')" @error="emit('error', $event)" />
-      <MemoryImpactView v-else-if="inspect === 'memory'" :chat-id="chat.id" :run-id="current.id" :layers="memory?.types" :enabled="memory?.enabled" />
+      <ContextPanel v-else-if="inspect === 'usage'" :chat-id="chat.id" :run-id="current.id" :request="requestFor(current)" @refresh="emit('refresh')" @error="emit('error', $event)" />
+      <MemoryImpactView v-else-if="inspect === 'memory'" :chat-id="chat.id" :run-id="current.id" :request="requestFor(current)" :layers="memory?.types" :enabled="memory?.enabled" />
       <RewindPanel v-else :chat-id="chat.id" :run-id="current.id" @refresh="emit('refresh')" @error="emit('error', $event)" />
     </div>
     <RewindPanel v-if="view === 'changes' && settled" :chat-id="chat.id" :run-id="settled.id" @refresh="emit('refresh')" @error="emit('error', $event)" />
     <template v-if="show.output">
-      <p v-if="current?.error" class="run-note">{{ current.error }}</p>
+      <p v-if="note" class="run-note">{{ note }}</p>
       <ReconcilePanel v-if="current?.state === 'needs_reconciliation'" :chat-id="chat.id" :run-id="current.id" @refresh="emit('refresh')" @error="emit('error', $event)" />
       <ExecutionOutput :chat-id="chat.id" :run-id="current?.id" @error="emit('error', $event)" />
       <AttemptStream :chat-id="chat.id" :run-id="current?.id" />

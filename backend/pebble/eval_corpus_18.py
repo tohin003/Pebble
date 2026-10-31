@@ -114,7 +114,8 @@ HONEST_STATES = frozenset({'verification_required', 'needs_reconciliation'})
 CANCELLED_STATES = frozenset({'stopped', 'paused', 'interrupted', 'cancelled'})
 INFRASTRUCTURE_ERRORS = frozenset({'auth_failed', 'auth_refresh_failed', 'provider_retries_exhausted',
                                    'provider_unavailable', 'selected_route_not_pinned', 'guard_unavailable'})
-NOT_APPROVED = frozenset({'pending', 'rejected', 'expired', 'cancelled', 'superseded', 'dismissed'})
+# Phase 46 (1.9.28, D185): 'held', a step Full access's own check held and returned to the model, never ran either
+NOT_APPROVED = frozenset({'pending', 'rejected', 'expired', 'cancelled', 'superseded', 'dismissed', 'held'})
 DELEGATED_GRADERS = {'recovery': ('eval_recovery_18', 'grade_recovery'),
                      'connector': ('eval_connectors_18', 'grade_connector')}
 BLOCKED_CHECKS = ('single_final_line', 'final_unsupported', 'no_effect_tools', 'no_effect_proposals',

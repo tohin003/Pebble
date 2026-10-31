@@ -1,0 +1,2618 @@
+{
+  "$defs": {
+    "activity_event": {
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/item"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id",
+        "run_id",
+        "item"
+      ],
+      "type": "object"
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "elapsed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "done": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "steps": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "pending",
+                          "in_progress",
+                          "blocked",
+                          "completed"
+                        ]
+                      },
+                      "title": {
+                        "maxLength": 120,
+                        "type": "string"
+                      }
+                    },
+                    "type": "object",
+                    "x-pebble-untrusted": [
+                      "title"
+                    ]
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "total": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "plan",
+        "state",
+        "elapsed"
+      ],
+      "type": "object"
+    },
+    "item": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_event_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "headers_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "context",
+            "model",
+            "reasoning",
+            "tool",
+            "retry",
+            "approval",
+            "child",
+            "check",
+            "note"
+          ]
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "view": {
+          "$ref": "#/$defs/view"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "kind",
+        "label",
+        "detail",
+        "duration",
+        "status"
+      ],
+      "type": "object"
+    },
+    "native": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "quiz"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.quiz"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "diagram"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.diagram"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "html"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.html"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "form"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.form"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "table"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.table"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "chart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.chart"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.plan"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.evidence"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "dashboard"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.dashboard"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "prototype"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.prototype"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "compare"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.compare"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "metrics"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.metrics"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "record"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.record"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "timeline"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/native.timeline"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "data": {
+          "type": "object"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 120,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    "native.chart": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "pie",
+                  "donut"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rows": {
+                "maxItems": 8,
+                "minItems": 2
+              },
+              "y_keys": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "number",
+            "percent",
+            "compact"
+          ]
+        },
+        "labels": {
+          "additionalProperties": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": {
+              "maxLength": 2000,
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "type": "object"
+          },
+          "maxItems": 200,
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "bar",
+            "line",
+            "area",
+            "scatter",
+            "stacked",
+            "pie",
+            "donut"
+          ]
+        },
+        "unit": {
+          "maxLength": 12,
+          "type": "string"
+        },
+        "x_key": {
+          "pattern": "^[A-Za-z0-9_-]{1,40}$",
+          "type": "string"
+        },
+        "y_keys": {
+          "items": {
+            "pattern": "^[A-Za-z0-9_-]{1,40}$",
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "type",
+        "x_key",
+        "y_keys",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "native.compare": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "criteria": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "maxLength": 80,
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "maximum": 1000000000000000.0,
+                      "minimum": -1000000000000000.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "maxItems": 4,
+                "minItems": 2,
+                "type": "array"
+              }
+            },
+            "required": [
+              "label",
+              "values"
+            ],
+            "type": "object"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "type": "array"
+        },
+        "options": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 80,
+                "type": "string"
+              },
+              "summary": {
+                "maxLength": 240,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 4,
+          "minItems": 2,
+          "type": "array"
+        },
+        "recommended": {
+          "pattern": "^[A-Za-z0-9_-]{1,40}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "options",
+        "criteria"
+      ],
+      "type": "object"
+    },
+    "native.dashboard": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "columns": {
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "panels": {
+          "items": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "data": {
+                    "type": "object"
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "metric",
+                      "table",
+                      "chart",
+                      "plan",
+                      "evidence"
+                    ]
+                  },
+                  "title": {
+                    "maxLength": 120,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "kind",
+                  "data"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "binding": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "params": {
+                        "type": "object"
+                      },
+                      "source": {
+                        "maxLength": 40,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "source"
+                    ],
+                    "type": "object"
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "metric",
+                      "table",
+                      "chart",
+                      "plan",
+                      "evidence"
+                    ]
+                  },
+                  "title": {
+                    "maxLength": 120,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "kind",
+                  "binding"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "panels"
+      ],
+      "type": "object"
+    },
+    "native.diagram": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "down",
+            "right"
+          ]
+        },
+        "edges": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 100,
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 80,
+          "type": "array"
+        },
+        "layout": {
+          "enum": [
+            "flow",
+            "layers",
+            "sequence"
+          ]
+        },
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "group": {
+                "maxLength": 40,
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 180,
+                "minLength": 1,
+                "type": "string"
+              },
+              "sub": {
+                "maxLength": 60,
+                "type": "string"
+              },
+              "tone": {
+                "enum": [
+                  "neutral",
+                  "accent",
+                  "ok",
+                  "warn",
+                  "danger"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 40,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "native.evidence": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence_id": {
+                "maxLength": 350,
+                "type": "string"
+              },
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 240,
+                "type": "string"
+              },
+              "summary": {
+                "maxLength": 2000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "evidence_id"
+            ],
+            "type": "object"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "native.form": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "description": {
+          "maxLength": 1500,
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 240,
+                "type": "string"
+              },
+              "options": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 120,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 6,
+                "minItems": 2,
+                "type": "array"
+              },
+              "placeholder": {
+                "maxLength": 240,
+                "type": "string"
+              },
+              "required": {
+                "const": true
+              },
+              "type": {
+                "enum": [
+                  "text",
+                  "choice"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "type"
+            ],
+            "type": "object"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "type": "array"
+        },
+        "submit_label": {
+          "maxLength": 80,
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "type": "object"
+    },
+    "native.html": {
+      "description": "html:{html,css?}: bounded static preview; no scripts.",
+      "type": "object",
+      "x-pebble-surfaces": [
+        "mac"
+      ]
+    },
+    "native.metric": {
+      "additionalProperties": false,
+      "description": "A dashboard metric panel. Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 240,
+          "type": "string"
+        },
+        "delta": {
+          "type": "number"
+        },
+        "unit": {
+          "maxLength": 24,
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "native.metrics": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "tiles": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "better": {
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              },
+              "caption": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "delta": {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              "format": {
+                "enum": [
+                  "number",
+                  "percent",
+                  "compact"
+                ]
+              },
+              "label": {
+                "maxLength": 60,
+                "type": "string"
+              },
+              "unit": {
+                "maxLength": 12,
+                "type": "string"
+              },
+              "value": {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "maxItems": 4,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "tiles"
+      ],
+      "type": "object"
+    },
+    "native.plan": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "steps": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence_ids": {
+                "items": {
+                  "maxLength": 350,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "blocked",
+                  "completed"
+                ]
+              },
+              "title": {
+                "maxLength": 240,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "status"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "type": "object"
+    },
+    "native.prototype": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "screens": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "components": {
+                "items": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "heading"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "goto": {
+                          "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "button"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "placeholder": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "input"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "toggle"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "maxLength": 240,
+                            "type": "string"
+                          },
+                          "maxItems": 30,
+                          "type": "array"
+                        },
+                        "type": {
+                          "const": "list"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "body": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "card"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "title",
+                        "body"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "aspect": {
+                          "enum": [
+                            "1:1",
+                            "4:3",
+                            "3:2",
+                            "16:9",
+                            "9:16",
+                            "3:4",
+                            "21:9"
+                          ]
+                        },
+                        "label": {
+                          "maxLength": 240,
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "image_placeholder"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "goto": {
+                                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                                "type": "string"
+                              },
+                              "label": {
+                                "maxLength": 120,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "label",
+                              "goto"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 8,
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "type": {
+                          "const": "nav"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "items"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 30,
+                "type": "array"
+              },
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 120,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "components"
+            ],
+            "type": "object"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        },
+        "start": {
+          "pattern": "^[A-Za-z0-9_-]{1,40}$",
+          "type": "string"
+        },
+        "theme": {
+          "additionalProperties": false,
+          "properties": {
+            "accent": {
+              "enum": [
+                "teal",
+                "blue",
+                "indigo",
+                "violet",
+                "rose",
+                "orange",
+                "amber",
+                "green",
+                "slate"
+              ]
+            },
+            "density": {
+              "enum": [
+                "compact",
+                "cozy",
+                "comfortable"
+              ]
+            },
+            "radius": {
+              "enum": [
+                0,
+                4,
+                8,
+                12,
+                16
+              ]
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "viewport": {
+          "enum": [
+            "phone",
+            "tablet",
+            "desktop"
+          ]
+        }
+      },
+      "required": [
+        "start",
+        "screens"
+      ],
+      "type": "object"
+    },
+    "native.quiz": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "duration_minutes": {
+          "maximum": 180,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "questions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "choices": {
+                "items": {
+                  "maxLength": 700,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "minItems": 2,
+                "type": "array"
+              },
+              "explanation": {
+                "maxLength": 1500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "question": {
+                "maxLength": 1500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "question",
+              "choices",
+              "answer",
+              "explanation"
+            ],
+            "type": "object"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "duration_minutes",
+        "questions"
+      ],
+      "type": "object"
+    },
+    "native.record": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "fields": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "maxLength": 60,
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "maximum": 1000000000000000.0,
+                    "minimum": -1000000000000000.0,
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        },
+        "note": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "subtitle": {
+          "maxLength": 80,
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "type": "object"
+    },
+    "native.table": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": {
+              "maxLength": 2000,
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "type": "object"
+          },
+          "maxItems": 200,
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "native.timeline": {
+      "additionalProperties": false,
+      "description": "Plain text: never a link, URL, markup, script, template or credential (artifact_schema.REJECTED_TEXT, SECRET).",
+      "properties": {
+        "caption": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "date": {
+                "pattern": "^\\d{4}(-\\d{2}(-\\d{2})?)?$",
+                "type": "string"
+              },
+              "detail": {
+                "maxLength": 400,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "tone": {
+                "enum": [
+                  "neutral",
+                  "accent",
+                  "ok",
+                  "warn",
+                  "danger"
+                ]
+              }
+            },
+            "required": [
+              "date",
+              "title"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "type": "object"
+    },
+    "summary": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "commands": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "failed": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "added": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "removed": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tests": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failed": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "passed": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "cached": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "input": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "output": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "files",
+        "commands",
+        "tests",
+        "checks",
+        "seconds",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "view": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "read"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.read"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "search"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.search"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.web"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "edit"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.edit"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "command"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.command"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tests"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.tests"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "git"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.git"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "window"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.window"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "agent"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.agent"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "checks"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.checks"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "review"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.review"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "question"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/view.question"
+          }
+        }
+      ],
+      "description": "A known type follows its definition; an unknown type is drawn as its item's label and detail.",
+      "properties": {
+        "type": {
+          "maxLength": 40,
+          "type": "string"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object"
+    },
+    "view.agent": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "name": {
+          "maxLength": 60,
+          "type": "string"
+        },
+        "parent": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "seconds": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "agent"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "name"
+      ]
+    },
+    "view.checks": {
+      "additionalProperties": false,
+      "properties": {
+        "files_changed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "issues": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "repairable": {
+          "type": "boolean"
+        },
+        "repaired": {
+          "type": "boolean"
+        },
+        "requirements": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "met",
+                  "open"
+                ]
+              },
+              "text": {
+                "maxLength": 160,
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "x-pebble-untrusted": [
+              "text"
+            ]
+          },
+          "maxItems": 10,
+          "type": "array"
+        },
+        "tests": {
+          "additionalProperties": false,
+          "properties": {
+            "current": {
+              "type": "boolean"
+            },
+            "failed": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "passed": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "runner": {
+              "maxLength": 40,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "checks"
+        },
+        "unmet": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "v": {
+          "const": 1
+        },
+        "verdict": {
+          "maxLength": 80,
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object"
+    },
+    "view.command": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "command": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "cut": {
+          "type": "boolean"
+        },
+        "exit": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "boolean"
+        },
+        "seconds": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "tail": {
+          "items": {
+            "maxLength": 160,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "type": {
+          "const": "command"
+        },
+        "v": {
+          "const": 1
+        },
+        "where": {
+          "maxLength": 80,
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "command",
+        "where"
+      ]
+    },
+    "view.edit": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "added": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "new": {
+          "type": "boolean"
+        },
+        "path": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "private": {
+          "type": "boolean"
+        },
+        "removed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "type": {
+          "const": "edit"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "path"
+      ]
+    },
+    "view.git": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "ahead": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "behind": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "branch": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "changed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "commit": {
+          "maxLength": 12,
+          "type": "string"
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "op": {
+          "maxLength": 24,
+          "type": "string"
+        },
+        "publication": {
+          "type": "boolean"
+        },
+        "push_to": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "summary": {
+          "maxLength": 240,
+          "type": "string"
+        },
+        "type": {
+          "const": "git"
+        },
+        "upstream": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "branch",
+        "push_to",
+        "summary",
+        "upstream"
+      ]
+    },
+    "view.question": {
+      "additionalProperties": false,
+      "properties": {
+        "more": {
+          "type": "boolean"
+        },
+        "questions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "type": {
+          "const": "question"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object"
+    },
+    "view.read": {
+      "additionalProperties": false,
+      "properties": {
+        "more": {
+          "type": "boolean"
+        },
+        "path": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "private": {
+          "type": "boolean"
+        },
+        "start": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "read"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "path"
+      ]
+    },
+    "view.review": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "maxLength": 24,
+          "type": "string"
+        },
+        "action_id": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "decided_by": {
+          "enum": [
+            "you",
+            "pebble",
+            "mode"
+          ]
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "quote": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "type": {
+          "const": "review"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object"
+    },
+    "view.search": {
+      "additionalProperties": false,
+      "properties": {
+        "hits": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "query": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "tool": {
+          "enum": [
+            "Grep",
+            "Glob",
+            "SearchFiles",
+            "CodeReferences"
+          ]
+        },
+        "type": {
+          "const": "search"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "query"
+      ]
+    },
+    "view.tests": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "errors": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failing": {
+          "items": {
+            "maxLength": 160,
+            "type": "string"
+          },
+          "maxItems": 10,
+          "type": "array"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "passed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recipe": {
+          "maxLength": 40,
+          "type": "string"
+        },
+        "seconds": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "skipped": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "running",
+            "done",
+            "failed",
+            "declined",
+            "held",
+            "undone",
+            "stopped"
+          ]
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "tests"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object"
+    },
+    "view.web": {
+      "additionalProperties": false,
+      "properties": {
+        "more": {
+          "type": "boolean"
+        },
+        "query": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "sites": {
+          "items": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "type": {
+          "const": "web"
+        },
+        "v": {
+          "const": 1
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "query"
+      ]
+    },
+    "view.window": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maxLength": 40,
+          "type": "string"
+        },
+        "app": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "before": {
+          "maxLength": 40,
+          "type": "string"
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "picture": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ref": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "width": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "point": {
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "y": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "target": {
+          "maxLength": 60,
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 60,
+          "type": "string"
+        },
+        "type": {
+          "const": "window"
+        },
+        "v": {
+          "const": 1
+        },
+        "verb": {
+          "maxLength": 40,
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "happened",
+            "nothing_changed",
+            "uncertain",
+            "refused"
+          ]
+        }
+      },
+      "required": [
+        "v",
+        "type"
+      ],
+      "type": "object",
+      "x-pebble-untrusted": [
+        "after",
+        "app",
+        "before",
+        "target",
+        "title"
+      ]
+    }
+  },
+  "$id": "https://pebble.local/ui-spec/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What Pebble's windows draw: the work view (each activity item's view, the reply's header and summary) and the native kinds of UIRender. Data only; renderers own the design. Render by type, ignore unknown fields, and show an unknown type as its item's label and detail (\"Update the app to see this view\" on the iPhone).",
+  "title": "pebble-ui-spec v1",
+  "x-pebble-native-kinds": [
+    "quiz",
+    "diagram",
+    "html",
+    "form",
+    "table",
+    "chart",
+    "plan",
+    "evidence",
+    "dashboard",
+    "prototype",
+    "compare",
+    "metrics",
+    "record",
+    "timeline"
+  ],
+  "x-pebble-version": 1,
+  "x-pebble-view-types": [
+    "read",
+    "search",
+    "web",
+    "edit",
+    "command",
+    "tests",
+    "git",
+    "window",
+    "agent",
+    "checks",
+    "review",
+    "question"
+  ]
+}

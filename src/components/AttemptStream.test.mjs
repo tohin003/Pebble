@@ -21,6 +21,8 @@ const bridge = {
     return { events, next_after: events.length ? events.at(-1).sequence : params.after, more: false };
   },
 };
+// Phase 45 (F105): the inline draft renders like a reply (Markdown, its own fixtures); here a literal stand-in.
+const markdownStub = { __esModule: true, default: { name: 'Markdown', props: ['text'], render() { return this.text; } } };
 function compile(filename) {
   const source = readFileSync(new URL(filename, import.meta.url), 'utf8');
   const descriptor = parse(source, { filename }).descriptor;
@@ -30,7 +32,7 @@ function compile(filename) {
   const evaluate = code => {
     const module = { exports: {} };
     new Function('require', 'module', 'exports', transform(code, { transforms: ['typescript', 'imports'] }).code)(
-      name => name === '../bridge' ? bridge : require(name), module, module.exports);
+      name => name === '../bridge' ? bridge : name === './Markdown.vue' ? markdownStub : require(name), module, module.exports);
     return module.exports;
   };
   const component = evaluate(script.content).default;

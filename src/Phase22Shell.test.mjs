@@ -86,7 +86,9 @@ ok(/AVATAR_RANK = \{ booting: 0, welcome: 0, status: 0, message: 1, brand: 2 \}/
 ok(/<template v-if="statusDetail" #detail>\{\{ statusDetail \}\}<\/template>/.test(live), "secondary text after the word, never the word");
 ok(/:started-at="hostStart \?\? companion\.pose\.value\.startedAt"/.test(live) && /:exact="hostStart !== null"/.test(live), "the host's clock when known");
 ok(/coalesce<string \| null>\(\(text\) => \(statusDetail\.value = text\), 1500\)/.test(app.script), "each secondary text dwells 1.5 s");
-ok(/<ThinkingDisclosure\s+v-if="liveOpen && liveRecord[^"]*"\s+live\s+open\s+body-id="live-thinking"/.test(column), "the live timeline opens under the status line");
+// Phase 46 (1.9.29, D206): the live timeline is the work view's cards, or with the "Work view" setting off the rows
+ok(/<WorkView\s+v-if="workView && liveOpen && liveRecord[^"]*"\s+id="live-thinking"/.test(column), "the live work view opens under the status line");
+ok(/<ThinkingDisclosure\s+v-else-if="liveOpen && liveRecord[^"]*"\s+live\s+open\s+body-id="live-thinking"/.test(column), "the live timeline opens under the status line");
 ok(/<ThinkingDisclosure\s+v-if="recordFor\(message\)"/.test(column), "settled runs leave a receipt above the reply");
 ok(/<ThinkingDisclosure\s+full\s+open\s+body-id="drawer-thinking"/.test(drawer), "the full timeline is in the drawer's Activity tab");
 ok(/fetch: \(runId, after\) => rpc\("run_activity", \{ run_id: runId, after \}\)/.test(app.script), "run_activity is read with the contract's parameters");
@@ -182,8 +184,20 @@ const added = [...methods].filter((m) => !phase21.includes(m)).sort();
 const READS_22 = ["agent_list", "command_catalogue", "context_inspect", "extensions", "goal_get", "goal_list", "run_activity"];
 const READS_24 = ["job_list", "memory_forget_preview", "screen_sessions"];
 const WRITES_24 = { storage_trash_chat: "async function trashChat(", storage_restore_chat: "async function restoreChat(", memory_delete: "async function forgetMemory(", chat_rename: "async function saveRename(" };
-eq(added, [...READS_22, ...READS_24, ...Object.keys(WRITES_24)].sort(), "the only routes the window newly calls: the Phase 22 reads, three reads and four person-initiated writes");
-for (const [route, handler] of Object.entries(WRITES_24)) {
+// D94 (Phase 40, 1.6.0): two more person-initiated writes, each in one handler run only by the person's click: "Always
+// allow" on a Shell or file review card saves its hosts and folders (shell_grant_add), and "Undo this change" restores a
+// Shell or file snapshot (shell_undo). Still an exact list.
+const WRITES_40 = { shell_grant_add: "async function grantAndApprove(", shell_undo: "async function shellUndo(" };
+// D99 (Phase 41, 1.7.0): the Toolbox card reads a kept tool's code (toolbox_get) and has two person-initiated writes,
+// each in one handler: Remove (toolbox_remove) and Keep or Discard (toolbox_decide). Still an exact list.
+const READS_41 = ["toolbox_get"];
+const WRITES_41 = { toolbox_remove: "async function toolboxRemove(", toolbox_decide: "async function toolboxDecide(" };
+// Phase 45 (F031, 1.9.5): conversation search also reads what was said (chat_search, a read). Still an exact list.
+// Phase 45 (F130, 1.9.8): a reply's source marker reads the run's recorded sources (research_sources, a read the
+// window's Sources panel already made).
+const READS_45 = ["chat_search", "research_sources"];
+eq(added, [...READS_22, ...READS_24, ...READS_41, ...READS_45, ...Object.keys(WRITES_24), ...Object.keys(WRITES_40), ...Object.keys(WRITES_41)].sort(), "the only routes the window newly calls: the Phase 22 reads, five reads and eight person-initiated writes");
+for (const [route, handler] of Object.entries({ ...WRITES_24, ...WRITES_40, ...WRITES_41 })) {
   const body = between(app.script, handler, "\n}\n");
   eq([...app.script.matchAll(new RegExp(`\\brpc(?:<[^>]*>)?\\(\\s*"${route}"`, "g"))].length, 1, route + " is called in one place");
   ok(new RegExp(`\\brpc(?:<[^>]*>)?\\(\\s*"${route}"`).test(body), route + " is called only by " + handler);

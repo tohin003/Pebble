@@ -13,6 +13,9 @@ What install writes, and nothing else:
   cleared environment;
 - ~/Library/Application Support/<browser>/NativeMessagingHosts/com.pebble.browser.json,
   the host manifest, whose allowed_origins names only the pinned extension ID.
+  Phase 43 (1.9.0, Connect a browser): --browser takes every browser Pebble connects
+  (browser_bridge.BROWSER_FOLDERS: chrome, comet, brave, edge, arc, chromium, chrome-beta,
+  chrome-canary); status reports each of them.
 
 Safety model (as scripts/pebble_install.py):
 - Dry run by default: every subcommand checks its read-only preconditions and prints,
@@ -47,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'backend') not in sys.path:
     sys.path.insert(0, str(ROOT / 'backend'))
 
-from pebble.browser_bridge import (BRIDGE_DIR, EXTENSION_ORIGIN, HOST_FOLDERS, HOST_NAME, HOST_SCRIPT,  # noqa: E402
+from pebble.browser_bridge import (BRIDGE_DIR, BROWSER_FOLDERS, EXTENSION_ORIGIN, HOST_NAME, HOST_SCRIPT,  # noqa: E402
                                    decode_body, FrameError)
 from pebble import native_host_setup as setup  # noqa: E402  (Phase 24: one builder for the launcher and manifest)
 
@@ -120,7 +123,7 @@ class Layout:
             self._derive()
 
     def support(self, browser):
-        return self.user_home / SUPPORT / HOST_FOLDERS[browser]
+        return self.user_home / SUPPORT / BROWSER_FOLDERS[browser]
 
     def manifest(self, browser):
         return self.support(browser) / 'NativeMessagingHosts' / f'{HOST_NAME}.json'
@@ -349,7 +352,7 @@ def do_uninstall(run):
 def do_status(run):
     layout = run.layout
     rows = {}
-    for browser in HOST_FOLDERS:
+    for browser in BROWSER_FOLDERS:
         path = layout.manifest(browser)
         try:
             current = _read_small(path)
@@ -410,7 +413,7 @@ def build_parser():
     parser.add_argument('--stamp', type=_stamp_arg, help='names the backups and the approval')
     parser.add_argument('--i-am-the-parent-with-user-approval', dest='approval', metavar='STAMP', type=_stamp_arg,
                         help='required with --execute on real paths; must name --stamp')
-    parser.add_argument('--browser', dest='browsers', action='append', choices=sorted(HOST_FOLDERS),
+    parser.add_argument('--browser', dest='browsers', action='append', choices=sorted(BROWSER_FOLDERS),
                         help='repeatable; default chrome')
     parser.add_argument('--home', type=_path_arg, help="Pebble's data folder (default ~/" + PEBBLE_DATA + ' once Pebble '
                         'moved its data there, else ~/' + DATA_HOME + ')')

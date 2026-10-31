@@ -460,8 +460,9 @@ def test_native_only_names_never_collide_with_catalogue_tools():
 REAL = canonical_catalogue()
 REAL_DIGEST = catalogue_digest(REAL)
 REAL_NAMES = [t['function']['name'] for t in REAL]
-# Every permission group open, including Phase 16's optional 'screen' group (off by default).
-OPEN = {'mode': 'full', 'tools': dict.fromkeys(('files', 'edits', 'tests', 'apps', 'web', 'terminal', 'plugins', 'views', 'screen'), True)}
+# Every permission group open, including Phase 16's optional 'screen' group (off by default) and, D95, Phase 40's
+# optional 'capture' group (on by default).
+OPEN = {'mode': 'full', 'tools': dict.fromkeys(('files', 'edits', 'tests', 'apps', 'web', 'terminal', 'plugins', 'views', 'screen', 'capture'), True)}
 # Integer arguments without a declared minimum or maximum. App.validate still
 # implies 1-10000 for them; tool_authz enforces only what is declared (F5), so
 # new unbounded integers should get explicit bounds instead of joining this list.

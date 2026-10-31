@@ -601,6 +601,11 @@ class Campaign:
                 (root / 'pkg').mkdir(exist_ok=True)
                 (root / 'pkg' / f'module_{index:02d}.py').write_text(
                     f'def helper_{index}():\n    return "retry"  # unrelated retry mention {index}\n')
+            # Phase 46: above 8K the host prefetches a tiny project whole (prefetch.TINY_FILES, 40 code files), and the
+            # blind write below needs a file found by search that nothing has read, so the project is a little larger.
+            (root / 'vendor').mkdir()
+            for index in range(24):
+                (root / 'vendor' / f'filler_{index:02d}.py').write_text(f'VALUE_{index} = {index}\n')
             (root / 'zz' / 'deep' / 'policies').mkdir(parents=True)
             (root / TARGET).write_text(ORIGINAL)
         (alpha / 'service.ini').write_text(SERVICE_INI)

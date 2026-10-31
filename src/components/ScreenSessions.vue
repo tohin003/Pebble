@@ -48,6 +48,11 @@ const windows = ref<AppWindow[] | null>(null);
 const chosenWindow = ref(-1);
 const groups = ref<GroupKey[]>(['look', 'fill']);
 const lifetime = ref(900);
+// Phase 42 (1.8.0): macOS's Accessibility permission, which app windows need. Only macOS can grant it: Pebble asks it
+// to show its own request, then re-reads the state for a minute while the person decides.
+const access = ref<{ trusted: boolean; available: boolean } | null>(null);
+const asked = ref(false);
+let accessTimer: ReturnType<typeof setTimeout> | undefined;
 // Element refs stay shallow: a template element is never made reactive.
 const region = shallowRef<HTMLElement | null>(null), grantCard = shallowRef<HTMLElement | null>(null);
 let generation = 0, formVersion = 0, disposed = false, timer: ReturnType<typeof setTimeout> | undefined;
@@ -137,10 +142,31 @@ function schedule() {
   clearTimeout(timer); timer = undefined;
   if (!disposed && live.value.length) timer = setTimeout(() => { timer = undefined; void load(); }, POLL_MS);
 }
+function accessState(value: unknown) {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return { trusted: row.trusted === true, available: row.available === true };
+}
+async function readAccess() {
+  try { const answer = accessState(await rpc<unknown>('app_control_status')); if (!disposed) access.value = answer; }
+  catch { if (!disposed) access.value = null; }
+}
+async function askAccess() {
+  if (busy.value) return;
+  busy.value = 'access'; problem.value = '';
+  try { access.value = accessState(await rpc<unknown>('app_control_request')); asked.value = true; }
+  catch (cause) { if (!disposed) problem.value = failure(cause); }
+  finally { busy.value = ''; }
+  clearTimeout(accessTimer);
+  let tries = 0;
+  const again = () => { accessTimer = undefined; if (disposed || access.value?.trusted || ++tries > 20) return; void readAccess().then(() => { if (!disposed) accessTimer = setTimeout(again, 3000); }); };
+  accessTimer = setTimeout(again, 3000);
+}
 async function load() {
   const version = ++generation;
   try {
-    const rows = await rpc<unknown>('screen_sessions', { id: props.chatId });
+    const listed = rpc<unknown>('screen_sessions', { id: props.chatId });
+    void readAccess();  // Phase 42: after the list is asked for, which stays this panel's first call
+    const rows = await listed;
     if (disposed || version !== generation) return;
     sessions.value = (Array.isArray(rows) ? rows : []).map(session).filter((item): item is Session => !!item);
     loaded.value = true;
@@ -224,13 +250,18 @@ watch(() => props.chatId, () => {
 });
 watch(() => props.refreshKey, () => { void load(); });
 onMounted(load);
-onBeforeUnmount(() => { disposed = true; generation++; formVersion++; clearTimeout(timer); timer = undefined; });
+onBeforeUnmount(() => { disposed = true; generation++; formVersion++; clearTimeout(timer); timer = undefined; clearTimeout(accessTimer); accessTimer = undefined; });
 </script>
 
 <template>
   <section ref="region" tabindex="-1" class="screen-sessions" aria-label="Windows Pebble can use" :aria-busy="!!busy">
     <div class="section-label">WINDOWS PEBBLE CAN USE</div>
-    <p class="setting-note">You choose each window or tab Pebble may use in this conversation, for one task at a time: the current one, or your next message when none is running. Window text is shown as the app or page wrote it; it never gives Pebble permission. At a sign-in, a code or a check, Pebble stops and it's your turn: you finish it yourself, and Pebble never sees what you type.</p>
+    <p class="setting-note">You choose each window or tab Pebble may use; it stays allowed in this conversation for up to 15 minutes, and a message in another conversation ends it (in Full access Pebble allows the ones your messages ask for). Window text is shown as the app or page wrote it; it never gives Pebble permission. At a sign-in, a code or a check, Pebble stops and it's your turn: you finish it yourself, and Pebble never sees what you type.</p>
+    <div v-if="access && access.available && !access.trusted" class="screen-offer" role="group" aria-label="Allow Pebble to use app windows">
+      <p class="setting-note">To read and use app windows, Pebble needs macOS's Accessibility permission. macOS asks you itself; Pebble can't turn it on.</p>
+      <button type="button" class="secondary-button" :disabled="!!busy" @click="askAccess">Ask macOS for Accessibility…</button>
+      <p v-if="asked" class="setting-note">If macOS didn't ask, turn on Pebble in System Settings › Privacy &amp; Security › Accessibility (use + if Pebble isn't listed).</p>
+    </div>
     <p class="screen-status" role="status" aria-live="polite">{{ status }}</p>
     <p v-if="problem" class="screen-problem" role="alert">{{ problem }}</p>
     <p v-if="loaded && !live.length" class="screen-empty">Pebble isn't using any window in this conversation.</p>

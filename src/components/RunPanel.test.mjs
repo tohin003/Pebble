@@ -241,6 +241,15 @@ try {
   assert.deepEqual(vueErrors, []);
   }
 
+  // Phase 43 (1.9.0): a Companion task (no project) held at verification required is not offered "Run the tests" (the
+  // backend refuses it there: there is no project to test); the other two decisions stay.
+  {
+  const companion = reactive({ id: "chat-c", title: "C", workspace: null, messages: [], actions: [], questions: [],
+    runs: [{ id: "run-c", state: "verification_required", error: "The app was only opened; nothing shows it was operated." }] });
+  const html = await renderToString(createSSRApp(RunPanel, { chat: companion, view: "conversation" }));
+  assert.ok(!html.includes(">Run the tests<") && html.includes(">Ask Pebble to finish<") && html.includes(">Accept as unverified<"), html);
+  }
+
   // Phase 24 (V1-029): a task held at verification required offers three decisions, never a Resume that repeats the
   // verdict; accepting it unverified takes a second, explicit click. Every request names only the chat and the run.
   {
@@ -281,6 +290,53 @@ try {
   assert.deepEqual(vueErrors, []);
   html = await renderToString(createSSRApp(RunPanel, { chat: { ...heldChat, runs: [{ id: "r", state: "needs_reconciliation", error: null }] }, view: "details" }));
   assert.ok(html.includes("One step has an uncertain outcome. Check it before resuming.") && !html.includes("Run the tests"));
+  // Phase 45 (F236, audit round R10): a run whose reply still says the work remains does not read "Done."
+  html = await renderToString(createSSRApp(RunPanel, { chat: { ...heldChat, runs: [{ id: "r", state: "completed", error: "Pebble's reply says the task isn't finished." }] }, view: "details" }));
+  assert.ok(html.includes("Ended without finishing.") && !html.includes("Done."));
+  html = await renderToString(createSSRApp(RunPanel, { chat: { ...heldChat, runs: [{ id: "r", state: "completed", error: "You accepted this task as unverified." }] }, view: "details" }));
+  assert.ok(html.includes("Done.") && !html.includes("Ended without finishing."), "an accepted task stays done");
+  }
+  // Phase 45 (F239, audit round R10): the Needs a check block's Done and End access send the paused window's session
+  // alone; with the conversation's id added, the backend refused the call and Done showed a Python error
+  {
+  const pausedChat = reactive({ id: "chat-p", title: "P", workspace: null, messages: [], actions: [], questions: [],
+    runs: [{ id: "run-p", state: "needs_reconciliation", error: null }] });
+  let sessions = [{ session_id: "S1", state: "interrupted", target: { bundle_id: "com.apple.Preview" } }];
+  replies.screen_sessions = () => sessions;
+  replies.screen_handoff_done = (params) => { assert.deepEqual(Object.keys(params), ["session_id"]); sessions = []; return { session_id: params.session_id, state: "active" }; };
+  replies.screen_session_revoke = (params) => { assert.deepEqual(Object.keys(params), ["session_id"]); sessions = []; return { session_id: params.session_id, state: "revoked" }; };
+  for (const [label, method] of [["Done", "screen_handoff_done"], ["End access", "screen_session_revoke"]]) {
+    sessions = [{ session_id: "S1", state: "interrupted", target: { bundle_id: "com.apple.Preview" } }];
+    const rootP = node("root"), emittedP = [];
+    const instrumentedP = { ...RunPanel, setup(p, context) { return RunPanel.setup(p, { ...context, emit: (...args) => emittedP.push(args) }); } };
+    const appP = renderer.createApp({ setup: () => () => h(instrumentedP, { chat: pausedChat, view: "conversation" }) });
+    appP.config.errorHandler = (error) => { vueErrors.push(error); };
+    appP.mount(rootP);
+    await settle();
+    assert.ok(textOf(rootP).includes("Preview's window is paused"), textOf(rootP));
+    const found = all(rootP).find((el) => el.type === "button" && textOf(el).trim() === label);
+    assert.ok(found, "Missing button " + label);
+    calls.length = 0;
+    await found.props.onClick(); await settle();
+    assert.deepEqual(calls.filter((c) => c.method === method).map((c) => c.params), [{ session_id: "S1" }]);
+    assert.deepEqual(emittedP.filter((e) => e[0] === "error"), [], "no error reaches the person");
+    assert.ok(emittedP.some((e) => e[0] === "refresh") && !textOf(rootP).includes("window is paused"), "the block goes once decided");
+    // Phase 45 (F254, audit round R11): after Done the task reads as checked, and the banner may clear
+    assert.ok(emittedP.some((e) => e[0] === "settled"), JSON.stringify(emittedP));
+    if (label === "Done") assert.ok(textOf(rootP).includes("Checked: Pebble can use the window again."), textOf(rootP));
+    appP.unmount();
+  }
+  // Phase 45 (F255, audit round R11): a later task is the latest, and the earlier task's paused window keeps its block
+  sessions = [{ session_id: "S2", state: "interrupted", target: { bundle_id: "com.apple.Preview" } }];
+  const laterChat = reactive({ ...pausedChat, runs: [{ id: "run-later", state: "completed", error: null }, { id: "run-p", state: "needs_reconciliation", error: null }] });
+  const rootL = node("root");
+  const appL = renderer.createApp({ setup: () => () => h(RunPanel, { chat: laterChat, view: "conversation" }) });
+  appL.config.errorHandler = (error) => { vueErrors.push(error); };
+  appL.mount(rootL);
+  await settle();
+  assert.ok(textOf(rootL).includes("Preview's window is paused"), textOf(rootL));
+  appL.unmount();
+  assert.deepEqual(vueErrors, []);
   }
   console.log("Run panel fixtures passed: question contract and escaping, no request on mount, lazy context and memory inspectors for the current run, reset on conversation change, pause/answer/skip/resume routes, errors, reconciliation and nested panel scoping; Phase 22 conversation and details views and slash-command focus; Phase 24 state sentences and the three held-task decisions.");
 } finally {

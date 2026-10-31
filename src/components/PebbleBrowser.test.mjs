@@ -37,6 +37,13 @@ const extension = { connected: false, present: false, paired: false, pending: nu
 const PLAN = 'a'.repeat(64), LAUNCHER = '/Users/p/.pebble/data/chrome/pebble-native-host';
 const MANIFEST = '/Users/p/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.pebble.browser.json';
 const helper = { available: true, installed: false, problems: [] };
+// Phase 43: the other browsers on this Mac, Pebble's own tabs and a protocol mismatch, when a step sets them.
+const others = { browsers: null, owned: null, mismatch: null };
+const COMET_PLAN = 'd'.repeat(64), COMET_MANIFEST = '/Users/p/Library/Application Support/Comet/NativeMessagingHosts/com.pebble.browser.json';
+const cometStatus = () => ({ format: 'pebble.connect-chrome/1', available: true, browser: 'comet', browsers: ['comet'], extension_id: EXTENSION_ID,
+  files: [{ role: 'launcher', path: LAUNCHER, mode: '0700', sha256: 'b'.repeat(64), state: 'current', browser: null },
+    { role: 'manifest', path: COMET_MANIFEST, mode: '0644', sha256: 'e'.repeat(64), state: others.browsers?.comet?.host ? 'current' : 'absent', browser: 'comet' }],
+  installed: !!others.browsers?.comet?.host, ready: true, problems: [], plan_sha256: COMET_PLAN, never: [], authorization: 'none' });
 let tabs = [], opened = 0, grants = [], granted = 0;
 const connectStatus = () => ({ format: 'pebble.connect-chrome/1', available: helper.available, browser: 'chrome', extension_id: EXTENSION_ID,
   files: helper.available ? [{ role: 'launcher', path: LAUNCHER, mode: '0700', sha256: 'b'.repeat(64), state: helper.installed ? 'current' : 'absent' },
@@ -52,7 +59,9 @@ const chromeStatus = () => ({ extension: { connected: extension.connected, prese
     locked_for: extension.lockedFor },
   bridge: { listening: true, error: null },
   host: { chrome: extension.host, 'chrome-beta': false, 'chrome-canary': false, chromium: false }, extension_folder: FOLDER,
-  paused: extension.paused, shared_tabs: clone(extension.shares), last_stop: null, authorization: 'none' });
+  paused: extension.paused, shared_tabs: clone(extension.shares), last_stop: null, authorization: 'none',
+  ...(others.browsers ? { browsers: clone(others.browsers) } : {}), ...(others.owned ? { owned_tabs: clone(others.owned) } : {}),
+  ...(others.mismatch ? { mismatch: clone(others.mismatch) } : {}) });
 function answer(method, params) {
   if (method === 'browser_status') return status();
   if (method === 'browser_extension_status') return chromeStatus();
@@ -94,7 +103,12 @@ function answer(method, params) {
     browser.running = false; browser.sessions = 0; browser.profile_exists = false; tabs = [];
     return result;
   }
-  if (method === 'browser_connect_status') return connectStatus();
+  if (method === 'browser_connect_status') return params?.browsers ? cometStatus() : connectStatus();
+  if (method === 'browser_connect_install' && params?.browsers) {
+    if (params.confirm !== COMET_PLAN || JSON.stringify(params.browsers) !== '["comet"]') throw new Error('Confirm Connect first. Nothing was written.');
+    others.browsers.comet.host = true;
+    return { ...cometStatus(), written: [COMET_MANIFEST] };
+  }
   if (method === 'browser_connect_install') {
     if (params.confirm !== PLAN) throw new Error('Confirm Connect Chrome in Pebble first. Nothing was written.');
     helper.installed = true; extension.host = true;
@@ -554,6 +568,37 @@ assert.deepEqual(sent('browser_profile_forget'), {});
 assert.equal(notice(), "Browser profile forgotten. You're signed out of every site in Pebble's browser.");
 assert.ok(!confirmCard() && events.length === forgetEvents + 1);
 assert.ok(textOf(root).includes('No browser profile is saved.') && button('Forget browser profile…').props.disabled);
+
+// Phase 43 (decision 8): each other browser that ran on this Mac gets its own Connect, which plans and writes its own file
+// only, with the digest of that plan; Pebble's own tabs are listed with their titles as page text; a mismatch is named.
+others.browsers = { chrome: { name: 'Chrome', support: true, host: true, handshake: null },
+  comet: { name: 'Comet', support: true, host: false, handshake: null }, brave: { name: 'Brave', support: false, host: false, handshake: null } };
+others.owned = [{ tab_id: '41', grant_id: 'e'.repeat(32), origin: 'https://docs.example', state: 'ready', title: hostile, acting: false }];
+await poll();
+let otherWords = textOf(chromeCard());
+assert.ok(otherWords.includes('Comet: not set up') && !otherWords.includes('Brave:'), 'only browsers that ran here are offered');
+assert.ok(textOf(region('Tabs Pebble opened')).includes(hostile), "Pebble's own tabs are listed, their titles as page text");
+const installsBefore = count('browser_connect_install');
+await click(button('Connect Comet…', chromeCard()));
+assert.deepEqual(sent('browser_connect_status'), { browsers: ['comet'] });
+const cometCard = () => region('Connect Comet');
+assert.ok(textOf(cometCard()).includes(COMET_MANIFEST) && !textOf(cometCard()).includes(MANIFEST), "only Comet's file is planned");
+await click(button('Cancel', cometCard()));
+assert.ok(!cometCard() && count('browser_connect_install') === installsBefore, 'Cancel writes nothing');
+await click(button('Connect Comet…', chromeCard()));
+await click(button('Add the helper', cometCard()));
+assert.deepEqual(sent('browser_connect_install'), { confirm: COMET_PLAN, browsers: ['comet'] });
+assert.equal(notice(), "Pebble's helper for Comet is added. Next, load Pebble for Chrome in Comet (the same folder), then pair.");
+assert.ok(!cometCard() && textOf(chromeCard()).includes('Comet: helper added'));
+assert.equal(button('Connect Comet…', chromeCard()), undefined);
+const wasConnected = extension.connected;
+extension.connected = false;
+others.mismatch = { protocol: 'pebble-browser/1', expected: 'pebble-browser/2', version: '0.1.0', browser: 'comet', at: 1 };
+await poll();
+assert.ok(textOf(chromeCard()).includes('Pebble for Chrome needs updating. A copy speaking pebble-browser/1 tried to connect'));
+extension.connected = wasConnected;
+others.browsers = null; others.owned = null; others.mismatch = null;
+await poll();
 
 // A reply that settles after the panel closes emits nothing, and polling stops.
 await click(button("Start Pebble's browser"));

@@ -189,13 +189,17 @@ def remember_name(app, cid):
 def test_forget_my_name_shows_the_records_and_calls_no_model(tmp_path, budget):
     result = drive(tmp_path, 'Please forget my name.', budget=budget, prepare=remember_name)
     assert result.requests == [] and result.run['state'] == 'completed'
-    assert result.messages[-1]['usage']['route'] == 'memory'
+    # Phase 45 (F169, audit round R5): a lookup, not a save (its receipt said "Memory saved")
+    assert result.messages[-1]['usage']['route'] == 'memory_lookup'
     assert 'my name' in result.answer and 'Nothing is forgotten until you do.' in result.answer
     assert 'Alex' not in result.answer  # the record's text never enters the conversation
     [card] = [data for name, data in result.events if name == 'memory_forget']
     assert card['authorization'] == 'none' and card['subject'] == 'my name'
     remembered = [m for m in result.memories if m['origin'] == 'direct-user']
-    assert card['memory_ids'] == [m['id'] for m in remembered] and remembered, 'nothing was forgotten'
+    # Phase 46 (1.9.28, follow-up 2, D176, the person's decision): the request is also kept as their newest statement
+    kept = [m for m in remembered if m['content'] != 'Please forget my name.']
+    assert card['memory_ids'] == [m['id'] for m in kept] and kept, 'nothing was forgotten'
+    assert len(remembered) == len(kept) + 1 and 'Saved “Please forget my name.” as your newest wish' in result.answer
 
 
 def test_a_model_claim_of_forgetting_is_withheld_once_above_4k(tmp_path):
@@ -214,7 +218,7 @@ def test_a_repeated_claim_is_presented_with_a_host_notice(tmp_path):
     result = drive(tmp_path, "Please forget my cat's name.", budget=LARGE,
                    replies=lambda n, m: "Done, I've forgotten your cat's name.")
     assert len(result.requests) == 2
-    assert result.answer.endswith('\n\n> ' + runner.FORGOT_NOTHING)
+    assert result.answer.startswith('> ' + runner.FORGOT_NOTHING + '\n\n')  # Phase 46: above the checked reply
 
 
 # -- V1-036: PEBBLE.md, the person's standing instructions -----------------------------------------------------------

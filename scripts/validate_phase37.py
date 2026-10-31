@@ -318,7 +318,11 @@ except pebble.Refused as exc:
             small = task(scratch / 'small', read_step, context=8192)
             assert not any('RunCode' in names for names in small['tools'])
             bare = task(scratch / 'bare', [], text='What is a closure in Python?', project=False)
-            assert not any('RunCode' in names for names in bare['tools'])
+            # D98 (Phase 41, 1.7.0): Code Mode joins the Companion's tools above 8K (Pebble's Workshop makes tools there);
+            # before 1.7.0, and with PEBBLE_COMPANION_TOOLS=0, a conversation without a project has no RunCode.
+            companion = tuple(int(x) for x in checkout_version().split('.')) >= (1, 7, 0) \
+                and os.environ.get('PEBBLE_COMPANION_TOOLS', '1') != '0'
+            assert all(('RunCode' in names) == companion for names in bare['tools']), bare['tools']
             off = task(scratch / 'off', read_step, switch='0')
             assert [list(n) for n in off['tools']] == [[x for x in n if x != 'RunCode'] for n in large['tools']]
             return {'above_8k': True, 'at_8k': False, 'without_project': False, 'switch_off': 'removed only RunCode'}
@@ -404,7 +408,9 @@ except pebble.Refused as exc:
 
         def version():
             current = checkout_version()
-            assert current == '1.5.0', current
+            # D75 (Phase 38): the release that ships Code Mode is 1.5.0 and this check reads its entry; a later checkout
+            # keeps that entry and every assertion on it (as D73 did for validate_phase36).
+            assert tuple(int(x) for x in current.split('.')) >= (1, 5, 0), current
             declared = declared_versions()
             assert declared and set(declared.values()) == {current}, declared
             entry = changelog_entry('1.5.0')

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import VisualCatalog from "./VisualCatalog.vue";
+import VisualChart from "./VisualChart.vue";
 import type {
   ArtifactAnswers,
   ArtifactPrimitive,
+  CatalogArtifact,
   NativeArtifact,
 } from "../types";
 
@@ -87,6 +90,69 @@ function optionalText(
   if (Object.hasOwn(row, key)) text(row[key], maximum);
 }
 
+// Phase 46 (1.9.29, D195, w25-genui-b): the visual catalog's shapes and the chart types, as artifact_schema checks them.
+const CHART_TYPES = ["bar", "line", "area", "scatter", "stacked", "pie", "donut"];
+const FORMATS = ["number", "percent", "compact"];
+const TONES = ["neutral", "accent", "ok", "warn", "danger"];
+const CATALOG = ["compare", "metrics", "timeline", "record"];
+function finite(value: unknown) {
+  require(typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1e15);
+}
+function catalog(kind: string, data: Record<string, unknown>) {
+  if (kind === "compare") {
+    shape(data, ["options", "criteria"], ["recommended", "caption"]);
+    const options = list(data.options, 2, 4), ids = unique(options);
+    options.forEach((value) => {
+      const option = shape(value, ["id", "label"], ["summary"]);
+      text(option.label, 80);
+      optionalText(option, "summary", 240);
+    });
+    list(data.criteria, 1, 10).forEach((value) => {
+      const criterion = shape(value, ["label", "values"]);
+      text(criterion.label, 80);
+      list(criterion.values, options.length, options.length).forEach((cell) => {
+        if (typeof cell === "number") finite(cell);
+        else if (typeof cell !== "boolean") text(cell, 160);
+      });
+    });
+    if (Object.hasOwn(data, "recommended")) require(ids.includes(data.recommended as string));
+    optionalText(data, "caption", 400);
+  } else if (kind === "metrics") {
+    shape(data, ["tiles"], ["caption"]);
+    list(data.tiles, 2, 4).forEach((value) => {
+      const tile = shape(value, ["label", "value"], ["unit", "delta", "format", "better", "caption"]);
+      text(tile.label, 60);
+      finite(tile.value);
+      if (Object.hasOwn(tile, "delta")) finite(tile.delta);
+      if (Object.hasOwn(tile, "format")) require(FORMATS.includes(String(tile.format)));
+      if (Object.hasOwn(tile, "better")) require(tile.better === "up" || tile.better === "down");
+      optionalText(tile, "unit", 12);
+      optionalText(tile, "caption", 120);
+    });
+    optionalText(data, "caption", 400);
+  } else if (kind === "timeline") {
+    shape(data, ["events"], ["caption"]);
+    list(data.events, 2, 20).forEach((value) => {
+      const event = shape(value, ["date", "title"], ["detail", "tone"]);
+      require(typeof event.date === "string" && /^\d{4}(-\d{2}(-\d{2})?)?$/.test(event.date));
+      text(event.title, 120);
+      optionalText(event, "detail", 400);
+      if (Object.hasOwn(event, "tone")) require(TONES.includes(String(event.tone)));
+    });
+    optionalText(data, "caption", 400);
+  } else {
+    shape(data, ["fields"], ["subtitle", "note"]);
+    list(data.fields, 1, 12).forEach((value) => {
+      const field = shape(value, ["label", "value"]);
+      text(field.label, 60);
+      if (typeof field.value === "number") finite(field.value);
+      else text(field.value, 160);
+    });
+    optionalText(data, "subtitle", 80);
+    optionalText(data, "note", 400);
+  }
+}
+
 // Validate the display boundary even when a persisted or preview row is malformed.
 // None of these values become markup, executable code, CSS, URLs, or RPC names.
 function validate(artifact: NativeArtifact) {
@@ -158,8 +224,11 @@ function validate(artifact: NativeArtifact) {
     );
     optionalText(data, "caption", 1000);
   } else if (artifact.kind === "chart") {
-    shape(data, ["type", "x_key", "y_keys", "rows"], ["labels", "caption"]);
-    require(data.type === "bar" || data.type === "line");
+    shape(data, ["type", "x_key", "y_keys", "rows"], ["labels", "caption", "format", "unit"]);
+    // Phase 46 (1.9.29, w25-genui-b): the catalog's chart types and number formats (artifact_schema.CHART_TYPES)
+    require(CHART_TYPES.includes(String(data.type)));
+    if (Object.hasOwn(data, "format")) require(FORMATS.includes(String(data.format)));
+    optionalText(data, "unit", 12);
     identifier(data.x_key);
     const keys = list(data.y_keys, 1, 6);
     keys.forEach(identifier);
@@ -179,6 +248,13 @@ function validate(artifact: NativeArtifact) {
         shape(data.labels, [], [data.x_key as string, ...(keys as string[])]),
       ).forEach((value) => text(value, 120));
     optionalText(data, "caption", 1000);
+    const rows = data.rows as Record<string, unknown>[];
+    if (data.type === "pie" || data.type === "donut")
+      require(keys.length === 1 && rows.length >= 2 && rows.length <= 8 && rows.every((row) => (row[keys[0] as string] as number) >= 0));
+    if (data.type === "scatter") rows.forEach((row) => require(typeof row[data.x_key as string] === "number"));
+    if (data.type === "stacked") rows.forEach((row) => keys.forEach((key) => require((row[key as string] as number) >= 0)));
+  } else if (CATALOG.includes(artifact.kind)) {
+    catalog(artifact.kind, data);
   } else if (artifact.kind === "plan") {
     shape(data, ["steps"]);
     const steps = list(data.steps, 1, 20);
@@ -250,6 +326,11 @@ const plan = computed(() =>
 const receipts = computed(() =>
   !validation.value && props.artifact.kind === "evidence"
     ? props.artifact.data
+    : null,
+);
+const visual = computed(() =>
+  !validation.value && CATALOG.includes(props.artifact.kind)
+    ? (props.artifact as CatalogArtifact)
     : null,
 );
 const questionStatus = computed(
@@ -326,74 +407,6 @@ function submit() {
 function cell(value: ArtifactPrimitive | undefined) {
   return value === null || value === undefined ? "—" : String(value);
 }
-const colors = [
-  "#5d8c7b",
-  "#b58051",
-  "#7a78ad",
-  "#c16d78",
-  "#6086a8",
-  "#8b924b",
-];
-const chartGeometry = computed(() => {
-  const data = chart.value;
-  if (!data) return null;
-  const numbers = data.rows.flatMap((row) =>
-    data.y_keys.map((key) => Number(row[key])),
-  );
-  const low = Math.min(0, ...numbers),
-    maximum = Math.max(0, ...numbers),
-    high = low === maximum ? 1 : maximum;
-  const left = 68,
-    right = 624,
-    top = 18,
-    bottom = 250;
-  const y = (value: number) =>
-    bottom - ((value - low) / (high - low)) * (bottom - top);
-  const gap = (right - left) / data.rows.length;
-  const x = (index: number) => left + gap * (index + 0.5);
-  const baseline = y(0);
-  const barWidth = (gap * 0.72) / data.y_keys.length;
-  return {
-    baseline,
-    ticks: Array.from({ length: 5 }, (_, index) => {
-      const value = low + ((high - low) * index) / 4;
-      return {
-        y: y(value),
-        label: value.toLocaleString(undefined, { maximumSignificantDigits: 4 }),
-      };
-    }),
-    labels: data.rows.map((row, index) => ({
-      x: x(index),
-      label: cell(row[data.x_key]),
-      visible:
-        index % Math.max(1, Math.ceil(data.rows.length / 6)) === 0 ||
-        index === data.rows.length - 1,
-    })),
-    series: data.y_keys.map((key, series) => ({
-      key,
-      label: data.labels?.[key] || key,
-      color: colors[series],
-      path: data.rows
-        .map(
-          (row, index) =>
-            `${index === 0 ? "M" : "L"} ${x(index)} ${y(Number(row[key]))}`,
-        )
-        .join(" "),
-      points: data.rows.map((row, index) => ({
-        x: x(index),
-        y: y(Number(row[key])),
-        label: `${cell(row[data.x_key])}: ${cell(row[key])}`,
-      })),
-      bars: data.rows.map((row, index) => ({
-        x: x(index) - gap * 0.36 + series * barWidth,
-        y: Math.min(baseline, y(Number(row[key]))),
-        width: barWidth,
-        height: Math.abs(baseline - y(Number(row[key]))),
-        label: `${cell(row[data.x_key])}: ${cell(row[key])}`,
-      })),
-    })),
-  };
-});
 </script>
 
 <template>
@@ -501,110 +514,9 @@ const chartGeometry = computed(() => {
         </table>
         <p v-if="!table.rows.length" class="native-note">No rows.</p>
       </div>
-      <figure v-else-if="chart && chartGeometry" class="native-chart">
-        <figcaption v-if="chart.caption">{{ chart.caption }}</figcaption>
-        <svg
-          viewBox="0 0 640 292"
-          role="img"
-          :aria-label="artifact.title + ' — ' + chart.type + ' chart'"
-        >
-          <g
-            v-for="(tick, index) in chartGeometry.ticks"
-            :key="index"
-            class="native-chart-axis"
-          >
-            <line x1="68" x2="624" :y1="tick.y" :y2="tick.y" />
-            <text x="60" :y="tick.y + 4" text-anchor="end">
-              {{ tick.label }}
-            </text>
-          </g>
-          <line
-            x1="68"
-            x2="624"
-            :y1="chartGeometry.baseline"
-            :y2="chartGeometry.baseline"
-            class="native-chart-zero"
-          />
-          <g v-for="series in chartGeometry.series" :key="series.key">
-            <template v-if="chart.type === 'bar'">
-              <rect
-                v-for="(bar, index) in series.bars"
-                :key="index"
-                :x="bar.x"
-                :y="bar.y"
-                :width="bar.width"
-                :height="bar.height"
-                :fill="series.color"
-              >
-                <title>{{ series.label }} — {{ bar.label }}</title>
-              </rect>
-            </template>
-            <template v-else>
-              <path
-                :d="series.path"
-                fill="none"
-                :stroke="series.color"
-                stroke-width="2.5"
-              />
-              <circle
-                v-for="(point, index) in series.points"
-                :key="index"
-                :cx="point.x"
-                :cy="point.y"
-                r="3"
-                :fill="series.color"
-              >
-                <title>{{ series.label }} — {{ point.label }}</title>
-              </circle>
-            </template>
-          </g>
-          <template v-for="(label, index) in chartGeometry.labels" :key="index">
-            <text
-              v-if="label.visible"
-              :x="label.x"
-              y="274"
-              text-anchor="middle"
-              class="native-chart-label"
-            >
-              {{
-                label.label.length > 14
-                  ? label.label.slice(0, 13) + "…"
-                  : label.label
-              }}
-            </text>
-          </template>
-        </svg>
-        <ul class="native-chart-legend">
-          <li v-for="series in chartGeometry.series" :key="series.key">
-            <i :style="{ background: series.color }" />{{ series.label }}
-          </li>
-        </ul>
-        <details>
-          <summary>Chart data</summary>
-          <div class="native-table-scroll" tabindex="0">
-            <table class="native-table">
-              <thead>
-                <tr>
-                  <th scope="col">
-                    {{ chart.labels?.[chart.x_key] || chart.x_key }}
-                  </th>
-                  <th v-for="key in chart.y_keys" :key="key" scope="col">
-                    {{ chart.labels?.[key] || key }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, index) in chart.rows" :key="index">
-                  <td>{{ cell(row[chart.x_key]) }}</td>
-                  <td v-for="key in chart.y_keys" :key="key">
-                    {{ cell(row[key]) }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </details>
-      </figure>
+      <!-- Phase 46 (1.9.29, w25-genui-b): every chart type is drawn by VisualChart (colours are fixed classes) -->
+      <VisualChart v-else-if="chart" class="native-chart" :data="chart" :title="artifact.title" />
+      <VisualCatalog v-else-if="visual" :kind="visual.kind" :data="visual.data" :title="artifact.title" />
       <ol v-else-if="plan" class="native-plan">
         <li v-for="step in plan.steps" :key="step.id">
           <strong>{{ step.title }}</strong
@@ -747,41 +659,6 @@ input:disabled {
 .native-chart {
   margin: 0;
 }
-.native-chart svg {
-  width: 100%;
-  display: block;
-  margin: 12px 0;
-}
-.native-chart-axis line {
-  stroke: var(--line);
-}
-.native-chart-axis text,
-.native-chart-label {
-  fill: var(--muted);
-  font: 11px system-ui;
-}
-.native-chart-zero {
-  stroke: var(--line-strong);
-}
-.native-chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 15px;
-  padding: 0;
-  list-style: none;
-  font-size: 11px;
-}
-.native-chart-legend li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.native-chart-legend i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
 details {
   margin-top: 18px;
 }
@@ -855,7 +732,7 @@ button:disabled {
   font-size: 12px;
 }
 .panel .native-table-scroll,
-.panel .native-chart svg {
+.panel .native-chart {
   margin-top: 4px;
 }
 .panel .native-plan > li,

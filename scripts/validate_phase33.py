@@ -156,7 +156,9 @@ class Campaign:
             assert focus.index('if stealth_on()') < focus.index('set_focus()') and 'front_without_activating' in focus
             assert shell.count('set_focus()') == 1, 'set_focus outside focus()'
             assert 'if expanded { focus(&window); }' in function(shell, 'pet_expand')
-            assert 'if !stealth_on() && !main.is_fullscreen()' in function(shell, 'open_workspace'), 'full screen under stealth'
+            # D146 (Phase 45, the person): full screen also only when the person left the workspace full screen
+            assert 'if full && !stealth_on() && !main.is_fullscreen()' in function(shell, 'open_workspace'), \
+                'full screen under stealth'
             assert 'makeKeyAndOrderFront:' in function(shell, 'front_without_activating')
             return {'panel': 'NSPanel with TaoWindow methods, layout-checked', 'set_focus_sites': 1}
         self.check('lockdown_never_activates_pebble', lockdown)

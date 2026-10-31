@@ -13,6 +13,8 @@ import NativeArtifactRenderer from "./NativeArtifactRenderer.vue";
 import QuizRenderer from "./QuizRenderer.vue";
 import DashboardRenderer from "./DashboardRenderer.vue";
 import PrototypeRenderer from "./PrototypeRenderer.vue";
+import VisualDiagram from "./VisualDiagram.vue";
+import { diagramOf } from "../visuals";
 import type { Artifact, ArtifactAnswers, ArtifactFormQuestion, DashboardArtifact, NativeArtifact, PrototypeArtifact, PrototypeFeedback, QuizV2Artifact } from "../types";
 const props = defineProps<{
   artifacts: Artifact[];
@@ -44,7 +46,8 @@ const active = computed(() => {
 });
 const currentRevision = computed(() => Math.max(listedActive.value?.revision || 1, ...revisions.value.map(row => row.revision || 1)));
 const historical = computed(() => revisionChoice.value !== "current");
-const nativeArtifact = computed(() => active.value && ["form", "table", "chart", "plan", "evidence"].includes(active.value.kind) ? active.value as NativeArtifact : null);
+// Phase 46 (1.9.29, D195): compare, metrics, timeline and record are the visual catalog's (NativeArtifactRenderer)
+const nativeArtifact = computed(() => active.value && ["form", "table", "chart", "plan", "evidence", "compare", "metrics", "timeline", "record"].includes(active.value.kind) ? active.value as NativeArtifact : null);
 const dashboard = computed(() => active.value?.kind === "dashboard" ? active.value as DashboardArtifact : null);
 const prototype = computed(() => active.value?.kind === "prototype" ? active.value as PrototypeArtifact : null);
 // v2 questions carry an ID and no answer key (the host grades); v1 questions carry the key
@@ -382,11 +385,8 @@ const titleEl = ref<HTMLElement | null>(null);
 onMounted(() => {
   if (!props.embedded) nextTick(() => titleEl.value?.focus?.());
 });
-const nodes = computed(() => active.value?.kind === "diagram" ? active.value.data.nodes || [] : []);
-function position(id: string) {
-  const i = nodes.value.findIndex((n: any) => n.id === id);
-  return { x: 170, y: 55 + i * 105 };
-}
+// Phase 46 (1.9.29, D195): Pebble lays a diagram out itself (VisualDiagram, diagramLayout.ts), after checking its shape
+const diagram = computed(() => active.value?.kind === "diagram" ? diagramOf(active.value.data) : null);
 onUnmounted(() => {
   loadGeneration++;
   clearInterval(timer);
@@ -602,60 +602,8 @@ SHA256 {{connectorMedia.sha256}}</pre></details>
           A generated diagram. Read each relationship alongside the explanation
           in chat.
         </p>
-        <svg
-          class="canvas-diagram"
-          :viewBox="`0 0 340 ${Math.max(200, nodes.length * 105 + 30)}`"
-          role="img"
-          :aria-label="active.title"
-        >
-          <defs>
-            <marker
-              id="canvas-arrow"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="5"
-              markerHeight="5"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-            </marker>
-          </defs>
-          <g v-for="(edge, i) in active.data.edges" :key="i">
-            <path
-              :d="`M ${position(edge.from).x} ${position(edge.from).y + 28} Q ${45 + (Number(i) % 4) * 30} ${(position(edge.from).y + position(edge.to).y) / 2} ${position(edge.to).x} ${position(edge.to).y - 28}`"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              marker-end="url(#canvas-arrow)"
-            />
-            <text
-              x="28"
-              :y="(position(edge.from).y + position(edge.to).y) / 2"
-              class="edge-label"
-            >
-              {{ edge.label }}
-            </text>
-          </g>
-          <g v-for="n in nodes" :key="n.id">
-            <rect
-              x="70"
-              :y="position(n.id).y - 28"
-              width="220"
-              height="56"
-              rx="12"
-            />
-            <foreignObject
-              x="82"
-              :y="position(n.id).y - 23"
-              width="196"
-              height="46"
-              ><div xmlns="http://www.w3.org/1999/xhtml" class="node-label">
-                {{ n.label }}
-              </div></foreignObject
-            >
-          </g>
-        </svg>
+        <VisualDiagram v-if="diagram" :diagram="diagram" :title="active.title" />
+        <p v-else class="artifact-read-error" role="alert">This diagram contains invalid display data.</p>
       </template>
       <template v-else-if="active.kind === 'html'">
         <div class="custom-bar">
@@ -1076,29 +1024,6 @@ h2 {
   max-height: 45vh;
   overflow: auto;
 }
-.canvas-diagram {
-  width: 100%;
-  color: var(--muted);
-  margin-top: 24px;
-}
-.canvas-diagram rect {
-  fill: var(--code);
-  stroke: var(--line-strong);
-}
-.node-label {
-  font-size: 12px;
-  color: var(--text);
-  height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  line-height: 1.4;
-}
-.edge-label {
-  font-size: 11px;
-  fill: var(--muted);
-}
 </style>
 <style>
 .artifact-panel.embedded {
@@ -1143,8 +1068,5 @@ h2 {
 .artifact-panel.embedded .canvas-symbol {
   font-size: 28px;
   margin-bottom: 12px;
-}
-.artifact-panel.embedded .canvas-diagram {
-  margin-top: 10px;
 }
 </style>

@@ -17,6 +17,11 @@ const OWNED = [
   "./components/GoalPanel.vue", "./components/ContextPanel.vue", "./components/ContextInspector.vue",
   "./components/UpgradeMaintenance.vue", "./components/ModsSettings.vue", "./components/ResearchSources.vue",
   "./components/MemoryImpactView.vue", "./slashCommands.ts", "./permissionModes.ts",
+  // Phase 46 (1.9.29): the work view's surfaces
+  "./components/WorkView.vue", "./components/WorkCard.vue", "./components/BranchCard.vue", "./components/WorkStrip.vue", "./workView.ts",
+  // Phase 46 (1.9.29): visual answers' surfaces
+  "./components/VisualChart.vue", "./components/VisualDiagram.vue", "./components/VisualCatalog.vue", "./components/ReplyTable.vue",
+  "./components/ReplyBody.vue", "./visuals.ts", "./chartModel.ts", "./diagramLayout.ts",
 ];
 // Exact strings that existing fixtures pin, with the fixture that pins each. Changing one needs that fixture to
 // change too, which this track may not do; each is listed in the t24-ux-settings note for its owner.
@@ -25,8 +30,8 @@ const PINNED = [
   ...pin("./components/CodingWorkflows.vue", "./components/CodingWorkflows.test.mjs", "Refresh receipts", "No reviewed Git receipts in this chat.", "Read back receipt",
     "Undo receipt", "Readback of receipt", "Receipt state", "Matches the receipt", "Git receipt data is incomplete.", "host reply was incomplete"),
   ...pin("./components/GoalPanel.vue", "./components/GoalPanel.test.mjs", "Verify receipts for criterion", "Verify receipts", "Blockers (host records)"),
-  ...pin("./components/ContextPanel.vue", "./components/ContextPanel.test.mjs", "Conversation and host messages", "Project and host messages",
-    "The host's own count when it sent this window", "Receipt "),
+  // Phase 45 (1.9.17, audit round R10): Context use names Pebble, never "host"
+  ...pin("./components/ContextPanel.vue", "./components/ContextPanel.test.mjs", "Receipt "),
   ...pin("./components/ContextInspector.vue", "./components/ContextInspector.test.mjs", "Host records only: nothing here is summarised or judged by a model.",
     "Statuses are as of the last host check and are not re-checked here; /context re-checks them.", "Host method:"),
   ...pin("./components/MemoryImpactView.vue", "./components/MemoryImpactView.test.mjs", "Task receipts:"),

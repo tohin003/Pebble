@@ -307,7 +307,7 @@ def test_the_payroll_dependency_is_offered_and_reachable_at_the_32k_offer(tmp_pa
         def complete(messages, tools, cancel, token, deliberate=False):
             if not seen:
                 seen.append(({t['function']['name'] for t in tools},
-                             next(m['content'] for m in messages if m.get('_pebble_source'))))
+                             next(m['content'] for m in messages if m.get('_pebble_source')), messages))
                 return {'role': 'assistant', 'content': None, 'tool_calls': [
                     {'id': 'c%d' % i, 'type': 'function', 'function': {'name': n, 'arguments': json.dumps(a)}}
                     for i, (n, a) in enumerate(calls)]}
@@ -324,7 +324,7 @@ def test_the_payroll_dependency_is_offered_and_reachable_at_the_32k_offer(tmp_pa
     finally:
         app.active = app.active_run = None
         app.close()
-    (offered, listing), results = seen
+    (offered, listing, first), results = seen
     assert {'Read', 'Glob', 'Grep', 'SearchFiles', 'CodeReferences', 'Write', 'Edit', 'RunTests'} <= offered
     assert '"policy.py"' in listing  # the first request already lists it
     glob, symbols, ranked, grep, imports, definition, read = results
@@ -334,7 +334,10 @@ def test_the_payroll_dependency_is_offered_and_reachable_at_the_32k_offer(tmp_pa
     assert 'policy.py' in {m['path'] for m in grep['untrusted_matches']}
     assert {row['target'] for row in imports['untrusted_imports']} == {'policy.py'}
     assert [d['path'] for d in definition['untrusted_definitions']] == ['policy.py']
-    assert read['untrusted_source'] == c18.POLICY and read['excerpt_complete'] is True
+    # Phase 46 (runner.PREFETCH): above 8K the host reads this tiny project before the first request, so the model's
+    # Read of the unchanged policy.py is answered without repeating the text the HOST PREFETCH message showed it
+    assert read == {'path': 'policy.py', 'total_lines': read['total_lines'], 'unchanged': runner.PREFETCH_SEEN}
+    assert _prefetched_text(first, 'policy.py') == c18.POLICY
 
 
 class Recorder:
@@ -364,13 +367,27 @@ def paired(tmp_path_factory):
     return SimpleNamespace(result=result, records=recorder.records)
 
 
+def _prefetched_text(messages, path):
+    """The text a HOST PREFETCH message showed for `path` (Phase 46: above 8K the host reads a tiny project first)."""
+    for message in messages:
+        if message.get('name') == 'pebble_prefetch':
+            for line in message['content'].split('\n')[1:]:
+                key, _, view = line.partition(': ')
+                if json.loads(key) == path:
+                    return json.loads(view).get('untrusted_source')
+    return None
+
+
 def _tool_text(record, name, path):
-    """The text the model was shown by its read of `path` (Pebble's Read or the baseline's read_file)."""
+    """The text the model was shown by its read of `path` (Pebble's Read or the baseline's read_file; a Read of a file
+    the HOST PREFETCH message showed, unchanged, points to that text: Phase 46)."""
     calls = {c['id']: json.loads(c['function']['arguments']) for m in record['messages'] if m['role'] == 'assistant'
              for c in m.get('tool_calls') or ()}
     for message in record['messages']:
         if message['role'] == 'tool' and calls.get(message['tool_call_id'], {}).get(name) == path:
             result = json.loads(message['content'])
+            if result.get('unchanged') == runner.PREFETCH_SEEN:
+                return _prefetched_text(record['messages'], path)
             return result.get('untrusted_source', result.get('content'))
     return None
 

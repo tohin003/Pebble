@@ -73,7 +73,8 @@ STAGED_FILES = ('model.json', 'NOTICE.md', 'AGENTGUARD-LICENSE', 'LICENSE')
 STAGED_DIRS = ('tokenizer', 'licenses')
 REPLACED = ('backend', 'llama')  # never staged from src-tauri/resources: this build's backend, and --llama-from
 # Phase 22: the pinned Keychain vault helper (scripts/build_vault_helper.py), staged byte-identical when present and
-# never re-signed: its unchanging code hash is what keeps the Keychain from asking again across updates.
+# never re-signed: its unchanging code hash is what keeps the Keychain from asking again across updates. Phase 45
+# (layer 4): the pinned screen helper (scripts/build_screen_helper.py) beside it, staged and checked the same way.
 OPTIONAL_DIRS = ('helpers',)
 # Phase 22 (b22-browser P7, merged): Pebble for Chrome ships inside the app (resources/browser-extension, which the
 # backend reports for "Load unpacked"), copied read-only from the checkout's browser-extension/ like every staged
@@ -641,7 +642,7 @@ class Build:
         self.identity, self.hardened_backend = identity, bool(hardened_backend)
         self.unlock = unlock if unlock is not None else (lambda: signing.unlock(identity))
         self.lock = lock if lock is not None else (lambda: signing.lock(identity))
-        self.helper_manifest = None
+        self.helper_manifest = self.screen_helper_manifest = None
         try:
             self.root = Path(root).resolve(strict=True)
         except OSError:
@@ -678,6 +679,12 @@ class Build:
 
     def has_helper(self):
         return os.path.lexists(self.root / 'src-tauri/resources' / signing.HELPER_FOLDER)
+
+    def has_screen_helper(self):
+        """Phase 45: a screen helper (or its manifest) pinned in the helpers folder."""
+        folder = self.root / 'src-tauri/resources' / signing.HELPER_FOLDER
+        return any(os.path.lexists(folder / name) for name in (signing.SCREEN_HELPER_BINARY,
+                                                                 signing.SCREEN_HELPER_MANIFEST))
 
     def has_extension(self):
         return os.path.isfile(self.root / EXTENSION / 'manifest.json')
@@ -764,6 +771,10 @@ class Build:
             if self.has_helper():  # read-only: the staged helper still has its pinned cdhash and signer
                 commands.append(command('display-helper', [CODESIGN, '--display', '--verbose=4', C / 'stage/resources'
                                                            / signing.HELPER_FOLDER / signing.HELPER_BINARY], C, native))
+            if self.has_screen_helper():  # Phase 45: likewise the pinned screen helper beside it
+                commands.append(command('display-screen-helper', [
+                    CODESIGN, '--display', '--verbose=4',
+                    C / 'stage/resources' / signing.HELPER_FOLDER / signing.SCREEN_HELPER_BINARY], C, native))
             if self.identity is not None:  # the per-binary codesign commands depend on the built tree (plan: signing)
                 commands.append(command('find-identity', signing.find_argv(self.identity.keychain), C, native))
             if self.copy_mode:
@@ -972,6 +983,7 @@ class Build:
                           'Neither staged nor known; review it before building.')
         try:  # the pinned helper equals its manifest and source, and (when signing) has this build's signer
             self.helper_manifest = signing.check_pinned_helper(self.root, self.identity)
+            self.screen_helper_manifest = signing.check_pinned_screen_helper(self.root, self.identity)  # Phase 45
         except signing.Refused as error:
             raise Refused(error.code, [self.display(source / signing.HELPER_FOLDER)],
                           {key: value for key, value in error.facts.items() if key != 'path'}) from None
@@ -1047,7 +1059,13 @@ class Build:
                 'vault_helper': ({'staged': 'stage/resources/helpers, byte for byte, never re-signed',
                                   'checked': 'its manifest, its source SHA-256, its signer and (codesign --display) its '
                                              'cdhash', 'manifest': self.helper_manifest}
-                                 if self.has_helper() else None)}
+                                 if self.has_helper() else None),
+                # Phase 45 (layer 4): present only when a screen helper is pinned, so earlier plans keep their shape.
+                **({'screen_helper': {'staged': 'stage/resources/helpers/' + signing.SCREEN_HELPER_BINARY + ', byte '
+                                                'for byte, never re-signed',
+                                      'checked': 'its manifest, its source SHA-256, its signer and (codesign --display) '
+                                                 'its cdhash, identifier, authority and hardened runtime',
+                                      'manifest': self.screen_helper_manifest}} if self.has_screen_helper() else {})}
 
     def signing_identity(self):
         """What inputs.json records about the signer (a resumed build must use the same one); None is ad hoc."""
@@ -1330,6 +1348,32 @@ class Build:
                 'identity_sha1': (pinned['identity'] or {}).get('sha1'), 'source_sha256': pinned['source']['sha256'],
                 'resigned': False}
 
+    def _stage_screen_helper(self, record, commands, resources):
+        """Phase 45 (layer 4): the pinned screen helper, staged byte for byte with the helpers folder
+        (stage_copy_differs already compared it with its source): its manifest still matches, and codesign shows the
+        pinned cdhash, its identifier and signer with the hardened runtime. It is never re-signed."""
+        pinned = self.screen_helper_manifest
+        staged = resources / signing.HELPER_FOLDER / signing.SCREEN_HELPER_BINARY
+        if pinned is None or file_sha(staged) != pinned['sha256']:
+            raise Refused('screen_helper_differs', [self.display(staged)],
+                          {'expected': (pinned or {}).get('sha256'), 'actual': file_sha(staged)})
+        shown = signing.parse_codesign_blocks(read_text(self._run(record, commands['display-screen-helper'])))
+        block = shown.get(str(staged)) or {}
+        problems = [name for name, ok in (
+            ('cdhash', block.get('cdhash') == pinned['cdhash']),
+            ('identifier', block.get('identifier') == pinned['identifier'] == signing.SCREEN_HELPER_IDENTIFIER),
+            ('authority', block.get('authorities') == [(pinned['identity'] or {}).get('name')]),
+            ('hardened_runtime', 'runtime' in (block.get('flags') or [])),
+            ('adhoc_flag', not {'adhoc', 'linker-signed'} & set(block.get('flags') or []))) if not ok]
+        if problems:
+            raise Refused('screen_helper_signature_differs', [self.display(staged)],
+                          {'problems': problems, 'pinned_cdhash': pinned['cdhash'], 'shown': block})
+        return {'path': signing.HELPER_FOLDER + '/' + signing.SCREEN_HELPER_BINARY, 'sha256': pinned['sha256'],
+                'cdhash': pinned['cdhash'], 'identifier': pinned['identifier'],
+                'designated_requirement': pinned['designated_requirement'],
+                'identity_sha1': (pinned['identity'] or {}).get('sha1'), 'source_sha256': pinned['source']['sha256'],
+                'resigned': False}
+
     def _sign_backend(self, record, commands, backend):
         """Sign every Mach-O of the staged backend with the identity, deepest first and the executable last. Each is
         signed as a copy in C/signing/backend (in place, codesign would sign a framework's binary as its bundle and
@@ -1517,10 +1561,12 @@ class Build:
         # scanned, base_library.zip member by member; the generic /Users/ count is recorded for review.
         scan = machine_path_scan(resources, self.needles(),
                                  {entry['path'] for entry in tree['files']
-                                  if entry['path'].startswith(('backend/', 'llama/'))})
+                                  if entry['path'].startswith(('backend/', 'llama/'))
+                                  or entry['path'] == signing.HELPER_FOLDER + '/' + signing.SCREEN_HELPER_BINARY})
         if scan['machine']:
             raise Refused('machine_paths_in_stage', scan['paths'][:50], {'needles': scan['machine']})
         helper = self._stage_helper(record, commands, resources) if self.has_helper() else None
+        screen = self._stage_screen_helper(record, commands, resources) if self.has_screen_helper() else None
         signed = None
         if self.identity is not None:  # the stage equals the flattened dist (checked above); now sign its Mach-Os
             os.mkdir(C / 'signing', 0o700)
@@ -1555,6 +1601,8 @@ class Build:
             manifest['signing'] = signed
         if helper is not None:
             manifest['vault_helper'] = helper
+        if screen is not None:
+            manifest['screen_helper'] = screen
         manifest['machine_paths'] = {'files_scanned': scan['files'], 'machine_specific': 0,
                                      'users_prefix': scan['users_prefix']}
         evidence = {'bundle_sha256': tree['bundle_sha256'], 'file_count': tree['file_count'], 'bytes': tree['bytes'],
@@ -1563,6 +1611,8 @@ class Build:
                     'stage_manifest_sha256': write_new(C / 'stage/stage-manifest.json', manifest)}
         if helper is not None:
             evidence['vault_helper'] = {'sha256': helper['sha256'], 'cdhash': helper['cdhash']}
+        if screen is not None:
+            evidence['screen_helper'] = {'sha256': screen['sha256'], 'cdhash': screen['cdhash']}
         if signed is not None:
             evidence.update(signed_files=len(signed['files']), signed_executable_sha256=signed['executable']['sha256'],
                             signed_backend_sha256=shipped, executable_cdhash=signed['executable']['cdhash'])
@@ -1805,6 +1855,8 @@ class Build:
                     'signing': {'mode': 'adhoc'}}
         if 'vault_helper' in stage_evidence:  # in both bundles at resources/helpers, byte-identical to the stage
             manifest['vault_helper'] = self._stage_manifest()['vault_helper']
+        if 'screen_helper' in stage_evidence:  # Phase 45: beside it, likewise
+            manifest['screen_helper'] = self._stage_manifest()['screen_helper']
         if self.identity is not None:
             # A self-signed local identity: stable across builds, but not Developer ID and not notarized, so the
             # readiness signing gate still fails (not_developer_id_application, gatekeeper_rejected, not stapled).

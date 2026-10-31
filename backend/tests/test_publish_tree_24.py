@@ -7,6 +7,7 @@ real node --test in the clean clone. Nothing is committed, pushed or fetched. Pl
 time, so this file itself scans clean.
 """
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -178,7 +179,8 @@ def test_the_user_guide_quotes_the_apps_own_words():
     assert web.startswith('Searches send your search words to Microsoft Bing') and web in guide
     labels = dict(re.findall(r'(\w+): "([^"]+)"', re.search(r'toolLabels: Record<string, string> = \{([^}]+)\}',
                                                                   settings).group(1)))
-    assert len(labels) == 9 and all(label in guide for label in labels.values()), labels
+    # D95 (Phase 40, 1.6.0): ten switches, the screenshot switch ("capture") added; each label still quoted exactly.
+    assert len(labels) == 10 and all(label in guide for label in labels.values()), labels
     scope = 'Local servers must be one self-contained program under 100 MB'
     sentence = re.search(re.escape(scope) + r'[^"<]+', settings).group(0).strip()
     assert sentence.endswith('connect to an HTTP MCP endpoint instead.') and sentence in guide
@@ -223,6 +225,17 @@ def test_the_manifest_is_strict_and_its_patterns_mean_what_they_say(tmp_path):
 
 def gitleaks_config():
     return tomllib.loads((REPO / '.gitleaks.toml').read_text(encoding='utf-8'))
+
+
+def gitleaks_decoded(line):
+    """The line as gitleaks also scans it (--max-decode-depth): each base64 run that decodes to printable text, decoded."""
+    def decode(match):
+        try:
+            text = base64.b64decode(match.group(0), validate=True).decode('ascii')
+        except (ValueError, UnicodeDecodeError):
+            return match.group(0)
+        return text if text.isprintable() else match.group(0)
+    return re.sub(r'[A-Za-z0-9+/]{16,}={0,2}', decode, line)
 
 
 def test_gitleaks_keeps_the_default_rules_and_adds_pebbles_own():
@@ -270,10 +283,15 @@ def test_gitleaks_allowlists_pin_the_ten_triaged_findings_to_their_files_and_lin
     pinned = 0
     for allow in allowlists[:-1]:
         assert allow['condition'] == 'AND' and allow['regexTarget'] == 'line' and len(allow['paths']) == 1
+        # Phase 46 (2026-10-28): gitleaks 8.30 skips every file a global allowlist's paths match unless the allowlist
+        # names its rules, so each names the one rule its line trips; and its line target begins with the newline
+        # before the line, so each pattern anchors with (?m).
+        assert allow['targetRules'] in (['generic-api-key'], ['aws-access-token'])
+        assert all(pattern.startswith('(?m)^') for pattern in allow['regexes'])
         rel = re.fullmatch(r'\(\^\|/\)(.+)\$', allow['paths'][0]).group(1).replace('\\.', '.')
         lines = (REPO / rel).read_text(encoding='utf-8').splitlines()
         for pattern in allow['regexes']:
-            matching = [line for line in lines if re.search(pattern, line)]
+            matching = [line for line in lines if re.search(pattern, line) or re.search(pattern, gitleaks_decoded(line))]
             assert matching, (rel, pattern)
             pinned += len(matching)
             # The config is scanned too: it pins each line's shape and never repeats a value.
@@ -281,7 +299,9 @@ def test_gitleaks_allowlists_pin_the_ten_triaged_findings_to_their_files_and_lin
                 for value in re.findall(r'''['"]([^'"]{10,})['"]''', line):
                     for part in value.split():  # each space-free value in the quoted text
                         assert len(part) < 10 or part not in config_text, (rel, part[:12])
-    assert pinned == 18  # the three zephyr canaries share one rule; i2-08 flagged one of them; Phase 25 adds 7 lines
+    # the three zephyr canaries share one rule; i2-08 flagged one of them; Phase 25 adds 7 lines; Phase 46 pins the
+    # decoded view of the scrubber shapes' JSON line in its two files
+    assert pinned == 20
     assert allowlists[-1]['paths'] == ['''(^|/)release/Pebble_0\\.4\\.0_arm64\\.dmg$''']
     # The reviewed e-mail list is the manifest's: every address matches a path-bound allowlist and no other.
     email = next(rule for rule in config['rules'] if rule['id'] == 'pebble-email-address')

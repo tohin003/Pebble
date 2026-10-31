@@ -13,7 +13,7 @@ keep memory you control and build interactive views, with the model you choose. 
 [![Release](https://img.shields.io/github/v/release/tohin003/Pebble?label=release&color=506e54)](https://github.com/tohin003/Pebble/releases/latest)
 [![macOS 12+ on Apple silicon](https://img.shields.io/badge/macOS-12%2B%20%C2%B7%20Apple%20silicon-191e1b?logo=apple&logoColor=white)](#install)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-a6c795)](LICENSE)
-[![9,097 tests at v1.5.0](https://img.shields.io/badge/tests-9%2C097%20at%20v1.5.0-506e54)](#built-like-infrastructure)
+[![13,269 tests at v2.0.0](https://img.shields.io/badge/tests-13%2C269%20at%20v2.0.0-506e54)](#built-like-infrastructure)
 [![AgentGuard built in](https://img.shields.io/badge/AgentGuard-built%20in-23351f)](#agentguard-evidence-before-done)
 
 [**Download for macOS**](https://github.com/tohin003/Pebble/releases/latest/download/Pebble-macos-arm64.zip) ·
@@ -95,7 +95,7 @@ Keychain. A local conversation reaches a cloud model only after you review it.
 
 ### 🧪 Built like infrastructure
 
-1.5.0 passed 9,097 tests and 1,948 service checks, on source and on the frozen app. Its backend build is reproducible,
+2.0.0 passed 13,269 tests and 2,112 service checks, on source and on the frozen app. Its backend build is reproducible,
 and the release passed a full licence inventory and a secret scan.
 
 </td>
@@ -148,9 +148,10 @@ One switch for presenting, calls and screen shares. Turn it on in Settings → P
 icon, or with ⌃⌥⌘S.
 
 - **Stealth.** Pebble's windows are left out of screen capture and screen sharing. Pebble leaves the Dock, ⌘Tab and
-  Mission Control. ⌃⌥⌘H hides every Pebble window at once, and the menu-bar icon brings it back.
-- **Lockdown.** Pebble never takes focus from the app in front. You can type to it while your slides or call stay
-  active.
+  Mission Control. ⌃⌥⌘H hides every Pebble window at once; press it again, or use the menu-bar icon, to bring it back.
+- **Lockdown.** The companion stays with you over the app you are in, full-screen apps included, and opening the
+  workspace takes you to the desktop. Clicking or typing in the companion leaves the app you were in active, with its
+  menu bar.
 - **You can always tell it's on.** The pebble wears the Veil, a dusk-blue glass with a light rim, and the menu-bar icon
   changes shape.
 
@@ -204,7 +205,7 @@ AgentGuard makes Pebble more **reliable**, not more secure. It is not a sandbox.
 flowchart TB
     subgraph Shell["Pebble.app: Tauri 2 shell (Rust)"]
         UI["Vue 3 interface<br/>full window and floating pebble"]
-        Pet["bloub animation engine<br/>30 fps, pointer gaze"]
+        Pet["Companion animation engine<br/>30 fps, pointer gaze"]
     end
     Shell <-->|"private stdio, JSON<br/>RPC allowlist"| Svc
     subgraph Svc["Pebble service: Python, frozen and signed"]
@@ -378,8 +379,8 @@ Pebble is built to the standard of software that people trust with their project
 
 | | |
 |---|---|
-| **Tests** | 9,097 automated tests at v1.5.0, none skipped. They never call a model or the network. |
-| **Service checks** | 1,948 checks across 51 validator suites, each run against the source *and* the frozen, signed app |
+| **Tests** | 13,269 automated tests at v2.0.0, none skipped. They never call a model or the network. |
+| **Service checks** | 2,112 checks across 59 validator suites, each run against the source *and* the frozen, signed app |
 | **Reproducible build** | The shipped backend is byte-identical to the tested one, apart from its signature |
 | **Release gates** | Secret scan, licence inventory (366 components, every notice present), a scan for personal paths, and every published test run in a fresh clone |
 | **Safe updates** | The installer keeps the previous app. Database upgrades back up first. Every release is rehearsed on a copy of real data and drilled with a rollback before it ships. |
@@ -388,8 +389,44 @@ Pebble is built to the standard of software that people trust with their project
 
 ## Benchmarks: measured, not claimed
 
-**Pebble against Claude Code CLI, both on Claude Opus 5.5: no difference shown.** On the same 45 tasks, three
-repetitions each, Pebble 1.0.2 passed 79.3 % and Claude Code 82.2 %. The paired difference is −3.3 points, with a 95 %
+**Pebble 2.0 against Claude Code and Codex: more tasks done correctly, fewer false completions, lower cost per task.**
+Golden set 2.0's held-out split has 85 tasks in 17 families, each asked in three phrasings, so 255 runs per product.
+The tasks were written before the runs and kept sealed from development, and the plan (its gates, graders, prices and
+budgets) was registered before the first run. Each comparison used one model for both products. Pebble ran as 1.9.29,
+the build whose source 2.0.0 is, apart from its version number and notes.
+
+| Against Claude Code (`claude-opus-5-5`) | Pebble | Claude Code |
+|---|---|---|
+| Tasks done correctly | 235 of 255 (92.2 %) | 213 of 255 (83.5 %) |
+| Said done when it was not | 6.3 % | 13.7 % |
+| Cost per task | $0.091 | $0.117 |
+| Time per task: median, 95th percentile | 12.1 s, 46.5 s | 12.9 s, 40.2 s |
+
+| Against Codex (`gpt-6.1-sol`) | Pebble | Codex |
+|---|---|---|
+| Tasks done correctly | 243 of 255 (95.3 %) | 231 of 255 (90.6 %) |
+| Said done when it was not | 3.9 % | 7.1 % |
+| Cost per task | $0.042 | $0.050 |
+| Time per task: median, 95th percentile | 20.0 s, 62.9 s | 21.1 s, 54.6 s |
+
+- **The paired difference** in tasks done correctly:
+  - +8.6 points (95 % interval +3.1 to +14.9) against Claude Code;
+  - +4.7 points (+0.4 to +9.4) against Codex.
+
+  The plan's five measured gates were met against both.
+- **"Beats", by the plan's rule,** applies family by family, only where the 95 % lower bound is above zero.
+  - Against Claude Code: answers from saved web pages and repeated computations.
+  - Against Codex: no single family.
+- **Where Pebble trails**, by one task each: remembering across sessions against Claude Code, and long tasks against
+  Codex.
+- **Not run before 2.0.0:** the plan's sixth gate (no regression on the older corpus 24a) and the 32 held-out probes.
+
+The setup, the gates and what was not run are in the [2.0.0 release notes](CHANGELOG.md#200).
+
+### Earlier: Pebble 1.0.2 against Claude Code CLI on corpus 24a
+
+**Both on Claude Opus 5.5: no difference shown.** On the same 45 tasks, three repetitions each, Pebble 1.0.2 passed
+79.3 % and Claude Code 82.2 %. The paired difference is −3.3 points, with a 95 %
 interval of −9.2 to +2.5. Pebble was ahead on multi-turn tasks, and behind on coding fixes and research. Its lead on
 clarification tasks is overstated: the harness missed two clarifying questions Claude Code asked, so their follow-ups
 were never sent ([correction](docs/PEBBLE_V1_BENCHMARKS.md#corrections-after-publication)).
@@ -404,15 +441,15 @@ were never sent ([correction](docs/PEBBLE_V1_BENCHMARKS.md#corrections-after-pub
   - Every task counts, and only a pass is success. A claim needs the whole interval above zero.
   - Both products used the same model and effort, the same tasks, phrasing and turns, and the same 15-minute limit.
 - **What it cost:** at Anthropic's list prices, about $0.085 a task for Pebble and $0.053 for Claude Code. Pebble sent
-  fewer tokens, but almost none came from the prompt cache. 1.3.0 makes each request extend the previous one so the
-  cache can be used, and 1.4.0 seals a long task's older tool results in large chunks; their effect is measured in the
-  next benchmark.
+  fewer tokens, but almost none came from the prompt cache. From 1.3.0 each request extends the previous one so the
+  cache can be used, and from 1.4.0 a long task's older tool results are sealed in large chunks; the golden set 2.0 runs
+  above measured the versions since.
 - **What it found:** a real Pebble bug on Claude (multi-step tasks could fail on their third request), fixed in 1.0.2
   before the counted run.
 
-Everything is in [docs/PEBBLE_V1_BENCHMARKS.md](docs/PEBBLE_V1_BENCHMARKS.md#5b-pebble-against-claude-code-cli-24a-claude-opus-55):
-the setup, every family, the cost, the harness fixes, and the cases to read with care. Codex CLI on GPT models and the
-AgentGuard ablation are still to come. This README claims nothing they have not measured.
+The 1.0.2 run is in [docs/PEBBLE_V1_BENCHMARKS.md](docs/PEBBLE_V1_BENCHMARKS.md#5b-pebble-against-claude-code-cli-24a-claude-opus-55):
+the setup, every family, the cost, the harness fixes, and the cases to read with care. The AgentGuard ablation is still
+to come. This README claims nothing these runs have not measured.
 
 ---
 
@@ -552,8 +589,10 @@ and earlier phases' tests and validators are never weakened.
   - Prompt injection from web pages or files is limited, not impossible.
 - Web search depends on Bing's RSS feed, which may change or stop without notice. The free Open-Meteo service is for
   non-commercial use.
-- Pebble for Chrome needs Chrome's Developer mode. It has been tested against a simulated Chrome so far, not yet end
-  to end in a real one. Pebble's own built-in browser and control of other apps' windows are not available yet.
+- Pebble for Chrome needs Chrome's Developer mode. It was first tested against a simulated Chrome; since 1.9.1 it has
+  also been checked end to end in Google Chrome. Comet keeps extensions out of its pages, so there Pebble works in a
+  new Comet window through Accessibility instead. Other apps' windows are operated through Accessibility; seeing a
+  window as an image and mouse and keyboard control are built but stay off until they are measured.
 - Scheduled tasks run only while Pebble is open.
 
 ## Security, licence and credits

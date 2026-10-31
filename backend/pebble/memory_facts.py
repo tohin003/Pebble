@@ -9,6 +9,7 @@ into procedures or preferences.
 """
 
 import re
+import unicodedata
 from bisect import bisect_right
 from pathlib import PurePosixPath
 
@@ -49,7 +50,8 @@ _NOTE_LABELS = frozenset({'note', 'notes', 'warning', 'tip', 'example', 'importa
 _SECRET_KEY = re.compile(r'pass(?:word|wd|phrase)?|secret|token|api[_-]?key|private[_-]?key|credential|auth|cookie'
                          r'|session|salt|signature', re.I)
 _OPAQUE = re.compile(r'[A-Za-z0-9+/=-]{32,}')
-_ACTION_NOUNS = {'edit': 'edit', 'command': 'command', 'tests': 'test run', 'app': 'app launch', 'plugin': 'plugin call'}
+_ACTION_NOUNS = {'edit': 'edit', 'command': 'command', 'tests': 'test run', 'app': 'app launch', 'plugin': 'plugin call',
+                 'screen': 'step'}  # Phase 45 (F256, audit round R11)
 
 _PREDICATE = re.compile(
     r"\b(?:is|are|was|were|be|been|uses?|used|requires?|required|must|should|supports?|supported|runs?|stores?"
@@ -103,6 +105,45 @@ SENSITIVE = re.compile(
     r'|social security|passport)\b', re.I)
 _FENCE = re.compile(r'(?ms)^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)')
 _BLOCKQUOTE = re.compile(r'(?m)^[ \t]*>.*$')
+# Phase 46 (1.9.28, follow-up 1; the w5 security review, findings 1, 3 and 8): a saved memory reaches every later
+# session as the person's own standing instruction, so it may only come from the person's own words. Material they paste
+# or quote is someone else's, whatever it says ("Please remember that our bank details changed: ...", "going forward I
+# want all replies sent to ..."): fenced code also when opened mid-line, blockquotes, indented lines, HTML, a forwarded or
+# replied e-mail, a letter after its salutation, and whatever a line of theirs introduces ("Summarize this email:",
+# "What does this email want from me?", "Here is what our vendor sent:"; never "Remember the following:"). Only the
+# first MAX_OWN_SCAN characters are read; the rest is material. Every scan here is one pass or bounded per position.
+MAX_OWN_SCAN = 16000
+# a line of the person's that asks to keep something introduces their own list, never material
+_REQUEST_CUE = re.compile(r"\b(?:remember\w*|memori[sz]e|keep\b[^\n]{0,30}?\bin\s+mind|bear\b[^\n]{0,30}?\bin\s+mind|"
+                          r"don['’]?t\s+forget|note|save|store|future|later|next\s+(?:time|sessions?)|from\s+now\s+on|"
+                          r"going\s+forward|across\s+sessions|"
+                          # Phase 46 (1.9.29, w22): "Commit this to memory: ...", "Add this to your memory: ..." ask too
+                          # (they read as "Translate this:"); the curly "Don’t" macOS types
+                          r"(?:commit|add|put)\s+(?:this|that|it|these|those|the\s+following)\s+(?:to|in|into)\s+"
+                          r"(?:your\s+|my\s+)?memory)\b", re.I)
+_MATERIAL = re.compile(r"\b(?:this|these|below|following|attached|forwarded|enclosed|pasted|quoted)\b[^\n]{0,40}?\b(?:"
+                       r"e-?mails?|mails?|messages?|letters?|notes?|texts?|snippets?|documents?|docs?|logs?|threads?|posts?|"
+                       r"comments?|replies|reply|drafts?|pages?|articles?|transcripts?|chats?|notices?|announcements?|memos?|"
+                       r"minutes|code|output|excerpts?|passages?|paragraphs?|quotes?|tweets?|reviews?|tickets?)\b|"
+                       r"\bhere(?:'s|\s+is|\s+are)\b", re.I)
+_REPORTED = re.compile(r"\b(?:wrote|writes|said|says|sent|asks|asked|replied|replies|posted|commented|emailed|messaged|"
+                       r"told\s+(?:me|us)|this|these|the\s+following|below|here(?:'s|\s+is|\s+are)|notice|message|e-?mail|"
+                       r"letter|announcement|memo|reply|comment|post|tweet|review|ticket|from\s+(?:the|our|my|your|an?)\s+\w+)\b",
+                       re.I)
+_ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+_EMAIL_LINE = re.compile(r"(?:-{2,}\s*(?:forwarded|original)\s+message\s*-{2,}|begin\s+forwarded\s+message\s*:|"
+                         r"-{3,}\s*original\s+message|(?:from|subject|sent|reply-to)\s*:\s*\S|on\s[^\n]{1,200}\bwrote\s*:\s*$|"
+                         r"[^\n]{1,120}\bwrote\s*:\s*$|_{8,}\s*$)", re.I)
+_HTML_LINE = re.compile(r'<[A-Za-z!?/]')
+_SALUTATION = re.compile(r"(?:hi|hello|hey|dear|greetings|good\s+(?:morning|afternoon|evening))\b(?!\s*,?\s*pebble\b)"
+                         r"(?:\s+[A-Z][\w.'’-]*){0,3}\s*[,!:]", re.I)
+_HTML_BLOCKS = ('blockquote', 'pre', 'code', 'q', 'cite', 'samp', 'kbd', 'textarea', 'script', 'style', 'template', 'xmp')
+# quotation marks and inline code: someone else's words inside a sentence of the person's
+_QUOTE_PAIRS = {'"': '"', '“': '”', '„': '“”', '‚': '‘’', '«': '»', '»': '«', '‹': '›', '›': '‹', '‘': '’', "'": "'",
+                '「': '」', '『': '』', '`': '`'}
+_QUOTE_MARKS = re.compile('[%s]' % re.escape(''.join(_QUOTE_PAIRS)))
+_SPAN_LIMIT, _MAX_MARKS = 600, 4000
+PLACEHOLDER = '·'  # stands in for a quoted character in cue_text: not a space and not a word character
 PROFILE_TOPICS = (
     ('response-language', re.compile(r'\b(?:english|spanish|french|german|italian|portuguese|hindi|bengali|chinese'
                                      r'|mandarin|japanese|korean|arabic|russian|dutch|british spelling'
@@ -437,9 +478,208 @@ def file_span(source, arguments, excerpt, start, length):
 def visible_human_text(text):
     """Human text with fenced code and blockquotes blanked, offsets preserved.
 
-    Pasted third-party material is not the person's own preference statement."""
-    blank = lambda m: re.sub(r'[^\n]', ' ', m.group())
-    return _BLOCKQUOTE.sub(blank, _FENCE.sub(blank, text if isinstance(text, str) else ''))
+    Pasted third-party material is not the person's own preference statement.
+
+    Phase 46 (1.9.28, follow-up 1): also fences opened mid-line, indented lines, HTML, a forwarded or replied e-mail,
+    a letter after its salutation, and what a line of theirs introduces as material (see _material_start); invisible
+    format, tag and bidi characters become spaces and compatibility forms their plain character (a fullwidth ＞ is a
+    blockquote). The result has the input's length; past MAX_OWN_SCAN it is blank."""
+    text = text if isinstance(text, str) else ''
+    head, tail = text[:MAX_OWN_SCAN], text[MAX_OWN_SCAN:]
+    blank = lambda m: re.sub(r'[^\n]', ' ', m.group())  # noqa: E731
+    head = _BLOCKQUOTE.sub(blank, _FENCE.sub(blank, neutral_text(head)))
+    head = _blank_inline_fences(_blank_html_blocks(head))
+    lines, kept = head.split('\n'), []
+    for line in lines:  # indented lines: pasted code or a pasted letter
+        kept.append(' ' * len(line) if line.startswith(('    ', '\t')) and line.strip() else line)
+    head = '\n'.join(kept)
+    cut = _material_start(head)
+    if cut is not None:
+        head = head[:cut] + re.sub(r'[^\n]', ' ', head[cut:])
+    return _blank_reported(head) + re.sub(r'[^\n]', ' ', tail)
+
+
+def neutral_text(text):
+    """Phase 46 (1.9.28, follow-up 1, finding 8): invisible format, tag and variation characters as spaces,
+    compatibility forms as their plain character (same length: a form that normalizes to several characters stays as it
+    is)."""
+    out = []
+    for char in text:
+        code = ord(char)
+        if code < 0x80:
+            out.append(char)
+        elif unicodedata.category(char) == 'Cf' or 0xFE00 <= code <= 0xFE0F or 0xE0000 <= code <= 0xE0FFF:
+            out.append(' ')
+        else:
+            plain = unicodedata.normalize('NFKC', char)
+            out.append(plain if len(plain) == 1 else char)
+    return ''.join(out)
+
+
+def clean_text(text):
+    """Phase 46 (1.9.28, follow-up 1, finding 8): text as it is saved and compared: NFKC, without invisible format, tag,
+    bidi or variation characters, whitespace runs as one space."""
+    text = unicodedata.normalize('NFKC', text if isinstance(text, str) else '')
+    text = ''.join(c for c in text if not (unicodedata.category(c) == 'Cf' or 0xFE00 <= ord(c) <= 0xFE0F
+                                            or 0xE0000 <= ord(c) <= 0xE0FFF))
+    return ' '.join(text.split())
+
+
+def _blank_inline_fences(text):
+    """A fence opened mid-line ("Check this snippet ```") to its closing fence or the end. Each marker's next place is
+    looked up only once the scan has passed it, so the whole is one pass."""
+    out, index, next_at = [], 0, {'```': text.find('```'), '~~~': text.find('~~~')}
+    while True:
+        for mark, at in list(next_at.items()):
+            if 0 <= at < index:
+                next_at[mark] = text.find(mark, index)
+        found = [i for i in next_at.values() if i >= 0]
+        if not found:
+            out.append(text[index:])
+            return ''.join(out)
+        start = min(found)
+        marker = text[start:start + 3]
+        close = text.find(marker, start + 3)
+        end = len(text) if close < 0 else close + 3
+        out.append(text[index:start])
+        out.append(re.sub(r'[^\n]', ' ', text[start:end]))
+        index = end
+
+
+def _blank_html_blocks(text):
+    """<blockquote>, <pre>, <code>, <q> ... elements, to their closing tag or the end (one pass)."""
+    lower, out, index = text.translate(_ASCII_LOWER), [], 0  # same length as text, unlike str.lower()
+    while True:
+        start = lower.find('<', index)
+        if start < 0:
+            out.append(text[index:])
+            return ''.join(out)
+        name = re.match(r'<([a-z]+)\b', lower[start:start + 16])
+        if not name or name[1] not in _HTML_BLOCKS:
+            out.append(text[index:start + 1])
+            index = start + 1
+            continue
+        close = lower.find('</' + name[1], start)
+        end = len(text) if close < 0 else (lower.find('>', close) + 1 or len(text))
+        out.append(text[index:start])
+        out.append(re.sub(r'[^\n]', ' ', text[start:end]))
+        index = end
+
+
+def _material_start(text):
+    """The offset where pasted material begins, or None: a forwarded or replied e-mail's marker or header line, an HTML
+    line, a salutation after the person's first line, or the line after one of theirs that introduces material (ends
+    with ':', or names "this email", "the following", "here is" ...) without asking to keep anything."""
+    position, seen, pending = 0, False, None
+    for line in text.split('\n'):
+        start, position = position, position + len(line) + 1
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if pending is not None:
+            return pending
+        head = stripped[:300]
+        if _EMAIL_LINE.match(head) or _HTML_LINE.match(head) or seen and _SALUTATION.match(head):
+            return start
+        last = re.split(r'(?<=[.!?])\s+', stripped[-300:])[-1]
+        if stripped.endswith(':') and not _REQUEST_CUE.search(last):
+            pending = start + len(line) + 1
+        elif _MATERIAL.search(stripped[:300]) and not _REQUEST_CUE.search(stripped[:600]):
+            pending = start + len(line) + 1
+        seen = True
+    return None
+
+
+def _blank_reported(text):
+    """Someone else's words after a colon on the person's line ("My colleague wrote: ...", "Translate this: ..."): the
+    rest of the line, when what comes before the colon reports or points and asks to keep nothing."""
+    lines = text.split('\n')
+    for number, line in enumerate(lines):
+        colon = line.find(':', 0, 400)
+        tries = 0
+        while colon >= 0 and tries < 3:
+            head = re.split(r'(?<=[.!?])\s+', line[:colon])[-1]
+            if _REPORTED.search(head) and not _REQUEST_CUE.search(head):
+                lines[number] = line[:colon + 1] + ' ' * (len(line) - colon - 1)
+                break
+            colon, tries = line.find(':', colon + 1, 400), tries + 1
+    return '\n'.join(lines)
+
+
+def quotation_spans(text, limit=_SPAN_LIMIT, marks=_MAX_MARKS):
+    """[(start, end)] of quotations and inline code in text ("…", “…”, «…», ‘…’, '…', `…` ...), each within a paragraph
+    and at most `limit` characters; an apostrophe ("don't", "users'") never opens or closes one. One pass; past `marks`
+    quotation marks the rest of the text counts as quoted (nothing there is the person's own request)."""
+    spans, index, size = [], 0, len(text)
+    while True:
+        found = _QUOTE_MARKS.search(text, index)
+        if not found:
+            return spans
+        index, marks = found.start(), marks - 1
+        if marks < 0:
+            spans.append((index, size))
+            return spans
+        if not _opens(text, index):
+            index += 1
+            continue
+        end = _closer(text, index + 1, _QUOTE_PAIRS[text[index]], min(size, index + 1 + limit))
+        if end < 0:
+            index += 1
+            continue
+        spans.append((index, end + 1))
+        index = end + 1
+
+
+def _opens(text, index):
+    after = text[index + 1:index + 2]
+    if not after or after.isspace():
+        return False
+    return text[index] not in "'‘’`" or index == 0 or not text[index - 1].isalnum()
+
+
+def _closer(text, start, close, stop):
+    """The closing mark's index (at most 8 candidates looked at), or -1."""
+    breaks = text.find('\n\n', start, stop)
+    stop = breaks if breaks >= 0 else stop
+    index = start
+    for _ in range(8):
+        hits = [i for i in (text.find(mark, index, stop) for mark in close) if i >= 0]
+        if not hits:
+            return -1
+        index = min(hits)
+        apostrophe = text[index] in "'’`" and index + 1 < len(text) and text[index + 1].isalnum()  # "don't", "it’s"
+        if not text[index - 1].isspace() and not apostrophe:
+            return index
+        index += 1
+    return -1
+
+
+def cue_text(text):
+    """Phase 46 (1.9.28, follow-up 1): text with every quotation and inline code span replaced by PLACEHOLDER (same
+    length; newlines kept), so a cue inside them ("«please remember that ...»") is no request of the person's."""
+    if not isinstance(text, str) or not _QUOTE_MARKS.search(text):
+        return text if isinstance(text, str) else ''
+    out, last = [], 0
+    for start, end in quotation_spans(text):
+        out += [text[last:start], re.sub(r'[^\n]', PLACEHOLDER, text[start:end])]
+        last = end
+    return ''.join(out) + text[last:]
+
+
+def own_quote(human, quote):
+    """Phase 46 (1.9.28, follow-up 1): whether `quote` is the person's own words in `human`: it occurs in the visible
+    text (pasted material blanked) at a place that is not inside a quotation."""
+    if not isinstance(quote, str) or not quote.strip():
+        return False
+    visible = visible_human_text(human)
+    marked = cue_text(visible)
+    quote = quote.strip()
+    index = visible.find(quote)
+    while index >= 0:
+        if marked[index] != PLACEHOLDER:
+            return True
+        index = visible.find(quote, index + 1)
+    return False
 
 
 def preference_allowed(quote):
@@ -448,10 +688,14 @@ def preference_allowed(quote):
 
 
 def preference_quotes(text, limit=4):
-    """Exact explicit preference sentences from one human-origin input."""
+    """Exact explicit preference sentences from one human-origin input. Phase 46 (1.9.28, follow-up 1): never one
+    inside a quotation ("My colleague wrote “Always use tabs.”")."""
     visible, out = visible_human_text(text), []
+    marked = cue_text(visible)
     for match in PREFERENCE.finditer(visible):
         quote = match.group().strip()
+        if marked[match.start() + len(match.group()) - len(match.group().lstrip())] == PLACEHOLDER:
+            continue
         if quote in out or quote not in text or not preference_allowed(quote):
             continue
         out.append(quote)
@@ -468,12 +712,135 @@ def preference_slot(quote):
     return ''
 
 
+# Phase 46 (1.9.28, follow-up 2: D183, D190 and D176): what a reply's own text can be checked against, as {slot: value}:
+# 'date' (a numeric pattern, 'DD.MM.YYYY', 'YYYY-MM-DD', 'MM/DD/YYYY' ...), 'currency' (an ISO code), 'decimals' (a
+# count), 'units' ('metric' or 'imperial') and 'clock' ('24h' or '12h'). Only what the person wrote in so many words; the
+# rest of a preference is no slot. Every pattern is bounded; a text is read up to SLOT_TEXT characters.
+SLOT_TEXT = 2000
+CURRENCIES = ('CHF', 'EUR', 'USD', 'GBP', 'JPY', 'CAD', 'AUD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'CNY', 'HKD', 'SGD',
+              'NZD', 'INR', 'ZAR', 'BRL', 'MXN')
+_CODES = '|'.join(CURRENCIES)
+CURRENCY_WORDS = {'swiss franc': 'CHF', 'franc': 'CHF', 'euro': 'EUR', 'us dollar': 'USD', 'pound sterling': 'GBP',
+                  'british pound': 'GBP', 'yen': 'JPY'}
+_DATE_PATTERN = re.compile(r'(?<![\w.])([DMY]{1,4})([./-])([DMY]{1,4})\2([DMY]{1,4})(?![\w])', re.I)
+_ISO_DATES = re.compile(r'\bISO(?:[ -]?8601)?\b', re.I)
+_CURRENCY = re.compile(r'(?i:\b(?:currenc(?:y|ies)|conversions?|convert\w*|amounts?|prices?|money|costs?|budgets?|totals?)\b'
+                       r'[^.;\n]{0,40}?|\b(?:in|into|to|as) )\b(' + _CODES + r'|swiss francs?|francs?|euros?|us dollars?|'
+                       r'pounds? sterling|british pounds?|yen)\b', re.I)
+_DECIMALS = re.compile(r'\b(no|zero|one|two|three|four|[0-4]) (?:decimals?|decimal places?|decimal digits?)\b|\b([0-4]) ?dp\b',
+                       re.I)
+_NUMBER_WORDS = {'no': 0, 'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4}
+_UNITS = re.compile(r'\b(metric|imperial|us customary)\b', re.I)
+_CLOCK = re.compile(r'\b(24h|24-hour|24 hour|military time)(?: (?:clock|time|format))?\b|\b(12h|12-hour|12 hour|am/pm)'
+                    r'(?: (?:clock|time|format))?\b', re.I)
+_CLOCK_CONTEXT = re.compile(r'\b(?:times?|clock|hours? format|24h|12h|am/pm|military)\b', re.I)
+SLOT_TOPICS = {'date': re.compile(r'\bdates?\b', re.I),
+               'currency': re.compile(r'\bcurrenc(?:y|ies)\b|\bconversions?\b|\b(?:' + _CODES + r')\b', re.I),
+               'decimals': re.compile(r'\bdecimals?\b', re.I),
+               'units': re.compile(r'\bunits?\b|\bmetric\b|\bimperial\b', re.I),
+               'clock': re.compile(r'\b(?:times|clock|24h|12h|24-hour|12-hour|am/pm)\b', re.I)}
+_SLOT_FILLER = frozenset(
+    "i i'd i'm i've my me we our please always never want wants like likes prefer prefers preferred preference use uses "
+    "used write writes written give given show shown display displayed format formatted formats as in into with to be "
+    "is are should must the a an for from now on going forward future later next sessions session time remember that "
+    "this all of and keep mind dates date amounts amount prices price conversions conversion currency units unit "
+    "decimals decimal places digits times clock hour hours style numbers number every across also just here it them "
+    "make sure so would rather instead not no longer don't do any more anymore franc francs euro euros dollar dollars "
+    "pound pounds sterling swiss british us yen iso metric imperial customary 24h 12h am pm dp military "
+    # w17 (the follow-ups review's finding 5): what an update says around its value ("Actually, I'd rather have amounts
+    # in EUR now, thanks") and a count's words ("two decimals"); never a thing an amount or a date belongs to
+    "actually okay ok thanks thank you your though really correction sorry yes yeah well then again back let's go have "
+    "get everything everywhere replies reply answers answer responses response messages zero one two three four "
+    # 1.9.29 (the lead): a change request's own words ("Please change my date preference to YYYY-MM-DD") say
+    # only its slot too, so the newest record decides it and the reply check holds the new value
+    "change switch set update setting settings default".split())
+
+
+def date_format(token):
+    """'DD.MM.YYYY' for a written date pattern ("dd.mm.yyyy", "D.M.YYYY"), or None: one day, one month and one year
+    part, in any order, with one separator."""
+    match = _DATE_PATTERN.fullmatch(token.strip())
+    if not match:
+        return None
+    parts = [match[1].upper(), match[3].upper(), match[4].upper()]
+    if sorted(part[0] for part in parts) != ['D', 'M', 'Y'] or any(len(set(part)) != 1 for part in parts):
+        return None
+    if any(part[0] in 'DM' and len(part) > 2 or part[0] == 'Y' and len(part) not in (2, 4) for part in parts):
+        return None
+    return match[2].join({'D': 'DD', 'M': 'MM', 'Y': 'YYYY'}[part[0]] for part in parts)
+
+
+def preference_slots(text):
+    """{slot: value} of what a saved preference says in so many words (above); {} for anything else."""
+    text = clean_text(text)[:SLOT_TEXT] if isinstance(text, str) else ''
+    found = {}
+    for match in _DATE_PATTERN.finditer(text):
+        value = date_format(match.group())
+        if value:
+            found.setdefault('date', value)
+    if 'date' not in found and _ISO_DATES.search(text) and SLOT_TOPICS['date'].search(text):
+        found['date'] = 'YYYY-MM-DD'
+    currency = _CURRENCY.search(text)
+    if currency:
+        word = currency[1].casefold().rstrip('s')
+        found['currency'] = currency[1].upper() if currency[1].upper() in CURRENCIES else next(
+            (code for name, code in CURRENCY_WORDS.items() if word.endswith(name)), None)
+        if not found['currency']:
+            del found['currency']
+    decimals = _DECIMALS.search(text)
+    if decimals:
+        count = decimals[1] or decimals[2]
+        found['decimals'] = int(count) if count.isdigit() else _NUMBER_WORDS[count.casefold()]
+    units = _UNITS.search(text)
+    if units:
+        found['units'] = 'metric' if units[1].casefold() == 'metric' else 'imperial'
+    clock = _CLOCK.search(text)
+    if clock and _CLOCK_CONTEXT.search(text):
+        found['clock'] = '24h' if clock[1] else '12h'
+    return found
+
+
+def slots_touched(text):
+    """The slots a text speaks of, by a value or a topic word ("my date format preference", "what I said about
+    dates")."""
+    text = clean_text(text)[:SLOT_TEXT] if isinstance(text, str) else ''
+    return set(preference_slots(text)) | {slot for slot, topic in SLOT_TOPICS.items() if topic.search(text)}
+
+
+def _beyond_slots(text):
+    """The words of a statement beyond its slots, their values and the filler around them, or None when it names no
+    slot value."""
+    text = clean_text(text)[:SLOT_TEXT] if isinstance(text, str) else ''
+    if not preference_slots(text):
+        return None
+    rest = _DATE_PATTERN.sub(' ', text)
+    return [w for w in re.findall(r"[a-z0-9']+", rest.casefold().replace('’', "'"))
+            if w not in _SLOT_FILLER and w.upper() not in CURRENCIES and not w.isdigit()]
+
+
+def slot_only(text):
+    """Whether a preference says nothing beyond its slots ("I want dates written as DD.MM.YYYY."), so a newer value of
+    the same slots replaces all of it; "… and my staging settings are in deploy/staging.ini" says more."""
+    words = _beyond_slots(text)
+    return words is not None and len(words) < 2
+
+
+def own_slot(text):
+    """w17 (the follow-ups review's finding 5: "our invoices are in EUR" replaced "I want conversions in CHF", one word
+    beyond the slot being "slot only"): whether a statement says what its slots hold and nothing else, not even one word
+    ("dates should be YYYY-MM-DD from now on", "I want conversions in EUR now"). Only the person's own word on the slot
+    itself replaces an older one (memory_graph.supersede_slot), is a preference (memory.statement_kind) and decides the
+    reply check (memory_check.preferred); a statement about a third thing ("our invoices", "the vendor API") or for one
+    ("amounts in EUR for invoices") never does."""
+    return _beyond_slots(text) == []
+
+
 def nomination_eligible(quote, human):
     """A whole first-person sentence of the person's own text outside the
     preference grammar. It can only wait for native confirmation."""
     return (isinstance(quote, str) and preference_allowed(quote) and len(quote) <= MAX_NOMINATION_CHARS
             and bool(_FIRST_PERSON.search(quote)) and not _INJECTION.search(quote)
-            and locate(visible_human_text(human), quote) is not None)
+            and locate(visible_human_text(human), quote) is not None and own_quote(human, quote))
 
 
 def credential_shaped(text):
@@ -555,6 +922,12 @@ def _target(name, arguments, action):
     command = args.get('command') if isinstance(args.get('command'), str) else payload.get('command')
     if isinstance(command, str) and command.split():
         return (_clean(command.split()[0], 40) or 'a') + ' command'
+    if name in ('ScreenAct', 'ScreenRequest', 'ScreenObserve'):
+        # Phase 45 (F256, audit round R11): "declined a proposed action for ScreenAct" named the tool, not the window
+        review = payload.get('review') if isinstance(payload.get('review'), dict) else {}
+        window = review.get('window') if isinstance(review.get('window'), dict) else {}
+        title = _clean(window.get('title'), 60) if isinstance(window.get('title'), str) else ''
+        return f'the app window “{title}”' if title else 'an app window'
     return name or 'tool'
 
 

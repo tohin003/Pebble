@@ -30,6 +30,15 @@ const bridge = {
   },
 };
 const renderers = {};
+const modules = new Map();
+function loadTs(url) {
+  if (modules.has(url.href)) return modules.get(url.href).exports;
+  const module = { exports: {} };
+  modules.set(url.href, module);
+  new Function("require", "module", "exports", transform(readFileSync(url, "utf8"), { transforms: ["typescript", "imports"] }).code)(
+    (name) => (name.startsWith(".") ? loadTs(new URL(name + ".ts", url)) : require(name)), module, module.exports);
+  return module.exports;
+}
 function component(filename, inlineTemplate) {
   const source = readFileSync(new URL(filename, import.meta.url), "utf8");
   const descriptor = parse(source, { filename }).descriptor;
@@ -48,6 +57,10 @@ function component(filename, inlineTemplate) {
       // Phase 19 renderers routed by ArtifactPanel; DashboardRenderer nests this renderer.
       if (/^\.\/(Quiz|Dashboard|Prototype)Renderer\.vue$/.test(name))
         return { __esModule: true, default: (renderers[name] ||= component(name, true)) };
+      // Phase 46 (1.9.29, w25-genui-b): the visual catalog's renderers and their pure helpers
+      if (/^\.\/Visual(Chart|Diagram|Catalog)\.vue$/.test(name))
+        return { __esModule: true, default: (renderers[name] ||= component(name, true)) };
+      if (name.startsWith("../")) return loadTs(new URL(name + ".ts", import.meta.url));
       return require(name);
     },
     module,
@@ -239,18 +252,20 @@ for (const artifact of malformed) {
       !html.includes("<table"),
   );
 }
-const chartState = (await state(NativeLogic, reactive({ artifact: chart })))
-  .setup;
+// Restated in Phase 46 (1.9.29, w25-genui-b): the geometry moved to chartModel.ts (VisualChart draws it); the same
+// bounds hold: the zero line inside the plot, every bar finite with a height.
+const chartGeometry = loadTs(new URL("../chartModel.ts", import.meta.url)).chartModel(chart.data);
 assert.ok(
-  chartState.chartGeometry.value.baseline > 18 &&
-    chartState.chartGeometry.value.baseline < 250,
+  chartGeometry.baseline > chartGeometry.plot.top &&
+    chartGeometry.baseline < chartGeometry.plot.bottom,
 );
 assert.ok(
-  chartState.chartGeometry.value.series[0].bars.every(
+  chartGeometry.series[0].bars.every(
     (bar) => Number.isFinite(bar.y) && bar.height > 0,
   ),
 );
 assert.ok(!(await render(chart)).includes("NaN"));
+assert.ok((await render(chart)).includes("<svg"), "the chart is drawn");
 
 const props = reactive({
   artifact: structuredClone(form),

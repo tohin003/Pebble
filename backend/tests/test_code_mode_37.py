@@ -198,7 +198,11 @@ def test_runcode_is_offered_above_8k_with_a_project_from_the_first_step_only(tmp
     small = task(tmp_path / 'small', [v34.call('Read', {'file_path': 'stats.py'}, 'r1')], context=8192)
     assert not any('RunCode' in names for names in small['tools'])
     bare = task(tmp_path / 'bare', [], text='What is a closure in Python?', project=False)
-    assert not any('RunCode' in names for names in bare['tools'])
+    # D98 (Phase 41, 1.7.0): Code Mode joins the Companion's tools above 8K, where Pebble's Workshop makes its tools.
+    assert all('RunCode' in names for names in bare['tools'])
+    bare_off = task(tmp_path / 'bare-off', [], text='What is a closure in Python?', project=False, switch='0',
+                    monkeypatch=monkeypatch)
+    assert not any('RunCode' in names for names in bare_off['tools'])
     off = task(tmp_path / 'off', [v34.call('Read', {'file_path': 'stats.py'}, 'r1')], switch='0',
                monkeypatch=monkeypatch)
     assert not any('RunCode' in names for names in off['tools'])

@@ -98,6 +98,17 @@ def _pebble_suite_keychain(monkeypatch):
     monkeypatch.setattr(vault, 'MacKeychain', functools.partial(MemoryKeychain, {}))
 
 
+# Phase 46 (1.9.28, w13b follow-up 1): an Auto task now needs App.containment_status (confined.admit, and the runner's
+# prewarm at task start), whose containment.self_test starts a sandboxed setsid escapee and an outside canary. No test
+# starts it as a side effect: App's per-process verdict is preset. test_containment.py and test_phase14_security.py
+# call self_test themselves; a test that needs another verdict sets its own.
+
+@pytest.fixture(autouse=True)
+def _pebble_suite_containment(monkeypatch):
+    from pebble.app import App
+    monkeypatch.setattr(App, '_containment_result', {'contained': True, 'reason': 'Preset by the test suite.'})
+
+
 # Phase 24: the real backend/main.py as a child process, for tests of its protocol, threads and logs.
 
 SERVICE_SETUP = ''  # code every service child runs before backend/main.py; none unless a test session sets it

@@ -37,20 +37,51 @@ test("one frozen table of three modes, pure data", () => {
 test("the copy matches what the host does", () => {
   const permissions = read("../backend/pebble/permissions.py");
   const terminal = read("../backend/pebble/terminal.py");
-  // Auto: exactly edit, tests, command and worktree; Full: every kind (still subject to requires_review).
+  // Auto: exactly edit, tests, command and worktree, and (Phase 46, 1.9.28, D184) a Git plan the plans can undo; Full:
+  // every kind (still subject to requires_review).
   const automatic = permissions.slice(permissions.indexOf("def automatic("));
-  assert.match(automatic, /policy\["mode"\] == "full"\s*\n\s*or policy\["mode"\] == "auto"\s*\n\s*and kind in \{"edit", "tests", "command", "worktree"\}/,
+  assert.match(automatic, /policy\["mode"\] == "full"\s*\n\s*or policy\["mode"\] == "auto"\s*\n\s*and \(kind in \{"edit", "tests", "command", "worktree"\} or kind == "git" and undoable\(payload\)\)/,
     "permissions.automatic() changed: update permissionModes.ts with it");
+  const plans = read("../backend/pebble/git_plans.py");
+  const undoKept = plans.slice(plans.indexOf("def undo_kept("), plans.indexOf("def sequence_arg("));
+  assert.match(undoKept, /plan\.get\('destructive'\) is not False or plan\.get\('publication'\) is not False/,
+    "a Git step that deletes, overwrites, rewrites or publishes keeps its card in Auto");
+  assert.ok(/Git steps it can undo/.test(P.MODES.auto.runs_without_asking) && /Git pushes, deletions and history rewrites/.test(P.MODES.auto.always_asks));
   // Commands that run without review are the READ_ONLY executables, in Auto and Full alike.
   const readOnly = [...terminal.match(/READ_ONLY = \{([^}]*)\}/)[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual(readOnly, ["cat", "echo", "file", "head", "ls", "pwd", "rg", "tail", "uname", "wc", "which"]);
   assert.match(terminal, /"requires_review": network or dangerous or not readonly,/);
   const named = [...P.MODES.auto.runs_without_asking.matchAll(/\b(ls|cat|rg|head|tail|wc|pwd|file|uname|which|echo|grep)\b/g)].map((m) => m[1]);
   assert.ok(named.length >= 3 && named.every((name) => readOnly.includes(name)), "Auto names only read-only commands: " + named);
-  assert.ok(!readOnly.includes("grep") && /including grep/.test(P.MODES.auto.always_asks) && /including grep/.test(P.MODES.full.always_asks), "grep asks in Auto and Full, and the copy says so");
-  // Full adds app launches and Git changes that neither delete nor publish (git_plans requires review for those).
+  // Phase 45 (D141): grep is no read-only executable; in Full access it runs when the person's messages ask for it.
+  // Phase 46 (1.9.28, D184; restated): in Auto it runs as a command confined to the project (no network, nothing outside
+  // it, no install), with a copy of the project behind it; network, installs and paths outside the project still ask.
+  const confined = read("../backend/pebble/confined.py"), broker = read("../backend/pebble/app.py");
+  assert.ok(!readOnly.includes("grep") && !/grep/.test(P.MODES.auto.always_asks) && /including grep/.test(P.MODES.full.runs_without_asking), "grep runs confined in Auto and is checked in Full, and the copy says so");
+  assert.match(confined, /if data\.get\('network'\) is not False:\n\s*return 'network'/);
+  assert.match(confined, /return 'a path outside the project'/);
+  assert.match(confined, /return 'installs or publishes'/);
+  // Phase 46 (1.9.28, w14-full follow-up 1 item 7, with D185 kept by the lead): Full access confines them too, without a
+  // check, when the host shows them harmless; a delete, an overwrite or a program it cannot read keeps the step check
+  assert.match(broker, /if \(data\["requires_review"\] and not held and name == 'RunCommand' and policy\['mode'\] in \('auto', 'full'\)/);
+  assert.match(broker, /unproven = bool\(step_judge\.tier\(/);  // the lead, after the final review: what tier cannot show harmless
+  assert.match(P.MODES.full.runs_without_asking, /^Commands that only read or make new files, and each step your messages ask for/);
+  assert.ok(/commands that stay in this project without network/.test(P.MODES.auto.runs_without_asking) && /commands with network, installs or paths outside the project/.test(P.MODES.auto.always_asks));
+  // Full: a step that requires review is checked against the person's messages (step_judge) and runs when they asked;
+  // spending money never does (git_plans still marks destructive and publishing plans for review: the check sees them).
   assert.match(read("../backend/pebble/git_plans.py"), /'requires_review': destructive or publication/);
-  assert.match(P.MODES.full.runs_without_asking, /app launches and Git changes that neither delete work nor publish/);
+  const app = read("../backend/pebble/app.py"), judge = read("../backend/pebble/step_judge.py");
+  assert.match(app, /if policy\["mode"\] == "full" and payload\.get\("requires_review"\)/);
+  assert.match(judge, /if spends\(kind, payload\):\n\s*return \{'asked': False, 'held': 'spends'\}/);
+  const kinds = judge.match(/KINDS = frozenset\(\{([^}]*)\}\)/)[1];
+  for (const kind of ["command", "install", "git", "plugin", "screen", "screen_grant", "browser_grant"]) assert.ok(kinds.includes("'" + kind + "'"), kind);
+  assert.match(P.MODES.full.runs_without_asking, /each step your messages ask for/);
+  // Phase 46 (1.9.28, D185): a step the person didn't ask for goes back to Pebble (step_judge.held), which asks after
+  // 3 holds in a row or 20 in a task; money and their hooks' reviews still always ask; what Auto runs without a card
+  // runs in Full access unchecked (follow-up 1, item 7)
+  assert.match(P.MODES.full.always_asks, /^Spending money and your hooks' reviews\. A step you didn't ask for/);  // restated with the final review
+  assert.match(P.MODES.full.always_asks, /asks after 3 in a row or 20 in a task\.$/);
+  assert.match(judge, /^ROW, TOTAL = 3, 20$/m);
   // Connector calls, installs and presses in a granted Chrome tab ask in every mode (Phase 30, D42: app windows cannot
   // be granted, and looking, typing and choosing in a granted tab run under the grant).
   assert.match(read("../backend/pebble/extensions.py"), /'run_id': run_id, 'requires_review': True\}/);
@@ -58,7 +89,8 @@ test("the copy matches what the host does", () => {
   assert.match(read("../backend/pebble/app.py"), /self\.propose\(cid, 'screen', \{\*\*result\['proposal'\], 'requires_review': True\}\)\s*# every mode/);
   for (const words of ["connector calls", "installs", "every press in a chrome tab you granted", "run under your grant"]) assert.ok(P.EVERY_MODE.toLowerCase().includes(words), "every mode: " + words);
   assert.ok(!/app-window|app window/i.test(P.EVERY_MODE + P.MODES.full.always_asks), "no app-window wording");
-  for (const id of ["auto", "full"]) assert.ok(/connector calls/.test(P.MODES[id].always_asks) && /installs/.test(P.MODES[id].always_asks), id);
+  assert.ok(/connector calls/.test(P.MODES.auto.always_asks) && /installs/.test(P.MODES.auto.always_asks), "auto");
+  assert.ok(/connector calls/.test(P.MODES.full.runs_without_asking) && /installs/.test(P.MODES.full.runs_without_asking), "full (D141)");
   assert.match(P.MODES.ask.always_asks, /Every edit, test run, terminal command, app launch, Git change and connector call/);
 });
 

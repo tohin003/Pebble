@@ -153,3 +153,21 @@ test('the command bucket refuses bursts and refills', () => {
   assert.equal(bucket.take(0), false);
   assert.equal(bucket.take(1000), true);
 });
+
+test('Phase 44: only the element\'s own click may carry a user gesture (a hidden tab\'s press)', () => {
+  const tab = newTabState();
+  const granted = { granted: true };
+  const check = params => checkCommand(ready, tab, 'Runtime.callFunctionOn', params, granted);
+  noteResult(tab, 'Page.createIsolatedWorld', { executionContextId: 9 });
+  noteResult(tab, 'DOM.resolveNode', { object: { objectId: 'obj-1' } });
+  const click = ISOLATED_FUNCTIONS[6];
+  assert.equal(click, 'function(){this.click();return true}');
+  assert.ok(check({ functionDeclaration: click, objectId: 'obj-1', arguments: [], returnByValue: true, userGesture: true }).ok);
+  assert.ok(check({ functionDeclaration: click, objectId: 'obj-1', arguments: [], returnByValue: true }).ok);
+  assert.equal(check({ functionDeclaration: click, objectId: 'obj-1', userGesture: false }).code, 'invalid');
+  assert.equal(check({ functionDeclaration: ISOLATED_FUNCTIONS[1], objectId: 'obj-1', userGesture: true }).code, 'invalid',
+    'no other function gets a gesture');
+  assert.equal(check({ functionDeclaration: click, objectId: 'page-object', userGesture: true }).code, 'invalid');
+  assert.equal(checkCommand(ready, tab, 'Runtime.callFunctionOn', { functionDeclaration: click, objectId: 'obj-1', userGesture: true },
+    { granted: true, readOnly: true }).code, 'read_only', 'a click changes the page, so a read site refuses it');
+});

@@ -10,7 +10,8 @@ import { transform } from "sucrase";
 // a recording bridge: every request is listed, and generated data never adds one.
 const require = createRequire(import.meta.url);
 const read = (file) => readFileSync(new URL(file, import.meta.url), "utf8");
-const renderers = ["./QuizRenderer.vue", "./DashboardRenderer.vue", "./PrototypeRenderer.vue"];
+// Phase 46 (1.9.29, w25-genui-b): the visual catalog's renderers draw model data too, so they join both scans.
+const renderers = ["./QuizRenderer.vue", "./DashboardRenderer.vue", "./PrototypeRenderer.vue", "./VisualChart.vue", "./VisualDiagram.vue", "./VisualCatalog.vue"];
 const generatedSurfaces = [...renderers, "./NativeArtifactRenderer.vue"];
 const templateOf = (source) => source.slice(source.indexOf("<template>"), source.lastIndexOf("</template>"));
 const scriptOf = (source) => source.slice(source.indexOf("<script"), source.indexOf("</script>"));
@@ -33,9 +34,11 @@ for (const file of generatedSurfaces) {
   for (const [, expression] of markup.matchAll(/:class="([^"]+)"/g))
     assert.ok(!/artifact|\.data\b|theme|label|title|text/.test(expression), file + " class from data: " + expression);
 }
-// The native renderer's only style binding is a legend swatch from its fixed colour table.
-assert.deepEqual([...templateOf(read("./NativeArtifactRenderer.vue")).matchAll(/:style="([^"]+)"/g)].map((m) => m[1]), ["{ background: series.color }"]);
-assert.ok(/const colors = \[\s*"#[0-9a-f]{6}"/.test(read("./NativeArtifactRenderer.vue")) && /color: colors\[series\]/.test(read("./NativeArtifactRenderer.vue")));
+// The native renderer's only style binding was a legend swatch from its fixed colour table. Restated in Phase 46
+// (1.9.29, w25-genui-b), stricter: charts are drawn by VisualChart, and no generated surface binds a style at all;
+// series colours are the fixed classes s0 to s5, which tokens.css defines (--chart-1 to --chart-6, both themes).
+for (const file of generatedSurfaces) assert.deepEqual([...templateOf(read(file)).matchAll(/:style="([^"]+)"/g)].map((m) => m[1]), [], file);
+assert.ok(/tone: "s" \+ \(index % PALETTE\)/.test(read("../chartModel.ts")) && /\.s0 \{ --series: var\(--chart-1\); \}/.test(read("./VisualChart.vue")));
 // RPC routes per file: the quiz uses the five quiz routes, dashboards and demos none, the panel adds only artifact_refresh.
 assert.deepEqual(rpcNames(read("./QuizRenderer.vue")), ["quiz_attempt", "quiz_save", "quiz_share", "quiz_start", "quiz_submit"]);
 for (const file of ["./DashboardRenderer.vue", "./PrototypeRenderer.vue", "./NativeArtifactRenderer.vue"]) {
@@ -68,14 +71,22 @@ function evaluate(code, resolve) {
   new Function("require", "module", "exports", transform(code, { transforms: ["typescript", "imports"] }).code)(resolve, module, module.exports);
   return module.exports;
 }
+const modules = new Map();
+function loadTs(url) {
+  if (!modules.has(url.href))
+    modules.set(url.href, evaluate(readFileSync(url, "utf8"), (name) => (name.startsWith(".") ? loadTs(new URL(name + ".ts", url)) : require(name))));
+  return modules.get(url.href);
+}
 function load(filename) {
   if (compiled[filename]) return compiled[filename];
   const descriptor = parse(read(filename), { filename }).descriptor;
   const script = compileScript(descriptor, { id: filename });
   const template = compileTemplate({ source: descriptor.template.content, filename, id: filename, compilerOptions: { bindingMetadata: script.bindings } });
   assert.deepEqual(template.errors, [], filename);
+  // Phase 46 (1.9.29, w25-genui-b): the renderers' pure TypeScript helpers (visuals.ts, chartModel.ts) load as written
   const resolve = (name) =>
-    name === "../bridge" ? bridge : name === "@phosphor-icons/vue" ? icons : name.endsWith(".vue") ? { __esModule: true, default: load(name) } : require(name);
+    name === "../bridge" ? bridge : name === "@phosphor-icons/vue" ? icons : name.endsWith(".vue") ? { __esModule: true, default: load(name) }
+      : name.startsWith(".") ? loadTs(new URL(name + ".ts", import.meta.url)) : require(name);
   const component = evaluate(script.content, resolve).default;
   component.render = evaluate(template.code, resolve).render;
   return (compiled[filename] = component);

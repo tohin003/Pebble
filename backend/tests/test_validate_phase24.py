@@ -158,8 +158,9 @@ def test_the_embedded_plan_matches_the_track_notes_when_they_are_present():
 
 def test_the_campaign_registers_phase24_and_keeps_phase22_retired():
     verify = load('verify_harness_candidate', 'verify_for_phase24_test')
-    # Phase 25 (the release build) follows phase24 in the campaign; phase24 stays registered and runs in it.
-    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-14:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37')
+    # Phase 25 (the release build) follows phase24 in the campaign; phase24 stays registered and runs in it. Phase 47
+    # (2.0.0): phase43 and phase47 join the tail; Phase 48 (2.0.0's About credit and iPhone wording, D222) follows.
+    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-22:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37', 'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48')
     suites = verify.default_suites('phase24')
     assert {'phase23', 'phase24'} <= set(suites) and 'phase22' not in suites
     assert 'phase24' not in verify.default_suites('phase23')
@@ -353,7 +354,10 @@ def test_data_family_fails_when_the_documents_copies_are_a_tool_path(campaign, m
 
 def test_memory_family_fails_when_the_whole_message_is_saved(campaign, monkeypatch):
     from pebble import memory
-    monkeypatch.setattr(memory, 'first_statement', lambda text: (text, ''))
+    # Phase 46 (1.9.28, follow-up 1): capture reads the person's sentences with memory._items (first_statement is no
+    # longer on its path); the same mutation, the whole message as one sentence, must still fail the check
+    monkeypatch.setattr(memory, '_items', lambda own, cue, limit=memory.MAX_ITEMS: [
+        memory.Item(' '.join(own.split()), ' '.join(cue.split()), 0, 0)])
     only(campaign, 'remember_plus_question_answered')
     campaign.scenario_memory()
     failed(campaign, 'remember_plus_question_answered')

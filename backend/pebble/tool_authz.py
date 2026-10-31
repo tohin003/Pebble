@@ -55,13 +55,29 @@ ROOT_ONLY = frozenset({
     'ReviewAgentResult', 'RetryAgent', 'PromoteAgentQuestion', 'ReadAgentPatch', 'ReadAgentMessage',
     'ReadAgentEffects', 'DismissAgentEffect', 'LoadPluginTool', 'LoadPluginData', 'RunPlan', 'WriteProcessInput',
     'ScreenObserve', 'ScreenAct', 'ResearchPlan', 'ResearchStatus', 'UpdateGoal',
-    'RunCode'})  # Phase 37: a script calls tools as the root run; child agents are not offered it
+    'RunCode',  # Phase 37: a script calls tools as the root run; child agents are not offered it
+    'Shell', 'ReadFile', 'WriteFile', 'EditFile', 'Screenshot', 'FindTool',  # Phase 40: the Companion's tools
+    'ScreenRequest',  # Phase 42: asking the person for an app window
+    'BrowserRequest',  # Phase 43: asking the person for sites in their browser
+    'OpenURL',  # Phase 43: a web address in the person's browser
+    'AppAction'})  # Phase 43: fixed verbs for Shortcuts, Music, Notes, Calendar, Mail drafts and Finder
 # Trusted main-window routes. None is a model tool; a catalogue entry with one
 # of these names (compared case-insensitively) is refused for every model actor.
 NATIVE_ONLY = frozenset({
+    'chat_search',  # Phase 45 (F031): the main window's conversation search
     'approve', 'reject', 'setting', 'question_answer', 'terminal_propose', 'process_dismiss',
+    'approve_simple', 'reject_simple',  # Phase 45 (D133): the companion's answers to simple cards
     'extension_add', 'extension_import', 'extension_toggle', 'extension_remove', 'review_plugin_media',
     'agent_worktree_retire',
+    # Phase 40 (1.6.0) the Companion Shell's grants and undo: main window only.
+    'shell_grants', 'shell_grant_add', 'shell_grant_remove', 'shell_undo',
+    # Phase 41 (1.7.0) Pebble's Toolbox: main window only.
+    'toolbox_list', 'toolbox_get', 'toolbox_remove', 'toolbox_decide',
+    'toolbox_undo_remove',  # Phase 45 (F178): Put back, main window only
+    # Phase 42 (E-N2): the shell's diagnostic probe only.
+    'diag_ax_probe',
+    # Phase 42 (1.8.0): app control's Accessibility state and request: main window only.
+    'app_control_status', 'app_control_request',
     # Phase 15 native memory and reviewed-handoff routes (defence in depth; W9 O4).
     'memory_contests', 'memory_resolve_contest', 'memory_relations', 'memory_forget_preview', 'memory_archive_export_to',
     'memory_archive_preview_file', 'memory_archive_import_file', 'model_handoff_preview', 'model_handoff_approve',
@@ -100,7 +116,10 @@ NATIVE_ONLY = frozenset({
     # Phase 24 (V1-125) the sidebar's Rename: main window only.
     'chat_rename',
     # Phase 24 (V1-029) held-task decisions: main window only; main.rs writes `surface`.
-    'run_held_tests', 'run_held_finish', 'run_held_accept'})
+    'run_held_tests', 'run_held_finish', 'run_held_accept',
+    # Phase 46 (1.9.29, D214) Pebble Remote's own controls in Settings > iPhone: main window only, never a phone's.
+    'remote_status', 'remote_set', 'remote_pair_start', 'remote_pair_cancel', 'remote_pair_confirm',
+    'remote_device_remove'})
 # Plugin tools and their dynamic route: (target kind, must already be loaded in the run).
 PLUGIN_ROUTES = {'PluginCall': ('tool', True), 'LoadPluginTool': ('tool', False),
                  'FetchPluginData': ('data', True), 'LoadPluginData': ('data', False)}

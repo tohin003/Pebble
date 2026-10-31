@@ -61,6 +61,33 @@ class SourceProvenance:
             self.journal.event(db, rid, 'source_observed', {'receipt_id': call_id, 'path': path, 'basis': basis, 'status': state})
         return {'path': path, 'file_hash': digest(text.encode('utf-8')), 'disk_hash': expected, 'basis': basis, 'status': state}
 
+    def observe_absent(self, rid, call_id, ws, path):
+        """Phase 45 (F117, audit round R3): a Read that finds the file gone is this run's latest view of it (absent, no
+        disk hash), so the settlement audit stops counting a file the run itself deleted as changed behind its back. A
+        run that deleted two files at the person's request ended Blocked although fresh reads confirmed they were gone.
+        The same checks as observe; nothing is recorded when the file is there after all."""
+        run = self.journal.get(rid)
+        if run['config']['workspace'] != str(ws.root):
+            raise PolicyError('Source evidence belongs to this run\'s selected workspace.')
+        ws.path(path, create=True)
+        path = Path(path).as_posix()
+        receipt = next((t for t in self.journal.tools(rid) if t['call_id'] == call_id), None)
+        if not receipt or receipt['name'] != 'Read' or receipt['state'] != 'running':
+            raise PolicyError('A file witness requires its owning admitted tool.')
+        if ws.snapshot(path, missing_ok=True) is not None:
+            return None
+        with self.store.lock, self.store.db as db:
+            count = db.execute('SELECT count(*),count(DISTINCT path) FROM run_sources WHERE run_id=?', (rid,)).fetchone()
+            known = db.execute('SELECT 1 FROM run_sources WHERE run_id=? AND path=?', (rid, path)).fetchone()
+            if count[0] >= MAX_WITNESSES or not known and count[1] >= MAX_PATHS:
+                raise PolicyError('This run reached its bounded source ledger. Split the remaining work into a new task.')
+            ordinal = db.execute('SELECT coalesce(max(ordinal),0)+1 FROM run_sources WHERE run_id=?', (rid,)).fetchone()[0]
+            db.execute('INSERT INTO run_sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                (rid, call_id, path, digest(b''), None, 'disk', 'deleted', time.time(), None, *ws.identity, ordinal))
+            self.journal.event(db, rid, 'source_observed', {'receipt_id': call_id, 'path': path, 'basis': 'disk',
+                                                            'status': 'absent'})
+        return {'path': path, 'status': 'absent'}
+
     def records(self, rid):
         rows = self.store.query('SELECT run_id,receipt_id,path,file_hash,disk_hash,basis,status,checked,current_hash FROM run_sources WHERE run_id=? ORDER BY ordinal', (rid,))
         return rows

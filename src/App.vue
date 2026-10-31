@@ -38,16 +38,21 @@ import { AVATAR_RANK } from "./companionPointer";
 import ModelPicker from "./components/ModelPicker.vue";
 import Avatar from "./components/Avatar.vue";
 import StatusLine from "./components/StatusLine.vue";
-import Markdown from "./components/Markdown.vue";
+// Phase 46 (1.9.29, D195): replies with the free upgrades (tables, mermaid diagrams, steps); Markdown.vue draws the rest
+import ReplyBody from "./components/ReplyBody.vue";
 import TokenStats from "./components/TokenStats.vue";
 import RunPanel from './components/RunPanel.vue';
+import AttemptStream from './components/AttemptStream.vue';
 import { keysLabel, matchShortcut, SHORTCUTS, shortcutsFor, type ShortcutId } from './shortcuts';
 import ActionReview from './components/ActionReview.vue';
 import ConnectorEffectReview from './components/ConnectorEffectReview.vue';
-import { applyRunEvent } from './runEvents';
+import { addStoredAfter, applyRunEvent } from './runEvents';
 // Phase 22: the Details drawer, the thinking disclosure, the slash menu and message actions.
 import DetailsDrawer, { readDrawer, writeDrawer, type DrawerTab } from './components/DetailsDrawer.vue';
 import ThinkingDisclosure from './components/ThinkingDisclosure.vue';
+import WorkView from './components/WorkView.vue';
+import type { GitAccess } from './components/BranchCard.vue';
+import { taskLine } from './workView';
 import SlashMenu from './components/SlashMenu.vue';
 import MessageActions from './components/MessageActions.vue';
 import { contextShare, createActivityStore, isLiveState, liveDetail, RING_AT, rows, validId, WAITING_AFTER_MS, WAITING_TEXT, waitingLong } from './activity';
@@ -81,6 +86,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   attachBytes,
   native,
+  openExternal,
   rpc,
   RpcError,
   selectFile,
@@ -109,6 +115,7 @@ const state = ref<State>({
     reduced_motion: false,
     stealth: false,
     memory_enabled: true,
+    fast_replies: "long_tasks",
     permissions: {
       mode: "ask",
       tools: {
@@ -295,7 +302,9 @@ const scroll = ref<HTMLElement | null>(null),
   showAttach = ref(false);
 // Phase 24 (V1-130): streamed text follows only a person at the end of the conversation; sending always shows it.
 const stick = createScrollStick(() => scroll.value, nextTick);
-const settingsTab = ref("models");
+const settingsTab = ref("models"),
+  settingsIntent = ref(""),
+  needsModel = ref(false); // Phase 45 (F019)
 const canvas = ref(false),
   selectedArtifact = ref("");
 const availableEfforts = computed(
@@ -386,6 +395,14 @@ function demoFeedback(payload: PrototypeFeedback) {
 }
 function showReviews(toggle = false) {
   openDrawer("activity", toggle);
+  // Phase 45 (F127, audit round R4): in a normal-size window the card's Allow and Don't allow stayed below the drawer's
+  // edge; the first waiting card's buttons come into view and its title takes the keyboard (one Tab to its buttons)
+  if (!drawerOpen.value) return;
+  nextTick(() => nextTick(() => {
+    const card = document.querySelector<HTMLElement>("#details-drawer .action-card.pending");
+    card?.querySelector(".action-buttons")?.scrollIntoView?.({ block: "nearest" });
+    card?.querySelector<HTMLElement>(".action-title")?.focus({ preventScroll: true });
+  }));
 }
 // Open the drawer (at `tab` when given); `toggle` closes it instead when that tab is already showing.
 // A section asked for by name is listed even before it holds anything (Activity follows its data).
@@ -413,12 +430,18 @@ function toggleCanvas() {
       selectedArtifact.value || chat.value?.artifacts?.at(-1)?.id || "",
     );
 }
-function openSettings(section = "models") {
+function openSettings(section = "models", intent = "") {
   settingsTab.value = section;
+  settingsIntent.value = intent; // Phase 45 (F002): "add-provider" opens the provider form at once
   modal.value = "settings";
   if (section === "storage") storageAttention.value = false;
 }
 const deleteTarget = ref<Chat | null>(null);
+// Phase 45 (F118, audit round R3): the dialog names the conversation it deletes ("Delete this conversation?" did not).
+const deleteHeading = computed(() => {
+  const title = (deleteTarget.value?.title || "").trim();
+  return title ? `Delete “${title.length > 60 ? title.slice(0, 59) + "…" : title}”?` : "Delete this conversation?";
+});
 const terminalCommand = ref(""),
   terminalNetwork = ref(false);
 async function proposeCommand() {
@@ -450,6 +473,7 @@ watch(modal, async (value) => {
   } else previousFocus?.focus();
 });
 let dropUnsubscribe = () => {};
+let remotePairing = ""; // Phase 46: the six digits Settings › iPhone was last opened for
 let unsubscribe = () => {},
   resizeUnsubscribe = () => {},
   chatUnsubscribe = () => {},
@@ -499,7 +523,9 @@ const liveRecord = computed(() => {
   return record && isLiveState(record.state) ? record : null;
 });
 watch(() => liveRecord.value?.runId, (run, before) => {
-  if (run !== before) liveOpen.value = false;
+  // Phase 46 (1.9.29): with the work view on, a new task's cards are open (the person asked to see Pebble's working
+  // window); the rows stay closed until the status line opens them, as before
+  if (run !== before) liveOpen.value = !!run && workView.value;
 });
 watch(
   () => [liveRecord.value?.runId, liveRecord.value?.loaded] as const,
@@ -719,6 +745,7 @@ watch(
 const ACTION_STATES: Record<string, string> = {
   pending: "Needs your review", applied: "Done", rejected: "Not allowed", undone: "Undone", running: "Running",
   failed: "Failed", expired: "Expired", superseded: "Replaced", approved: "Approved",
+  held: "Held by Pebble, not run",  // Phase 46 (1.9.28, D185): Full access's check held it and Pebble went on
 };
 const actionState = (status: string) => (Object.hasOwn(ACTION_STATES, status) ? ACTION_STATES[status] : String(status).replace(/_/g, " "));
 // Phase 34 (W1): an ad hoc check RunTests added to the isolated copy (testing.CHECK_FILES), never the project's tests.
@@ -734,6 +761,9 @@ function actionLead(action: Action): string {
       return typeof p.scope_review === "string" ? `${p.scope_review} ${lead}` : lead;
     }
     case "tests":
+      // Phase 46 (1.9.28): with check_run the project's tests and Pebble's check run apart, each in its own copy
+      if (isCheck(p) && p.check_run)
+        return "Runs the project's tests, then Pebble's own check alone, each in a temporary copy. Your project files don't change.";
       return isCheck(p)
         ? "Runs Pebble's own check, added to a temporary copy for this run only. Your project files don't change."
         : "Runs the project's tests in a temporary copy. Your project files don't change.";
@@ -752,7 +782,43 @@ function actionLead(action: Action): string {
     case "install":
       return "Installs the project's locked dependencies into a folder Pebble manages, outside your project.";
     case "app":
-      return "Opens this app on your Mac. Pebble won't control what happens inside it.";
+      if (p.document)  // Phase 45 (F200): this file, in this app
+        return `Opens ${String(p.document)} in this app on your Mac${p.background ? ", without bringing it to the front" : ""}. Pebble won't control what happens inside it.`;
+      return p.background  // Phase 43 (1.9.0): without bringing it to the front
+        ? "Opens this app in the background on your Mac, without bringing it to the front. Pebble won't control what happens inside it."
+        : "Opens this app on your Mac. Pebble won't control what happens inside it.";
+    // Phase 40 (1.6.0) and Phase 42 (1.8.0): the Companion's asks and app windows.
+    case "shell":
+      return "Runs this command in Pebble's sandbox on your Mac.";
+    case "file":
+      return "Writes this file on your Mac. Pebble keeps a copy first, so you can undo it.";
+    case "screen":  // Phase 45 (F166): the send-or-delete warning only for a press that looks like one
+      return (Array.isArray(p.review?.reasons) ? p.review.reasons : []).some((r: unknown) => SENDING.has(String(r)))
+        ? "Does this in the app window you shared. It may send, submit, save, delete or buy, and Pebble can't undo it."
+        // Phase 45 (F210, audit round R8): typing on the keyboard read "Presses this"
+        : /^(type|type_text|key)\b/.test(String(p.review?.action || "")) || typeof p.review?.text === "string"
+          ? "Types this in the app window you shared. Pebble can't undo typing."
+          : "Presses this in the app window you shared. Pebble can't undo a press.";
+    case "screen_grant":  // Phase 45 (F165; F180: macOS's own alert, said before it comes; F187: a file panel)
+      if (p.file_panel)
+        return "This window is a file panel: it shows one of your folders, and Pebble would read the names of the files listed there. Allow it only if that is what you want.";
+      // D136, D137 (the person): allowed for the conversation, up to 15 minutes; Full access presses without asking
+      return "Lets Pebble see and use this one window in this conversation, for up to 15 minutes"
+        + (p.screenshots ? ", with pictures of it when needed. " : ". ")
+        + (p.full_access  // D141: Full access runs what your messages ask for; money always asks
+          ? "In Full access Pebble runs the presses your messages ask for; anything that may spend money still asks."
+          : "Most presses still ask you first.")
+        + (p.screenshots ? " If macOS asks whether Pebble may bypass its window picker, choose Allow for the pictures." : "");
+    case "url":
+      return "Opens this address in your browser. Pebble can't see the page, so it can't confirm what happens there.";
+    case "screen_raise":
+      return "Brings this window to the front so Pebble can read it. macOS may switch to its desktop.";
+    case "app_action":
+      return "Asks this app to do one thing through its own scripting. Pebble never sends mail or deletes anything this way.";
+    case "browser_grant":  // Phase 45 (D128): the window route opens a new window of the person's browser
+      return p.route === "window"
+        ? `Opens these sites in a new ${p.browser_name || "browser"} window that Pebble reads and uses in this conversation, for up to 15 minutes. Sending, buying or deleting still asks you.`
+        : "Lets Pebble use these sites in its own tab in your browser in this conversation, for up to 15 minutes. Sending, buying or deleting still asks you.";
     default:
       return "";
   }
@@ -1006,7 +1072,16 @@ const modelFoot = computed(() => {
   return `${model.context.toLocaleString()}-token context · ${where}`;
 });
 // V1-038: the first launch, with no model yet, offers the two ways to connect one.
+// Phase 45 (F022): a dialog opens without the error left over from before it (its own failures still show in it).
+watch(modal, (open) => {
+  if (open) error.value = "";
+});
 const firstRun = computed(() => !booting.value && !state.value.model.configured);
+// Phase 45 (F003): the first launch shows the welcome at full width; Details opens itself when there is something to
+// review (announceApprovals), or when the person opens it.
+watch(firstRun, (first) => {
+  if (first) drawerOpen.value = false;
+});
 const modeKey = computed<"ask" | "auto" | "full">(() => {
   const mode = state.value.settings.permissions.mode;
   return mode === "auto" || mode === "full" ? mode : "ask";
@@ -1018,10 +1093,24 @@ const welcomeFoot = computed(() => {
   if (onThisMac.value) return "Replies are made on this Mac, and your conversations are stored here.";
   return `Replies come from ${model.provider || "your provider"}, which receives your messages. Your conversations are stored on this Mac.`;
 });
+// Phase 45 (F032): a toast with an action (Undo) stays 12 seconds, and waits while the pointer is on it.
+// Phase 45 (F135, audit round R4): a toast sat over the composer's provider and model pickers for its 12 s; it is
+// placed just above the composer area, wherever the composer's height puts it.
+function placeToasts() {
+  const area = document.querySelector?.<HTMLElement>(".composer-area");
+  const rect = area?.getBoundingClientRect?.();
+  const space = rect && rect.height > 0 && typeof window.innerHeight === "number" ? Math.max(0, window.innerHeight - rect.top) : 15;
+  document.documentElement?.style?.setProperty?.("--toast-bottom", Math.round(space + 12) + "px");
+}
 function notify(message: string, action?: { label: string; run: () => void }) {
+  placeToasts();
   toast.value = { text: message, action };
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toast.value = null), action ? 8000 : 3500);
+  toastTimer = window.setTimeout(() => (toast.value = null), action ? 12000 : 3500);
+}
+function holdToast(hold: boolean) {
+  window.clearTimeout(toastTimer);
+  if (!hold && toast.value) toastTimer = window.setTimeout(() => (toast.value = null), toast.value.action ? 6000 : 2500);
 }
 function runToast() {
   const action = toast.value?.action;
@@ -1029,6 +1118,55 @@ function runToast() {
   action?.run();
 }
 // Notices from the Markdown renderer (a refused link, copied code): fixed host words, shown in the toast.
+// Phase 45 (F130, audit round R4): a reply's source marker ([S7]) was plain text. It opens the page the reply's run
+// recorded under that number (an https address only, in the person's browser) and says which page it was; a source
+// without a web address is named instead.
+async function openCitation(event: Event) {
+  const id = (event as CustomEvent).detail;
+  const current = chat.value;
+  if (typeof id !== "string" || !/^S[1-9]\d{0,2}$/.test(id) || !current) return;
+  const message = (event.target as Element | null)?.closest?.("[data-message-id]")?.getAttribute("data-message-id");
+  const runId = (message && activityStore.forMessage(message)?.runId) || current.runs?.[0]?.id;
+  const missing = `Pebble has no record of ${id} for this reply.`;
+  if (!runId) return notify(missing);
+  try {
+    const listing = await rpc<{ sources?: unknown }>("research_sources", { id: current.id, run_id: runId });
+    const sources = Array.isArray(listing?.sources) ? (listing.sources as Record<string, unknown>[]) : [];
+    const source = sources.find((s) => s && s.source_id === id);
+    if (!source) return notify(missing);
+    const word = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
+    const name = (word(source.title) || word(source.domain) || word(source.url)).slice(0, 80);
+    const url = word(source.url);
+    if (/^https:\/\/\S+$/i.test(url) && url.length <= 3000) {
+      await openExternal(url);
+      notify(`Opened ${id}: ${name}`);
+    } else notify(name ? `${id} is ${name}.` : `${id} has no web address to open.`);
+  } catch {
+    notify(`Pebble couldn't open ${id}.`);
+  }
+}
+// Phase 45 (F159, audit round R5): a site card's heading named every address in full and broke one mid-word ("Use
+// https://www.youtube.c / om, …"); it names each site once by its host, and the card's body lists the addresses
+// Phase 45 (F181, audit round R6): "press in Game 1 | Tohin - Computer (White to Move)" named neither the press nor its
+// target; the card says "Press “e4” in Game 1"
+function screenHeading(review: Record<string, any> | undefined) {
+  const verb = String(review?.action || "act");
+  const label = String(review?.element?.label || "").trim().slice(0, 40);
+  const title = String(review?.window?.title || "").split(/\s[|—–-]\s/)[0].trim().slice(0, 40);
+  return verb.charAt(0).toUpperCase() + verb.slice(1) + (label ? ` “${label}”` : "") + ` in ${title || "an app window"}`;
+}
+// Phase 45 (F166): the classification reasons that make a press look like sending, submitting, saving, deleting or buying
+const SENDING = new Set(["label_commit_word", "form_submit", "transfer", "enter_submits", "newline_submits", "leaves_origin"]);
+function siteNames(sites: unknown) {
+  const hosts = (Array.isArray(sites) ? sites : []).map((site) => {
+    try {
+      return new URL(String(site)).hostname.replace(/^www\./, "");
+    } catch {
+      return String(site);
+    }
+  });
+  return [...new Set(hosts)].join(", ");
+}
 function markdownNotice(event: Event) {
   const text = (event as CustomEvent).detail;
   if (typeof text === "string" && text) notify(text.slice(0, 200));
@@ -1059,7 +1197,8 @@ async function refreshRun() {
     chat.value.questions = updated.questions; chat.value.runs = updated.runs; chat.value.plan = updated.plan;
   }
 }
-async function createChat() {
+async function createChat(options?: { quiet?: boolean } | Event) {
+  const project = chat.value?.workspace || null;
   await safe(async () => {
     handoffFor.value = null;
     await clearAttachments();
@@ -1071,6 +1210,14 @@ async function createChat() {
     await nextTick();
     composer.value?.focus();
   });
+  // Phase 45 (F095, audit round R3): ⌘N in a project conversation silently started outside the project. It still does
+  // (website and app control work only without one), and now says so, with the way back in.
+  const quiet = !!options && !(options instanceof Event) && options.quiet === true;
+  if (!quiet && project && chat.value && !chat.value.workspace)
+    notify(`New conversation, outside ${project.split(/[\\/]/).pop()}.`, {
+      label: "Start it in the project",
+      run: () => void openProject(project),
+    });
 }
 async function loadChat(id: string) {
   await safe(async () => {
@@ -1080,6 +1227,10 @@ async function loadChat(id: string) {
     sources.value = [];
     activity.value = [];
     error.value = "";
+    // Phase 45 (F071, audit round R2): a conversation opened here (from the list, a notice or the companion's Open)
+    // kept the scroll position of the one before, often its top; it opens at its end, where its latest task is (as
+    // the companion's list does)
+    stick.force();
   });
 }
 async function ensureChat() {
@@ -1090,10 +1241,39 @@ async function chooseProject() {
   await safe(async () => {
     const path = await selectFile(true);
     if (!path) return;
+    // Phase 45 (F175, audit round R5): the open conversation moved into the project; one with messages stays where it
+    // was and the project starts a new conversation, as choosing a listed project does
+    if (chat.value?.messages.length) await createChat({ quiet: true });
     const c = await ensureChat();
     chat.value = await rpc<Chat>("set_workspace", { id: c.id, path });
     await refresh();
     notify("Project connected. Source reads stay inside this folder.");
+  });
+}
+// Phase 45 (F030): projects stay listed under YOUR SPACE (from the conversations that used them, newest first);
+// choosing one starts a conversation there (or uses the empty one that is open) without the folder picker.
+const recentProjects = computed(() => {
+  const seen = new Set<string>(), found: string[] = [];
+  for (const c of state.value.chats) if (c.workspace && !seen.has(c.workspace)) { seen.add(c.workspace); found.push(c.workspace); }
+  return found.slice(0, 5);
+});
+const projectMenu = ref(false);
+// Phase 45 (F037): the conversations over a small window; choosing one (or a new one) closes them.
+const sidebarOverlay = ref(false);
+watch(() => chat.value?.id, () => (sidebarOverlay.value = false));
+watch(compact, (small) => { if (!small) sidebarOverlay.value = false; });
+// The menu closes with Esc (on the wrapper, so the window's own Esc branch stays as it is) and when focus leaves it.
+function projectFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget as Node | null;
+  if (!next || !(event.currentTarget as HTMLElement).contains(next)) projectMenu.value = false;
+}
+async function openProject(path: string) {
+  projectMenu.value = false;
+  if (!chat.value || chat.value.messages.length) await createChat({ quiet: true });
+  await safe(async () => {
+    const c = await ensureChat();
+    chat.value = await rpc<Chat>("set_workspace", { id: c.id, path });
+    await refresh();
   });
 }
 async function detachProject() {
@@ -1112,6 +1292,12 @@ async function send(again?: string) {
   const typed = again === undefined;
   const raw = typed ? input.value : again;
   if (!raw.trim() || busy.value || attachmentBusy.value) return;
+  // Phase 45 (F019): with no model connected nothing is sent (it could only fail, three times over); the words stay in
+  // the box and one card offers the ways to connect. Slash commands still run.
+  if (!raw.trim().startsWith("/") && !booting.value && !state.value.model.configured) {
+    needsModel.value = true;
+    return;
+  }
   await safe(async () => {
     const c = await ensureChat(),
       text = raw.trim();
@@ -1136,6 +1322,7 @@ async function send(again?: string) {
       const message = c.messages.find((m) => m.id === optimistic);
       if (message) message.id = result.message_id;
       if (typed && !command && !followup) sources.value = [];
+      if (result?.command) await showCommandReply(c, result.message_id);
       await refresh();
     } catch (e) {
       c.messages = c.messages.filter((m) => m.id !== optimistic);
@@ -1154,6 +1341,19 @@ async function send(again?: string) {
       busy.value = false;
     }
   });
+}
+// Phase 44 (1.9.1): a runtime command's reply. The host answers a command at once (app.send): it stores the command and
+// its reply, emits only `complete` and starts no task, so no token or idle event brings the reply to this window, and
+// the person saw their command and nothing else. Read the conversation back and add what the host stored after the
+// command (the Companion reads it back too). The command already ran, so a failed read never puts it back in the box.
+async function showCommandReply(c: Chat, commandId: string) {
+  try {
+    const stored = await rpc<Chat>("get_chat", { id: c.id });
+    stick.follow(); // measured before the reply is added: a person reading above keeps their place
+    addStoredAfter(c, stored?.messages, commandId);
+  } catch {
+    error.value = "Pebble couldn't show the command's reply. Open the conversation again to see it.";
+  }
 }
 async function stop() {
   await safe(async () => {
@@ -1236,10 +1436,28 @@ async function attachUrl() {
       sources.value.push(await rpc("attach_url", { id: c.id, url: url.value }));
       modal.value = null;
       url.value = "";
+      nextTick(() => composer.value?.focus());  // Phase 45 (F052): the keyboard back in the message box
     } finally {
       attachmentBusy.value = false;
     }
   });
+}
+// Phase 45 (F052, audit round R2): a web page's chip showed only its raw address, with no sign it was read; it says
+// "Read" and the site, and its tooltip the whole address and how much was read
+function sourceLabel(source: { name: string }) {
+  if (!/^https?:\/\//i.test(source.name)) return source.name;
+  try {
+    const at = new URL(source.name);
+    const path = at.pathname.length > 1 ? at.pathname.slice(0, 24) + (at.pathname.length > 24 ? "…" : "") : "";
+    return "Read: " + at.hostname.replace(/^www\./, "") + path;
+  } catch {
+    return source.name;
+  }
+}
+function sourceTitle(source: { name: string; characters?: number }) {
+  return typeof source.characters === "number" && /^https?:\/\//i.test(source.name)
+    ? `${source.name} · ${source.characters.toLocaleString()} characters read`
+    : source.name;
 }
 async function removeSource(id: string) {
   await safe(async () => {
@@ -1287,9 +1505,32 @@ async function decide(action: Action, method: "approve" | "reject" | "undo") {
         method === "approve"
           ? "Action completed"
           : method === "undo"
-            ? "Edit undone"
+            ? action.kind === "command" ? "Command undone" : "Edit undone"
             : "Not allowed. Nothing ran.",
       );
+    } finally {
+      actionBusy.value = "";
+    }
+  });
+}
+// Phase 40 (1.6.0, D91): "Always allow" saves the hosts and folders this ask names, then approves it once.
+async function grantAndApprove(action: Action) {
+  await safe(async () => {
+    const p = action.payload || {};
+    const folders = action.kind === "file" ? [String(p.path || "").replace(/\/[^/]*$/, "")] : (p.folders || []);
+    const grants = [...(p.hosts || []).map((value: string) => ["hosts", value]), ...folders.filter(Boolean).map((value: string) => ["folders", value])];
+    for (const [kind, value] of grants) await rpc("shell_grant_add", { kind, value, scope: "always" });
+  });
+  await decide(action, "approve");
+}
+async function shellUndo(action: Action) {
+  await safe(async () => {
+    const id = action.payload?.result?.snapshot?.id || action.payload?.result?.snapshot;
+    if (!chat.value || typeof id !== "string") return;
+    actionBusy.value = action.id;
+    try {
+      const done = await rpc<{ restored: string[]; failed: unknown[] }>("shell_undo", { snapshot_id: id });
+      notify(done.failed.length ? "Some changes could not be undone" : "Change undone");
     } finally {
       actionBusy.value = "";
     }
@@ -1318,6 +1559,59 @@ async function toggleCompact() {
   await safe(() => setCompact(compact.value));
   if (compact.value) drawerOpen.value = false;
 }
+// Phase 45 (F024): Cmd+K finds and runs the app's own actions, Settings tabs and conversations, not only commands.
+const SETTINGS_TABS: [string, string][] = [["models", "Models"], ["permissions", "Permissions"], ["memory", "Memory"],
+  ["extensions", "Skills & connectors"], ["storage", "Data & storage"], ["privacy", "Privacy & Stealth"],
+  ["iphone", "iPhone"], ["appearance", "Appearance"], ["general", "General"]];
+const paletteExtras = computed(() => [
+  ...(["light", "dark", "system"] as const).map((t) => ({ key: "theme-" + t, title: t[0].toUpperCase() + t.slice(1) + " theme",
+    detail: "Appearance", run: "theme:" + t, words: "appearance mode colour color" })),
+  { key: "stealth", title: state.value.settings.stealth ? "Turn Stealth Lockdown off" : "Turn Stealth Lockdown on",
+    detail: "Hidden from screen capture and screen sharing", run: "stealth", words: "privacy hide screen share" },
+  { key: "motion", title: state.value.settings.reduced_motion ? "Turn Reduce motion off" : "Turn Reduce motion on",
+    detail: "Appearance", run: "motion", words: "animation still" },
+  { key: "compact", title: compact.value ? "Expand the workspace" : "Switch to the floating companion",
+    detail: "Window", run: "compact", words: "companion pet pebble minimize" },
+  ...SETTINGS_TABS.map(([id, label]) => ({ key: "settings-" + id, title: "Settings: " + label, detail: "Open Settings",
+    run: "settings:" + id, words: "preferences options" })),
+  // Phase 45 (F113, audit round R3): a waiting card was 11 Tabs away from the message box; ⌘K goes to it, its title
+  // focused, so the next Tab is its first button
+  ...(pending.value.length ? [{ key: "review", title: pending.value.length === 1 ? "Review the waiting action"
+    : `Review the ${pending.value.length} waiting actions`, detail: "Waiting for you", run: "review",
+    words: "approve allow permission card pending" }] : []),
+  // Phase 45 (F108, audit round R3): no way to take one conversation elsewhere; ⌘K copies it as Markdown
+  ...(chat.value?.messages.length ? [{ key: "copy-chat", title: "Copy this conversation as Markdown", detail: "Conversation",
+    run: "copychat", words: "export save share markdown text" }] : []),
+  ...(state.value.chats || []).map((c: any, i: number) => ({ key: "chat-" + c.id, title: c.title || "Conversation",
+    detail: "Conversation", run: "chat:" + c.id, words: "conversation chat history", recent: i < 5 })),
+]);
+async function copyConversation() {
+  const c = chat.value;
+  if (!c) return;
+  const lines = [`# ${c.title || "Conversation"}`, ""];
+  for (const m of c.messages) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    lines.push(m.role === "user" ? "**You:**" : "**Pebble:**", "", String(m.content || "").trim(), "");
+  }
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    notify("Copied the conversation as Markdown.");
+  } catch {
+    notify("Could not copy the conversation.");
+  }
+}
+async function runLauncher(id: string) {
+  palette.value = false;
+  const [kind, value] = [id.split(":")[0], id.slice(id.indexOf(":") + 1)];
+  if (kind === "theme") await theme(value);
+  else if (kind === "stealth") await stealth();
+  else if (kind === "motion") await motion();
+  else if (kind === "compact") await toggleCompact();
+  else if (kind === "settings") openSettings(value);
+  else if (kind === "chat") await loadChat(value);
+  else if (kind === "copychat") await copyConversation();
+  else if (kind === "review") showReviews();
+}
 async function theme(value: string) {
   state.value.settings.theme = value;
   applyTheme();
@@ -1333,6 +1627,41 @@ async function stealth() {
   await safe(async () => {
     await rpc("setting", { key: "stealth", value: enabled });
     if (native) await invoke("stealth_set", { enabled });
+  });
+}
+// Phase 46 (1.9.29, D206): Pebble's work as cards (the work view) or as rows of text; presentation only
+const workView = computed(() => state.value.settings.work_view !== false);
+// The work view's task line: the person's own message that started the run (never read from the host's records)
+function taskBefore(messageId?: string) {
+  const list = chat.value?.messages || [];
+  const end = messageId ? list.findIndex((m) => m.id === messageId) : list.length;
+  for (let i = (end < 0 ? list.length : end) - 1; i >= 0; i--) if (list[i].role === "user") return taskLine(list[i].content);
+  return null;
+}
+// The branch card's reads (confined Git, no network) and its one proposal, which lands on a review card (the host's
+// `actions` event shows it); only these three routes, all already the main window's
+const gitAccess = computed<GitAccess | null>(() => {
+  const id = chat.value?.workspace ? chat.value.id : null;
+  if (!id) return null;
+  return {
+    read: (method, params) => rpc(method === "git_history" ? "git_history" : "git_status", { ...params, id }),
+    propose: (params) => rpc("git_plan_propose", { id, operation: "merge", name: params.name }),
+  };
+});
+// Phase 46 (1.9.29, D195): when the model may answer with a chart, diagram or comparison (artifact_schema.visual_offer);
+// "auto" is off by default (D216/D217). Tables and diagrams already in a reply are drawn either way (ReplyBody).
+const visualAnswers = computed(() => (state.value.settings.visual_answers === "auto" ? "auto" : "ask"));
+async function changeVisualAnswers(value: string) {
+  if ((value !== "ask" && value !== "auto") || value === visualAnswers.value) return;
+  state.value.settings.visual_answers = value;
+  await safe(async () => {
+    await rpc("setting", { key: "visual_answers", value });
+  });
+}
+async function toggleWorkView() {
+  state.value.settings.work_view = !workView.value;
+  await safe(async () => {
+    await rpc("setting", { key: "work_view", value: state.value.settings.work_view });
   });
 }
 async function motion() {
@@ -1368,6 +1697,20 @@ function applyTheme() {
 watch(() => state.value.settings, applyTheme, { deep: true });
 const colorQuery = matchMedia("(prefers-color-scheme: dark)");
 function key(e: KeyboardEvent) {
+  // Phase 45 (F096, audit round R3): typing with the focus outside every text field (after a click on a reply's steps
+  // or on empty conversation space) was silently lost, twice a whole request. A printable key there goes to the
+  // message box (Space and Enter still press a focused button).
+  const target = e.target as HTMLElement | null;
+  const editable = !!target?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+  if (!editable && !modal.value && !palette.value && e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey
+      && !e.altKey && !e.isComposing && composer.value) {
+    // F131 (audit round R4): moving the focus during the key did not carry the letter into the box in WebKit (a whole
+    // follow-up was lost after a click on the conversation); the first letter is put in here, the rest follow
+    e.preventDefault();
+    composer.value.focus();
+    input.value += e.key;
+    nextTick(() => composer.value?.setSelectionRange?.(input.value.length, input.value.length));
+  }
   if (e.key === "Tab" && modal.value) {
     const elements = [
       ...document.querySelectorAll<HTMLElement>(
@@ -1396,10 +1739,59 @@ function key(e: KeyboardEvent) {
     // unless something inside already handled this Esc.
     else if (!e.defaultPrevented && canvas.value) closeCanvas();
     else if (!e.defaultPrevented && drawerOpen.value) closeDrawer();
-  } else if (shortcut === "palette") palette.value = !palette.value && !modal.value;
+  } else if (shortcut === "palette") {
+    lastShortcut = { id: "palette", at: Date.now() };
+    palette.value = !palette.value && !modal.value;
+  }
   else if (shortcut) runShortcut(shortcut);
+  // Phase 45 (F101, audit round R3): an Escape the page did not stop reached the window, and macOS took the workspace
+  // out of full screen, even the Escape that closed Settings. Every Escape belongs to the page, after its own handlers
+  // above (an input method keeps its own).
+  if (e.key === "Escape" && !e.isComposing) e.preventDefault();
+}
+// Phase 45 (F025-F027): the menu bar's items run the same actions as their keys (a key the page already handled is not
+// run again), Find focuses conversation search, Help opens the guide, the shortcuts or a problem report.
+let lastShortcut = { id: "", at: 0 };
+function menuAction(id: string) {
+  if (lastShortcut.id === id && Date.now() - lastShortcut.at < 400) return;
+  if (id === "palette") palette.value = !modal.value;
+  else if (["stop", "activity", "details", "copy_reply", "new_chat", "settings"].includes(id)) runShortcut(id as ShortcutId);
+  else if (id === "find") focusChatSearch();
+  else if (id === "shortcuts" || id === "whats_new") {
+    openSettings("general");
+    revealSetting(id === "shortcuts" ? "#settings-keyboard" : "details.whats-new");
+  }
+  else if (id === "help") openExternal("https://github.com/tohin003/Pebble#readme").catch(() => {});
+  else if (id === "report") openExternal("https://github.com/tohin003/Pebble/issues/new").catch(() => {});
+  else if (id === "companion") toggleCompact();
+}
+// Phase 45 (F138, audit round R4): Help › Keyboard Shortcuts opened General at its top, the shortcut list about 900 pt
+// below the fold; Help's items show the part they name (the shortcut list, or What's new opened), after the dialog has
+// placed its own focus.
+function revealSetting(selector: string) {
+  setTimeout(() => {
+    const target = document.querySelector<HTMLElement>(selector);
+    if (!target) return;
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target.scrollIntoView?.({ block: "start" });
+    (target instanceof HTMLDetailsElement ? target.querySelector<HTMLElement>("summary") : target)?.focus?.({ preventScroll: true });
+  }, 150);
+}
+function focusChatSearch() {
+  if (compact.value) return;
+  sidebar.value = true;
+  nextTick(() => document.querySelector<HTMLInputElement>(".chat-search input")?.focus());
+}
+// Phase 45 (F072): this window's own listener (a global listen made the companion open its palette too).
+if (native) {
+  try {
+    void getCurrentWindow().listen<string>("pebble-menu", (event) => menuAction(String(event.payload)));
+  } catch {
+    // a window without event support (a test stub) has no menu bar to listen to
+  }
 }
 function runShortcut(id: ShortcutId) {
+  lastShortcut = { id, at: Date.now() };
   palette.value = false;
   if (id === "new_chat") createChat();
   else if (id === "settings") modal.value = "settings";
@@ -1415,10 +1807,12 @@ function chooseCommand(text: string) {
 }
 // Phase 24 (V1-135): "What's new" in About. An excerpt of the release's CHANGELOG.md entry (t24-publish keeps the
 // two in step); plain text, bundled with the build, no update check (that is after 1.0).
+// Phase 45 (F171, audit round R5): the list says which release it is from (the newest with highlights)
+const WHATS_NEW_VERSION = "2.0.0";
 const WHATS_NEW = Object.freeze([
-  "Pebble's Workshop, part 1: Pebble can run a short script that calls its tools; only what it prints comes back.",
-  "Every call a script makes is checked, approved and recorded exactly like a direct call.",
-  "Turning on Stealth Lockdown in the full-screen workspace now gives an ordinary, centred window with its buttons.",
+  "Pebble works across your Mac inside a sandbox and uses the app windows and websites you allow.",
+  "AgentGuard checks what you asked for before a task counts as done, and everyday Git runs under review.",
+  "Pebble Remote is the Mac side of Pebble's iPhone app, and the work view draws each run's steps as cards.",
 ]);
 // Phase 18 E06: the native Save dialog returns a single-use token; this window never sees or sends a path.
 async function chooseTelemetryDestination(): Promise<string | null> {
@@ -1458,11 +1852,46 @@ async function restoreChat(id: string, reopen: boolean) {
   });
 }
 // Phase 24 (V1-125): find a conversation by its title, and rename one (chat_rename changes only the title).
+// Phase 45 (F031, audit round R1): what was said is searched too (the service's chat_search, 250 ms after the last key),
+// and a conversation found by its words shows where.
 const chatSearch = ref("");
+const contentMatches = ref<Record<string, string>>({});
+let contentTimer: ReturnType<typeof setTimeout> | undefined;
+watch(chatSearch, (value) => {
+  clearTimeout(contentTimer);
+  const words = value.trim();
+  if (words.length < 2 || !native) {
+    contentMatches.value = {};
+    return;
+  }
+  contentTimer = setTimeout(async () => {
+    try {
+      const found = await rpc<{ matches: { id: string; excerpt: string }[] }>("chat_search", { query: words });
+      if (chatSearch.value.trim() === words)
+        contentMatches.value = Object.fromEntries((found.matches || []).map((m) => [m.id, m.excerpt]));
+    } catch {
+      contentMatches.value = {};
+    }
+  }, 250);
+});
 const listedChats = computed(() => {
   const words = chatSearch.value.trim().toLowerCase();
-  return words ? state.value.chats.filter((c) => c.title.toLowerCase().includes(words)) : state.value.chats;
+  return words
+    ? state.value.chats.filter((c) => c.title.toLowerCase().includes(words) || c.id in contentMatches.value)
+    : state.value.chats;
 });
+// F134 (audit round R4): Escape in the search closed the Details drawer and kept the words; it clears them first, then
+// leaves the field (the window's Escape does the rest the next time)
+function searchEscape(e: KeyboardEvent) {
+  e.stopPropagation();
+  e.preventDefault();
+  if (chatSearch.value) chatSearch.value = "";
+  else (e.target as HTMLElement | null)?.blur?.();
+}
+function excerptFor(c: Chat) {
+  const words = chatSearch.value.trim().toLowerCase();
+  return words && !c.title.toLowerCase().includes(words) ? contentMatches.value[c.id] || "" : "";
+}
 const renaming = ref<string | null>(null),
   renameText = ref("");
 function startRename(c: Chat) {
@@ -1532,6 +1961,46 @@ async function forgetMemory(item: ForgetItem) {
     card.busy = "";
   }
 }
+// Phase 41 (1.7.0, Pebble's Workshop, D69): a tool Pebble kept on its own is always shown (View code, Remove); a keep
+// Pebble asks about waits here for the person's Keep or Discard. Main window only; no model can press these.
+// Phase 45 (F162): "remove": the person asked Pebble to remove a kept tool; the card's Remove is theirs to press.
+interface ToolboxCard { chatId: string; kind: "kept" | "asked" | "remove"; name: string; purpose: string; why: string[]; pendingId: string; code: string; done: string; busy: boolean; error: string; at: number }
+const toolboxCards = ref<ToolboxCard[]>([]);
+function toolboxEvent(d: Record<string, unknown>) {
+  if (typeof d.chat_id !== "string" || typeof d.name !== "string" || (d.kind !== "kept" && d.kind !== "asked" && d.kind !== "remove")) return;
+  const card: ToolboxCard = { chatId: d.chat_id, kind: d.kind, name: d.name.slice(0, 40), purpose: String(d.purpose || "").slice(0, 200),
+    why: (Array.isArray(d.why) ? d.why : []).map((w) => String(w).slice(0, 200)).slice(0, 6), pendingId: String(d.pending_id || ""),
+    code: "", done: "", busy: false, error: "", at: Date.now() };
+  toolboxCards.value = [...toolboxCards.value.filter((c) => c.name !== card.name), card].slice(-4);
+}
+// Phase 45 (F100, audit round R3): the cards sit after the conversation, so a Discarded card stayed below later messages
+// as if the newest reply asked to keep a tool. A card still waiting for Keep or Discard stays; a decided card, or a kept
+// tool's notice (Remove stays in Settings › Toolbox), leaves once a newer message of yours moves the conversation on.
+function toolboxShown(card: ToolboxCard) {
+  if (card.chatId !== chat.value?.id) return false;
+  if ((card.kind === "asked" || card.kind === "remove") && !card.done) return true;
+  return !chat.value.messages.some((m) => m.role === "user" && typeof m.created === "number" && m.created * 1000 > card.at + 1000);
+}
+async function toolboxView(card: ToolboxCard) {
+  if (card.code) { card.code = ""; return; }
+  try { card.code = String((await rpc<{ code?: string }>("toolbox_get", { name: card.name })).code || ""); }
+  catch (cause) { card.error = cause instanceof Error ? cause.message : String(cause); }
+}
+async function toolboxRemove(card: ToolboxCard) {
+  if (card.busy) return;
+  card.busy = true;
+  // Phase 45 (F178): Settings › Skills & connectors can put it back for ten minutes
+  try { await rpc("toolbox_remove", { name: card.name }); card.done = "Removed from the Toolbox. For ten minutes, Settings › Skills & connectors can put it back."; }
+  catch (cause) { card.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { card.busy = false; }
+}
+async function toolboxDecide(card: ToolboxCard, keep: boolean) {
+  if (card.busy || !card.pendingId) return;
+  card.busy = true;
+  try { await rpc("toolbox_decide", { pending_id: card.pendingId, keep }); card.done = keep ? "Kept in the Toolbox" : "Discarded"; }
+  catch (cause) { card.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { card.busy = false; }
+}
 function prompt(text: string) {
   input.value = text;
   nextTick(() => composer.value?.focus());
@@ -1585,6 +2054,7 @@ function receive(event: { event: string; data: any }) {
       profileId: typeof d.handoff.profile_id === "string" ? d.handoff.profile_id : null,
       label: d.label.slice(0, 300),
     });
+  if (event.event === "toolbox" && d) toolboxEvent(d);
   if (event.event === "memory_forget" && d?.chat_id === chat.value?.id && d?.authorization === "none") {
     void openForget(d);
     return;
@@ -1597,6 +2067,18 @@ function receive(event: { event: string; data: any }) {
   if (event.event === 'job' || event.event === 'job_notification') {
     if (d.chat_id === chat.value?.id) workflowRevision.value++;
     refresh().catch(fail);
+    return;
+  }
+  // Phase 46 (1.9.29, D214, C7): what a phone did shows here as it happens; a new pairing that waits for the person
+  // opens Settings › iPhone once, where they confirm its six digits (X-1).
+  if (event.event === "remote_notice") {
+    if (typeof d?.text === "string" && d.text) notify(d.text.slice(0, 160));
+    return;
+  }
+  if (event.event === "remote_state") {
+    const code = typeof d?.confirm?.code === "string" ? d.confirm.code : "";
+    if (code && code !== remotePairing) openSettings("iphone");
+    remotePairing = code;
     return;
   }
   if (!chat.value || d.chat_id !== chat.value.id) {
@@ -1642,9 +2124,43 @@ function receive(event: { event: string; data: any }) {
       .catch(fail);
   }
 }
+// Phase 45 (F112, audit round R3): the message box grows with its text (CSS caps it), so a long message is not edited
+// through a three-line slot.
+function autosize() {
+  const box = composer.value;
+  if (!box?.style) return;
+  box.style.height = "auto";
+  box.style.height = box.scrollHeight + "px";
+}
+watch(input, () => nextTick(autosize));
+// Phase 45 (F038): when the window comes back with nothing focused in it, the message box takes focus, so the window's
+// own keys work at once (the menu bar's keys work either way). F074 (audit round R2): a click on empty conversation
+// space to bring the window back left New conversation focused, with its ring (Space or Return would have started a
+// conversation); a sidebar button the person did not click there goes the same way.
+let lastPointer: { at: number; target: Element | null } = { at: 0, target: null };
+if (typeof document !== "undefined")
+  document.addEventListener("pointerdown", (e) => { lastPointer = { at: Date.now(), target: e.target as Element | null }; }, true);
+function windowFocused() {
+  // F146 (audit round R4): opened from the companion, the window came back with the header's Conversations sidebar
+  // button focused (WebKit focuses the first control when its view takes the keyboard): typed letters went nowhere and
+  // Space hid the sidebar. A title-bar or sidebar control the person did not click gives the keyboard to the message
+  // box; a field being typed in keeps it, and so does a control elsewhere (the Details drawer, a card) that the person
+  // reached with the keyboard. Run after WebKit has placed its own focus.
+  setTimeout(() => {
+    if (modal.value || compact.value) return;
+    const active = document.activeElement as HTMLElement | null;
+    const clicked = Date.now() - lastPointer.at < 800 ? lastPointer.target : null;
+    const editable = !!active?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    const chrome = !!active?.closest?.("header.titlebar, #sidebar");
+    const unasked = !!active && active !== document.body && chrome && !editable && !(clicked && active.contains(clicked));
+    if (!active || active === document.body || unasked) composer.value?.focus();
+  }, 150);
+}
+if (typeof window !== "undefined") window.addEventListener("focus", windowFocused);
 onMounted(async () => {
   document.addEventListener("keydown", key);
   document.addEventListener("pebble-notice", markdownNotice);
+  document.addEventListener("pebble-source", openCitation);
   window.addEventListener("resize", onResize);
   colorQuery.addEventListener("change", applyTheme);
   if (!native) {
@@ -1669,6 +2185,17 @@ onMounted(async () => {
     chatUnsubscribe = await listen<string>("workspace-chat", (event) =>
       loadChat(event.payload),
     );
+    // Phase 45 (F057): the Companion's half-typed message, for the conversation it just opened here; a message
+    // already being typed here is never replaced.
+    void listen<{ chatId?: string; text?: string }>("workspace-draft", async (event) => {
+      const { chatId, text } = event.payload || {};
+      if (!chatId || !text) return;
+      for (let i = 0; i < 40 && chat.value?.id !== chatId; i++) await new Promise((r) => setTimeout(r, 50));
+      if (chat.value?.id === chatId && !input.value.trim()) {
+        input.value = text;
+        nextTick(() => composer.value?.focus());
+      }
+    });
     await refresh();
     if (maintenance.value) { booting.value = false; return; }
     chat.value = state.value.chats.length
@@ -1692,6 +2219,7 @@ onUnmounted(() => {
   chatUnsubscribe();
   document.removeEventListener("keydown", key);
   document.removeEventListener("pebble-notice", markdownNotice);
+  document.removeEventListener("pebble-source", openCitation);
   window.clearTimeout(toastTimer);
   window.removeEventListener("resize", onResize);
   colorQuery.removeEventListener("change", applyTheme);
@@ -1701,7 +2229,8 @@ onUnmounted(() => {
 <template>
   <UpgradeMaintenance v-if="maintenance" :view="maintenance" />
   <div v-else class="app-shell" :class="{ compact, 'hide-sidebar': !sidebar }">
-    <aside v-if="!compact && sidebar" id="sidebar" class="sidebar" :inert="!!modal" aria-label="Conversations">
+    <!-- Phase 45 (F037): in a small window the conversations open over the window from the header's button -->
+    <aside v-if="(!compact && sidebar) || (compact && sidebarOverlay)" id="sidebar" class="sidebar" :class="{ 'sidebar-overlay': compact }" :inert="!!modal" aria-label="Conversations">
       <div class="sidebar-brand" data-tauri-drag-region>
         <Avatar
           :state="avatarState"
@@ -1719,13 +2248,31 @@ onUnmounted(() => {
       <button
         class="nav-item"
         :class="{ selected: !chat?.workspace }"
+        :aria-current="!chat?.workspace ? 'true' : undefined"
         @click="detachProject"
       >
         <PhChatCircle :size="18" /> Companion
       </button>
-      <button class="nav-item" @click="chooseProject">
+      <!-- Phase 45 (F176, audit round R5): the project you are in is marked, as Companion is; F205 (R7): its row starts
+           a new conversation there, as every project row does (Connect a project stays in the + menu) -->
+      <button
+        class="nav-item"
+        :class="{ selected: !!chat?.workspace }"
+        :aria-current="chat?.workspace ? 'true' : undefined"
+        :title="chat?.workspace ? 'New conversation in ' + chat.workspace : undefined"
+        @click="chat?.workspace ? openProject(chat.workspace) : chooseProject()"
+      >
         <PhFolder :size="18" /> {{ projectName || "Connect a project"
         }}<PhPlus v-if="!projectName" :size="13" class="end" />
+      </button>
+      <button
+        v-for="p in recentProjects.filter((p) => p !== chat?.workspace)"
+        :key="p"
+        class="nav-item project-item"
+        :title="'New conversation in ' + p"
+        @click="openProject(p)"
+      >
+        <PhFolder :size="18" /> {{ p.split(/[\\/]/).pop() }}
       </button>
       <div id="recent-heading" class="sidebar-heading recent-heading">RECENT CONVERSATIONS</div>
       <div v-if="state.chats.length" class="chat-search" role="search">
@@ -1735,7 +2282,9 @@ onUnmounted(() => {
           maxlength="200"
           placeholder="Search conversations"
           aria-label="Search conversations"
-        />
+          @keydown.esc="searchEscape"
+        /><button v-if="chatSearch" type="button" class="icon-button chat-search-clear" aria-label="Clear the search"
+          @click="chatSearch = ''"><PhX :size="12" /></button>
       </div>
       <div class="chat-list">
         <ul class="chat-list-items" aria-labelledby="recent-heading">
@@ -1755,6 +2304,7 @@ onUnmounted(() => {
                 @click="loadChat(c.id)"
               >
                 <span>{{ c.title }}</span
+                ><span v-if="excerptFor(c)" class="chat-excerpt">{{ excerptFor(c) }}</span
                 ><span v-if="c.workspace" class="chat-project"
                   ><PhFolder :size="11" />{{
                     c.workspace.split(/[\\/]/).pop()
@@ -1784,8 +2334,12 @@ onUnmounted(() => {
           Your conversations appear here.
         </p>
         <p v-else-if="!listedChats.length" class="no-history">
-          No conversation title matches “{{ chatSearch.trim() }}”.
+          No conversation matches “{{ chatSearch.trim() }}”.
         </p>
+        <!-- Phase 45 (F032): deleted conversations are one click away (restorable for 30 days) -->
+        <button type="button" class="text-button recently-deleted" @click="openSettings('storage')">
+          <PhTrash :size="13" />Recently deleted
+        </button>
       </div>
       <div class="sidebar-bottom">
         <button
@@ -1812,12 +2366,36 @@ onUnmounted(() => {
             @click="sidebar = !sidebar"
           >
             <PhSidebarSimple :size="19" /></button
+          ><button
+            v-if="compact"
+            class="icon-button"
+            aria-label="Conversations"
+            title="Conversations"
+            :aria-expanded="sidebarOverlay"
+            aria-controls="sidebar"
+            @click="sidebarOverlay = !sidebarOverlay"
+          >
+            <PhSidebarSimple :size="17" /></button
           ><span v-if="compact" class="compact-wordmark">pebble.</span
-          ><button v-else class="project-switch" @click="chooseProject">
-            <PhFolder v-if="projectName" :size="16" />{{
-              projectName || "Companion"
-            }}<PhCaretDown :size="12" />
-          </button>
+          ><span v-else class="project-switch-wrap" @keydown.esc.stop="projectMenu = false" @focusout="projectFocusOut"
+            ><button class="project-switch" :aria-expanded="projectMenu" aria-haspopup="menu" @click="projectMenu = !projectMenu">
+              <PhFolder v-if="projectName" :size="16" />{{
+                projectName || "Companion"
+              }}<PhCaretDown :size="12" />
+            </button>
+            <!-- Phase 45 (F029): the chevron opens a menu (recent projects, a folder, no project), not a bare picker. -->
+            <div v-if="projectMenu" class="project-menu" role="menu">
+              <button v-for="p in recentProjects.filter((p) => p !== chat?.workspace)" :key="p" type="button" role="menuitem" :title="p" @mousedown.prevent @click="openProject(p)">
+                <PhFolder :size="15" />{{ p.split(/[\\/]/).pop() }}
+              </button>
+              <button type="button" role="menuitem" @mousedown.prevent @click="projectMenu = false; chooseProject()">
+                <PhPlus :size="15" />Choose a project folder…
+              </button>
+              <button v-if="projectName" type="button" role="menuitem" @mousedown.prevent @click="projectMenu = false; detachProject()">
+                <PhChatCircle :size="15" />Leave this project (Companion)
+              </button>
+            </div></span
+          >
         </div>
         <div class="header-right">
           <button
@@ -1886,7 +2464,7 @@ onUnmounted(() => {
               <div class="avatar-stage">
                 <Avatar
                   :state="avatarState"
-                  :size="compact ? 92 : 130"
+                  :size="compact ? 92 : firstRun ? 96 : 130"
                   :reduced="state.settings.reduced_motion"
                   :stealth="!!state.settings.stealth"
                   :rank="AVATAR_RANK.welcome"
@@ -1916,6 +2494,10 @@ onUnmounted(() => {
                     <strong>Connect your ChatGPT account</strong>
                     <small>Sign in with your ChatGPT plan. Your messages are sent to OpenAI to be answered.</small>
                   </button>
+                  <button type="button" class="setup-choice" @click="openSettings('models', 'add-provider')">
+                    <strong>Use an API key</strong>
+                    <small>Anthropic, OpenAI or a local server such as Ollama or LM Studio. Messages go to the provider you choose.</small>
+                  </button>
                   <button type="button" class="setup-choice" @click="chooseModel">
                     <strong>Use a local model</strong>
                     <small>Choose a GGUF model file on this Mac. Replies are made on this Mac.</small>
@@ -1933,7 +2515,16 @@ onUnmounted(() => {
                 </ul>
               </section>
               <div v-else class="starter-grid">
-                <button @click="chooseProject">
+                <!-- Phase 45 (F176): in a connected project the card works in it instead of offering to connect one -->
+                <button v-if="projectName" @click="prompt('Give me a short tour of this project, then ask what I want to build.')">
+                  <span class="starter-icon"><PhCode :size="21" /></span
+                  ><span
+                    >Build with me<small
+                      >Work in {{ projectName }}</small
+                    ></span
+                  ><PhArrowRight :size="16" />
+                </button>
+                <button v-else @click="chooseProject">
                   <span class="starter-icon"><PhCode :size="21" /></span
                   ><span
                     >Build with me<small
@@ -2008,8 +2599,23 @@ onUnmounted(() => {
                       :unavailable="activityStore.state.supported === false"
                       :reduced="state.settings.reduced_motion"
                       @expand="loadActivity"
-                    />
-                    <Markdown :text="message.content" /><p
+                    ><template v-if="workView" #body
+                      ><WorkView
+                        :record="recordFor(message)"
+                        :task="taskBefore(message.id)"
+                        :unavailable="activityStore.state.supported === false"
+                        :reduced="state.settings.reduced_motion"
+                        :chat-id="chat?.id"
+                        :git="message === chat?.messages.at(-1) ? gitAccess : null"
+                        @expand="loadActivity" /></template
+                    ></ThinkingDisclosure>
+                    <div v-if="message.captures?.length" class="message-attachments message-captures" aria-label="Screenshots Pebble took">
+                      <figure v-for="(capture, index) in message.captures" :key="index">
+                        <img :src="capture.preview" alt="Screenshot Pebble took for this reply" />
+                        <figcaption>Screenshot Pebble took</figcaption>
+                      </figure>
+                    </div>
+                    <ReplyBody :text="message.content" /><p
                       v-if="markers.get(message.id)"
                       class="message-marker"
                     >{{ markers.get(message.id) }}</p
@@ -2076,6 +2682,28 @@ onUnmounted(() => {
                   />
                 </div>
               </div>
+              <section v-for="card in toolboxCards.filter(toolboxShown)" :key="'toolbox-' + card.name" class="forget-card toolbox-card" :aria-label="card.kind === 'kept' ? 'Kept in Toolbox' : card.kind === 'remove' ? 'Remove this tool?' : 'Keep this tool?'">
+                <p class="toolbox-title"><strong>{{ card.kind === "kept" ? "Kept in Pebble's Toolbox" : card.kind === "remove" ? "Remove this tool from Pebble's Toolbox?" : "Keep this tool in Pebble's Toolbox?" }}</strong> · {{ card.name }}</p>
+                <p class="toolbox-purpose">{{ card.purpose }}</p>
+                <ul v-if="card.kind === 'asked' && card.why.length" class="toolbox-why"><li v-for="(why, index) in card.why" :key="index">Pebble asks because {{ why }}.</li></ul>
+                <p v-if="card.kind === 'kept'" class="toolbox-note">Pebble kept this tested calculation on its own. Remove it if you don't want it.</p>
+                <p v-else-if="card.kind === 'remove'" class="toolbox-note">You asked to remove it. Nothing is removed until you choose Remove.</p>
+                <pre v-if="card.code" class="command-preview">{{ card.code }}</pre>
+                <p v-if="card.error" class="forget-error" role="alert">{{ card.error }}</p>
+                <p v-if="card.done" class="forget-done" role="status">{{ card.done }}</p>
+                <div v-else class="forget-actions">
+                  <button type="button" class="text-button" :aria-label="(card.code ? 'Hide the code of ' : 'View the code of ') + card.name" @click="toolboxView(card)">{{ card.code ? "Hide code" : "View code" }}</button>
+                  <button v-if="card.kind === 'kept'" type="button" class="secondary-button" :aria-label="'Remove ' + card.name + ' from the Toolbox'" :disabled="card.busy" @click="toolboxRemove(card)">Remove</button>
+                  <template v-else-if="card.kind === 'remove'">
+                    <button type="button" class="secondary-button" :aria-label="'Keep ' + card.name" :disabled="card.busy" @click="card.done = 'Kept in the Toolbox'">Keep it</button>
+                    <button type="button" class="primary-button" :aria-label="'Remove ' + card.name + ' from the Toolbox'" :disabled="card.busy" @click="toolboxRemove(card)">Remove</button>
+                  </template>
+                  <template v-else>
+                    <button type="button" class="secondary-button" :disabled="card.busy" @click="toolboxDecide(card, false)">Discard</button>
+                    <button type="button" class="primary-button" :disabled="card.busy" @click="toolboxDecide(card, true)">Keep</button>
+                  </template>
+                </div>
+              </section>
               <section v-if="forgetCard && forgetCard.chatId === chat.id" class="forget-card" aria-labelledby="forget-heading">
                 <h3 id="forget-heading" class="forget-heading">
                   {{ forgetCard.subject ? `Saved memories about “${forgetCard.subject}”` : "Saved memories you may want to forget" }}
@@ -2113,7 +2741,14 @@ onUnmounted(() => {
                 :unavailable="activityStore.state.supported === false"
                 :reduced="state.settings.reduced_motion"
                 @expand="loadActivity"
-              />
+              ><template v-if="workView" #body
+                ><WorkView
+                  :record="orphanRecord"
+                  :task="taskBefore()"
+                  :unavailable="activityStore.state.supported === false"
+                  :reduced="state.settings.reduced_motion"
+                  @expand="loadActivity" /></template
+              ></ThinkingDisclosure>
               <!-- Phase 19: host-decided status words replace the raw progress label (labels can embed paths).
                    Always mounted, so its one polite region can announce "Reply finished".
                    Phase 22: the companion (in the window's avatar election) replaces the dot, the host's
@@ -2148,8 +2783,20 @@ onUnmounted(() => {
                   /></template>
                   <template v-if="statusDetail" #detail>{{ statusDetail }}</template>
                 </StatusLine>
+                <!-- Phase 46 (1.9.29, D206): the work view's cards, or with the setting off today's rows -->
+                <WorkView
+                  v-if="workView && liveOpen && liveRecord && !(state.active && state.active !== chat?.id)"
+                  id="live-thinking"
+                  :record="liveRecord"
+                  :task="taskBefore()"
+                  :unavailable="activityStore.state.supported === false"
+                  :reduced="state.settings.reduced_motion"
+                  :chat-id="chat?.id"
+                  :git="gitAccess"
+                  @expand="loadActivity"
+                />
                 <ThinkingDisclosure
-                  v-if="liveOpen && liveRecord && !(state.active && state.active !== chat?.id)"
+                  v-else-if="liveOpen && liveRecord && !(state.active && state.active !== chat?.id)"
                   live
                   open
                   body-id="live-thinking"
@@ -2158,6 +2805,13 @@ onUnmounted(() => {
                   :reduced="state.settings.reduced_motion"
                   @expand="loadActivity"
                 />
+                <!-- Phase 45 (F105): the reply as it is written, until the checked reply replaces it -->
+                <AttemptStream
+                  v-if="chat && isWorking && state.active === chat.id && state.active_run"
+                  inline
+                  :chat-id="chat.id"
+                  :run-id="state.active_run"
+                />
               </div>
               <RunPanel
                 view="conversation"
@@ -2165,6 +2819,7 @@ onUnmounted(() => {
                 :memory="state.memory"
                 @refresh="refreshRun"
                 @error="error = $event"
+                @settled="error.startsWith('The screen act has an uncertain outcome') && (error = '')"
                 @details="openDrawer('task', false, true)"
               />
               <div v-if="pending.length" class="review-callout">
@@ -2214,6 +2869,15 @@ onUnmounted(() => {
                 <PhX :size="15" />
               </button>
             </div>
+            <div v-if="needsModel && !state.model.configured" class="storage-notice needs-model" role="alert">
+              <span>Connect a model first; your message stays here and is sent when you press Send again.</span
+              ><button type="button" class="text-button" @click="openSettings('models'); needsModel = false">ChatGPT</button
+              ><button type="button" class="text-button" @click="openSettings('models', 'add-provider'); needsModel = false">API key</button
+              ><button type="button" class="text-button" @click="chooseModel(); needsModel = false">Local model</button
+              ><button class="icon-button" aria-label="Dismiss note" @click="needsModel = false">
+                <PhX :size="15" />
+              </button>
+            </div>
             <div v-if="storageNotice" class="storage-notice" role="status">
               <span>{{ storageNotice }}</span
               ><button type="button" class="text-button" @click="openSettings('storage'); storageNotice = ''">Data &amp; storage</button
@@ -2246,14 +2910,14 @@ onUnmounted(() => {
                 @hover="slashIndex = $event"
               />
               <div v-if="sources.length || attachmentBusy" class="source-chips">
-                <span v-for="source in sources" :key="source.id" :title="source.notice || source.name"
+                <span v-for="source in sources" :key="source.id" :title="source.notice || sourceTitle(source)"
                   ><img
                     v-if="source.preview"
                     :src="source.preview"
                     alt=""
                     class="attachment-thumb" /><PhPaperclip
                     v-else
-                    :size="12" />{{ source.name
+                    :size="12" />{{ sourceLabel(source)
                   }}<button
                     :aria-label="'Remove attachment ' + source.name"
                     @click="removeSource(source.id)"
@@ -2340,6 +3004,7 @@ onUnmounted(() => {
                     @select="changeModel"
                     @review="reviewDeviceHistory"
                     @dismiss="chat && deviceNotices.delete(chat.id)"
+                    @connect="openSettings('models')"
                   />
                   <label
                     class="composer-select effort-picker"
@@ -2402,7 +3067,7 @@ onUnmounted(() => {
               >
                 <PhShieldCheck :size="12" aria-hidden="true" />{{ modeName(state.settings.permissions.mode) }}
               </button>
-              <span
+              <span class="foot-model" :title="modelFoot"
                 ><span class="tiny-dot" aria-hidden="true" />{{ modelFoot }}</span
               ><button
                 v-if="contextUse && contextUse.percent >= RING_AT"
@@ -2417,7 +3082,7 @@ onUnmounted(() => {
                   <circle cx="8" cy="8" r="6" class="context-ring-fill" :stroke-dasharray="`${Math.min(100, contextUse.percent) * 0.377} 37.7`" />
                 </svg>
                 {{ contextUse.percent }}% of context used
-              </button><span v-if="!compact"
+              </button><span v-if="!compact" class="foot-note" title="Pebble can make mistakes. Check the evidence."
                 >Pebble can make mistakes. Check the evidence.</span
               ><button
                 v-if="compact"
@@ -2505,7 +3170,25 @@ onUnmounted(() => {
                               ? (action.payload.operation === "retire_child_worktree" ? "Retire child worktree" : "Allocate child worktree")
                               : action.kind === "install"
                                 ? `Install dependencies (${action.payload.kind})`
-                                : `Open ${action.payload.name}`
+                                : action.kind === "shell"
+                                  ? action.payload.command
+                                  : action.kind === "file"
+                                    ? action.payload.path
+                                    : action.kind === "screen"
+                                      ? screenHeading(action.payload.review)
+                                      : action.kind === "screen_grant"
+                                        ? `Use ${action.payload.app}`
+                                        : action.kind === "url"
+                                          ? `Open ${action.payload.url}`
+                                          : action.kind === "screen_raise"
+                                            ? `Bring ${action.payload.app} forward`
+                                            : action.kind === "app_action"
+                                              ? action.payload.summary || `Use ${action.payload.app}`
+                                              : action.kind === "browser_grant"
+                                                ? `Use ${siteNames(action.payload.sites)}`
+                                                : action.payload.document  // Phase 45 (F200): a file in the app
+                                                  ? `Open ${String(action.payload.document).split("/").pop()} in ${action.payload.name}`
+                                                  : `Open ${action.payload.name}`
                 }}</strong
                 ><span :class="action.status">{{ actionState(action.status) }}</span>
               </div>
@@ -2526,7 +3209,12 @@ onUnmounted(() => {
                   ><span v-for="(line,i) in (action.payload.diff||'No changes').split('\n')" :key="i" :class="{added:line.startsWith('+'),removed:line.startsWith('-'),hunk:line.startsWith('@@')}">{{line}}<br/></span></pre></details
               ></template>
               <template v-else-if="action.kind === 'tests' && isCheck(action.payload || {})"
-                ><p class="action-description">
+                ><p v-if="action.payload.check_run" class="action-description">
+                  Your project's tests ({{ action.payload.recipe }}) in one temporary copy, then
+                  {{ action.payload.check.path }} alone ({{ action.payload.check_run.recipe }}) in another.
+                  Only your tests' own run counts. Network and original project writes are blocked.
+                </p>
+                <p v-else class="action-description">
                   {{ action.payload.recipe }} with {{ action.payload.check.path }}
                   added to a temporary project copy. It doesn't count as your
                   project's tests. Network and original project writes are blocked.
@@ -2588,6 +3276,13 @@ onUnmounted(() => {
                 >
                   Don't allow</button
                 ><button
+                  v-if="(action.kind === 'shell' || action.kind === 'file') && action.payload.always_offered"
+                  class="secondary-button"
+                  :disabled="!!actionBusy || isWorking"
+                  @click="grantAndApprove(action)"
+                >
+                  Always allow</button
+                ><button
                   class="primary-button"
                   :disabled="!!actionBusy || isWorking"
                   @click="decide(action, 'approve')"
@@ -2601,7 +3296,7 @@ onUnmounted(() => {
                       ? "Apply edit"
                       : action.kind === "tests"
                         ? "Run tests"
-                        : action.kind === "command"
+                        : action.kind === "command" || action.kind === "shell"
                           ? "Run command"
                           : action.kind === "plugin"
                             ? "Call plugin"
@@ -2611,7 +3306,21 @@ onUnmounted(() => {
                                 ? (action.payload.operation === "retire_child_worktree" ? "Retire worktree" : "Create worktree")
                                 : action.kind === "install"
                                   ? "Install from lockfile"
-                                  : "Open app"
+                                  : action.kind === "file"
+                                    ? "Write file"
+                                    : action.kind === "screen"
+                                      ? "Do it"
+                                      : action.kind === "screen_grant"
+                                        ? "Allow"
+                                        : action.kind === "url"
+                                          ? "Open link"
+                                          : action.kind === "screen_raise"
+                                            ? "Bring forward"
+                                            : action.kind === "app_action"
+                                              ? "Do it"
+                                              : action.kind === "browser_grant"
+                                                ? "Allow"
+                                                : "Open app"
                   }}
                 </button>
               </div>
@@ -2622,6 +3331,24 @@ onUnmounted(() => {
                 @click="decide(action, 'undo')"
               >
                 <PhArrowCounterClockwise :size="13" />Undo this edit
+              </button>
+              <!-- Phase 46 (1.9.28, D184): a command Auto ran without a card, from its copy (1.9.29, D209: kept a day
+                   after its task ends) -->
+              <button
+                v-if="action.kind === 'command' && action.status === 'applied' && action.payload.result?.undo === 'available'"
+                class="undo-button"
+                :disabled="!!actionBusy"
+                @click="decide(action, 'undo')"
+              >
+                <PhArrowCounterClockwise :size="13" />Undo this command
+              </button>
+              <button
+                v-if="(action.kind === 'shell' || action.kind === 'file') && action.status === 'applied' && (action.payload.result?.snapshot?.undoable || action.payload.result?.undoable)"
+                class="undo-button"
+                :disabled="!!actionBusy"
+                @click="shellUndo(action)"
+              >
+                <PhArrowCounterClockwise :size="13" />Undo this change
               </button>
               <button
                 v-if="action.kind === 'git' && action.status === 'applied' && action.payload.operation !== 'undo' && action.payload.result?.receipt_id"
@@ -2643,7 +3370,15 @@ onUnmounted(() => {
                   :unavailable="activityStore.state.supported === false"
                   :reduced="state.settings.reduced_motion"
                   @expand="loadActivity"
-                />
+                ><template v-if="workView" #body
+                  ><WorkView
+                    full
+                    :record="latestRecord"
+                    :task="taskBefore()"
+                    :unavailable="activityStore.state.supported === false"
+                    :reduced="state.settings.reduced_motion"
+                    @expand="loadActivity" /></template
+                ></ThinkingDisclosure>
               </section>
               <div v-else-if="activity.length" class="activity-log">
                 <h3 class="details-heading">Steps</h3>
@@ -2729,11 +3464,11 @@ onUnmounted(() => {
     </div>
 
     <CommandPalette v-if="palette && !modal" surface="main" :platform="state.platform" :running="isWorking"
-      @close="palette = false" @choose="chooseCommand" @action="runShortcut" />
+      :extras="paletteExtras" @close="palette = false" @choose="chooseCommand" @action="runShortcut" @run="runLauncher" />
     <!-- Phase 24 (V1-118): the polite region is always mounted, so each new toast is a change it announces. -->
     <div class="toast-region" role="status" aria-live="polite">
       <Transition name="toast"
-        ><div v-if="toast" class="toast">
+        ><div v-if="toast" class="toast" @mouseenter="holdToast(true)" @mouseleave="holdToast(false)">
           <PhCheck :size="15" aria-hidden="true" /><span>{{ toast.text }}</span
           ><button v-if="toast.action" type="button" class="toast-action" @click="runToast">{{ toast.action.label }}</button>
         </div></Transition
@@ -2744,7 +3479,8 @@ onUnmounted(() => {
         >Drop files into this conversation</strong
       ><span>Any file type · up to 10 files · 50 MB each</span>
     </div>
-    <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
+    <!-- Phase 45 (F012): a click beside Settings no longer closes it (a half-filled form was lost); X and Esc do. -->
+    <div v-if="modal" class="modal-backdrop" @click.self="modal !== 'settings' && (modal = null)">
       <section
         class="modal"
         :class="{ 'settings-modal': modal === 'settings' }"
@@ -2756,7 +3492,7 @@ onUnmounted(() => {
           <h2 id="modal-heading">
             {{
               modal === "delete"
-                ? "Delete this conversation?"
+                ? deleteHeading
                 : modal === "settings"
                   ? "Settings"
                   : modal === "apps"
@@ -2788,29 +3524,26 @@ onUnmounted(() => {
             <button
               class="primary-button danger"
               :disabled="!!state.active"
+              :aria-label="deleteTarget?.title ? `Move “${deleteTarget.title}” to Recently deleted` : undefined"
               @click="trashChat"
             >
               Move to Recently deleted
             </button>
           </div>
         </template>
-        <template v-else-if="modal === 'settings'">
+        <div v-else-if="modal === 'settings'" class="settings-layout">
+          <!-- Phase 45 (F006, D129): the sections below have their own tabs (Privacy & Stealth, Appearance, General)
+               instead of trailing under every tab; the tabs are a sidebar in the workspace window. -->
           <AdvancedSettings
             :state="state"
             :chat-id="chat?.id"
             :initial-tab="settingsTab"
+            :intent="settingsIntent"
             @refresh="refresh"
+            @tab="settingsTab = $event"
           />
-          <div class="settings-section">
-            <div class="section-label">STARTUP AND NOTIFICATIONS</div>
-            <NotificationSettings />
-          </div>
-          <div class="settings-section">
-            <div class="section-label">USAGE TELEMETRY</div>
-            <TelemetrySettings :choose-destination="chooseTelemetryDestination" />
-          </div>
           <!-- Phase 33 (1.1.0, D45-D47, D57): Stealth Lockdown, one switch for both halves, with the honest note. -->
-          <div class="settings-section">
+          <div v-if="settingsTab === 'privacy'" class="settings-section">
             <div class="section-label">PRIVACY AND FOCUS</div>
             <div class="stealth-card">
               <button
@@ -2823,7 +3556,7 @@ onUnmounted(() => {
               >
                 <div>
                   <strong>Stealth Lockdown</strong
-                  ><small id="stealth-desc">Keeps Pebble out of screen shares and recordings, and never takes focus from the app you're in.</small>
+                  ><small id="stealth-desc">Keeps Pebble out of screen shares and recordings, and keeps the companion with you over the app you're in.</small>
                 </div>
                 <span class="toggle stealth" aria-hidden="true" :class="{ on: state.settings.stealth }" />
               </button>
@@ -2833,11 +3566,38 @@ onUnmounted(() => {
             </div>
             <p id="stealth-honest" class="stealth-honest">{{ STEALTH_HONEST }}</p>
             <dl class="stealth-halves">
-              <div><dt>Stealth</dt><dd>Hidden from screen capture and screen sharing. No window shadow. Leaves the Dock, ⌘Tab and Mission Control. ⌃⌥⌘H hides Pebble at once; the menu-bar icon brings it back.</dd></div>
-              <div><dt>Lockdown</dt><dd>Pebble never takes keyboard focus from the app in front, so your slides, call or full-screen app keep it.</dd></div>
+              <div><dt>Stealth</dt><dd>Hidden from screen capture and screen sharing. No window shadow. Leaves the Dock, ⌘Tab and Mission Control. ⌃⌥⌘H hides Pebble at once; press it again, or use the menu-bar icon, to bring it back.</dd></div>
+              <div><dt>Lockdown</dt><dd>The companion stays over the app you're in, full-screen apps included. Clicking or typing in the companion leaves the app you were in active.</dd></div>
             </dl>
           </div>
-          <div class="settings-section">
+          <div v-if="settingsTab === 'privacy'" class="settings-section">
+            <div class="section-label">PRIVACY & CONTROL</div>
+            <div class="privacy-row">
+              <PhShieldCheck :size="19" aria-hidden="true" />
+              <!-- Phase 24 (V1-065, V1-144): what leaves this Mac, and what protects it, said plainly. -->
+              <p>
+                Your conversations and memories are stored on this Mac. A model
+                on this Mac answers here; a cloud model such as ChatGPT receives
+                each request, with the recent conversation and the memories
+                Pebble recalls for it. Web tools fetch public pages. Permissions
+                and your approvals decide what Pebble may do; AgentGuard is a
+                reliability check, not a security boundary.
+              </p>
+            </div>
+            <p v-if="state.guard.error" class="guard-error">
+              AgentGuard: {{ state.guard.error }}
+            </p>
+            <p class="setting-note">
+              Data: {{ state.data_dir || "Available in the desktop app" }}
+            </p>
+            <!-- Phase 45 (F099, audit round R3): Settings held "Delete this conversation", which acted on whatever
+                 conversation was behind the dialog; each conversation's own row in the sidebar has Delete. -->
+          </div>
+          <div v-if="settingsTab === 'privacy'" class="settings-section">
+            <div class="section-label">USAGE TELEMETRY</div>
+            <TelemetrySettings :choose-destination="chooseTelemetryDestination" />
+          </div>
+          <div v-if="settingsTab === 'appearance'" class="settings-section">
             <div id="appearance-label" class="section-label">APPEARANCE</div>
             <!-- Phase 24 (V1-041): the theme is a set of pressed buttons; every switch is a role="switch" with
                  aria-checked, and its drawn toggle is hidden from assistive technology. -->
@@ -2876,20 +3636,38 @@ onUnmounted(() => {
                 :class="{ on: state.settings.reduced_motion }"
               />
             </button>
+            <button type="button" class="setting-row" role="switch" :aria-checked="workView ? 'true' : 'false'" @click="toggleWorkView">
+              <div>
+                <strong>Work view</strong
+                ><small>Show what Pebble is doing as cards, not rows of text</small>
+              </div>
+              <span class="toggle" aria-hidden="true" :class="{ on: workView }" />
+            </button>
+            <label class="setting-row">
+              <div>
+                <strong>Visual answers</strong
+                ><small>{{ visualAnswers === "auto" ? "Charts and diagrams when you ask, and when a request suits one (slower and costs more)" : "Charts and diagrams when you ask for one" }}. Tables and diagrams in a reply are always drawn.</small>
+              </div>
+              <select :value="visualAnswers" aria-label="Visual answers" @change="changeVisualAnswers(($event.target as HTMLSelectElement).value)">
+                <option value="ask">When I ask</option>
+                <option value="auto">Also when they help</option>
+              </select>
+            </label>
             <!-- Phase 19 companion switches: presentation only; reduced motion still wins over pointer and reactions. -->
-            <button type="button" class="setting-row" role="switch" :aria-checked="companionSettings.pointer ? 'true' : 'false'" @click="changeCompanion({ pointer: !companionSettings.pointer })">
+            <!-- Phase 45 (F039): Reduce motion wins, so these two read off and wait while it is on. -->
+            <button type="button" class="setting-row" role="switch" :disabled="state.settings.reduced_motion" :aria-checked="companionSettings.pointer && !state.settings.reduced_motion ? 'true' : 'false'" @click="changeCompanion({ pointer: !companionSettings.pointer })">
               <div>
                 <strong>Follow the pointer</strong
-                ><small>The companion's eyes track your pointer; off while motion is reduced</small>
+                ><small>{{ state.settings.reduced_motion ? "Off while Reduce motion is on" : "The companion's eyes track your pointer" }}</small>
               </div>
-              <span class="toggle" aria-hidden="true" :class="{ on: companionSettings.pointer }" />
+              <span class="toggle" aria-hidden="true" :class="{ on: companionSettings.pointer && !state.settings.reduced_motion }" />
             </button>
-            <button type="button" class="setting-row" role="switch" :aria-checked="companionSettings.reactions ? 'true' : 'false'" @click="changeCompanion({ reactions: !companionSettings.reactions })">
+            <button type="button" class="setting-row" role="switch" :disabled="state.settings.reduced_motion" :aria-checked="companionSettings.reactions && !state.settings.reduced_motion ? 'true' : 'false'" @click="changeCompanion({ reactions: !companionSettings.reactions })">
               <div>
                 <strong>Expressive reactions</strong
-                ><small>Celebrations, taps and drowsiness; task states always show</small>
+                ><small>{{ state.settings.reduced_motion ? "Off while Reduce motion is on; task states always show" : "Celebrations, taps and drowsiness; task states always show" }}</small>
               </div>
-              <span class="toggle" aria-hidden="true" :class="{ on: companionSettings.reactions }" />
+              <span class="toggle" aria-hidden="true" :class="{ on: companionSettings.reactions && !state.settings.reduced_motion }" />
             </button>
             <label class="setting-row">
               <div>
@@ -2914,7 +3692,11 @@ onUnmounted(() => {
               <span class="toggle" aria-hidden="true" :class="{ on: companionSettings.ui_guidance }" />
             </button>
           </div>
-          <div class="settings-section">
+          <div v-if="settingsTab === 'general'" class="settings-section">
+            <div class="section-label">STARTUP AND NOTIFICATIONS</div>
+            <NotificationSettings />
+          </div>
+          <div v-if="settingsTab === 'general'" id="settings-keyboard" class="settings-section" tabindex="-1" aria-label="Keyboard shortcuts">
             <div class="section-label">KEYBOARD</div>
             <table class="shortcut-table">
               <caption class="setting-note">Keys marked Any app work from other apps; the rest work in Pebble's windows.</caption>
@@ -2927,53 +3709,23 @@ onUnmounted(() => {
               </tbody>
             </table>
           </div>
-          <div class="settings-section">
-            <div class="section-label">PRIVACY & CONTROL</div>
-            <div class="privacy-row">
-              <PhShieldCheck :size="19" aria-hidden="true" />
-              <!-- Phase 24 (V1-065, V1-144): what leaves this Mac, and what protects it, said plainly. -->
-              <p>
-                Your conversations and memories are stored on this Mac. A model
-                on this Mac answers here; a cloud model such as ChatGPT receives
-                each request, with the recent conversation and the memories
-                Pebble recalls for it. Web tools fetch public pages. Permissions
-                and your approvals decide what Pebble may do; AgentGuard is a
-                reliability check, not a security boundary.
-              </p>
-            </div>
-            <p v-if="state.guard.error" class="guard-error">
-              AgentGuard: {{ state.guard.error }}
-            </p>
-            <p class="setting-note">
-              Data: {{ state.data_dir || "Available in the desktop app" }}
-            </p>
-            <button
-              v-if="chat?.messages.length"
-              class="text-button danger"
-              :disabled="isWorking"
-              @click="chat && deleteFromSidebar(chat.id)"
-            >
-              <PhTrash :size="14" />Delete this conversation
-            </button>
-          </div>
-          <div class="about-pebble">
+          <div v-if="settingsTab === 'general'" class="about-pebble">
             <Avatar :size="38" :reduced="true" :stealth="!!state.settings.stealth" />
             <div>
               <strong>Pebble <span v-if="state.version">{{ state.version }}</span></strong
-              ><small
-                >Avatar engine: Jérémy Perret / bloub (MIT). Reliability:
-                AgentGuard (Apache 2.0).</small
-              >
+              ><small>Reliability: AgentGuard (Apache 2.0).</small>
             </div>
+            <!-- 2.0.0 (D222): the avatar engine's credit, in smaller type in the panel's corner. -->
+            <small class="about-credit">Avatar engine: bloub by Jérémy Perret (MIT)</small>
           </div>
           <!-- Phase 24 (V1-135): release notes in the app, an excerpt of CHANGELOG.md bundled with this build. -->
-          <details class="whats-new">
-            <summary>What's new</summary>
+          <details v-if="settingsTab === 'general'" class="whats-new">
+            <summary>What's new in {{ WHATS_NEW_VERSION }}</summary>
             <ul>
               <li v-for="line in WHATS_NEW" :key="line">{{ line }}</li>
             </ul>
           </details>
-        </template>
+        </div>
         <template v-else-if="modal === 'terminal'"
           ><p class="modal-subtitle">
             Run one command in {{ projectName || "a connected project" }}.
@@ -2993,8 +3745,8 @@ onUnmounted(() => {
             >
             <p class="setting-note">
               Pipes, redirections, privileged commands and credential access are
-              blocked. Commands run for up to 60 seconds inside a macOS sandbox.
-              Windows execution is not yet available.
+              blocked. Commands run for up to 60 seconds inside a macOS sandbox,
+              and the output appears in the conversation.
             </p>
             <button
               class="primary-button"
@@ -3007,7 +3759,7 @@ onUnmounted(() => {
           </form>
           <button
             v-if="!chat?.workspace"
-            class="secondary-button"
+            class="secondary-button connect-project"
             @click="chooseProject"
           >
             Connect a project

@@ -16,7 +16,9 @@ from pebble.recovery import ProviderFailure
 from pebble.run_activity import KINDS, ActivityFeed
 from test_reasoning_summary_22 import answer, env, failing, no_network, settle, tool  # noqa: F401 (fixtures)
 
-CONTRACT = {'run_id', 'state', 'started', 'elapsed', 'items', 'reasoning', 'usage', 'next'}
+# Phase 46 (1.9.29, w24-genui-a): the reply adds the work view's `header` and `summary`, and an item may carry its
+# `view`; both are checked against pebble-ui-spec v1 below (test_work_view_46 holds the views themselves)
+CONTRACT = {'run_id', 'state', 'started', 'elapsed', 'items', 'reasoning', 'usage', 'next', 'header', 'summary'}
 ITEM = {'seq', 'at', 'kind', 'label', 'detail', 'duration', 'status'}
 MODEL_ITEM = ITEM | {'headers_ms', 'first_event_ms'}  # model items also carry the attempt's time to headers and first event
 
@@ -32,10 +34,14 @@ def well_formed(view):
     assert type(view['next']) is int
     seqs = [i['seq'] for i in view['items']]
     assert seqs == sorted(set(seqs))
+    from test_work_view_46 import conforms  # Phase 46 (1.9.29): the reply and every view, against the spec
+    conforms(view)
+    unsettled = ('queued', 'running', 'retry_wait', 'waiting_approval', 'waiting_input')
+    assert view['summary'] is None if view['state'] in unsettled else isinstance(view['summary'], dict)
     for item in view['items']:
-        assert set(item) == (MODEL_ITEM if item['kind'] == 'model' else ITEM), item
+        assert set(item) - {'view'} == (MODEL_ITEM if item['kind'] == 'model' else ITEM), item
         assert type(item['seq']) is int and type(item['at']) is float and item['at'] >= 0
-        for field in set(item) - ITEM:
+        for field in set(item) - ITEM - {'view'}:
             assert item[field] is None or type(item[field]) is int and item[field] >= 0
         assert item['kind'] in KINDS and item['status'] in ('running', 'done', 'failed')
         assert isinstance(item['label'], str) and 0 < len(item['label']) <= 80 and '\n' not in item['label']
@@ -80,12 +86,15 @@ def test_a_tool_run_reads_as_context_model_tool_model_check_and_matches_its_live
     view = well_formed(activity(app, rid))
     run = app.runs.get(rid)
     assert view['state'] == 'completed' and view['started'] == run['created'] and view['usage'] is None
+    # Phase 46 (runner.PREFETCH): above 8K the host reads calc.py (the request names it) before the first model
+    # request, shown as its own tool item; the model's own Read follows as before
     assert [(i['kind'], i['status']) for i in view['items']] == [
-        ('context', 'done'), ('model', 'done'), ('tool', 'done'), ('model', 'done'), ('check', 'done')]
-    context, first, read, second, check = view['items']
+        ('context', 'done'), ('tool', 'done'), ('model', 'done'), ('tool', 'done'), ('model', 'done'), ('check', 'done')]
+    context, prefetched, first, read, second, check = view['items']
     assert context['label'] in ('Context ready',) or context['label'].startswith('Recalled ')
     assert context['detail'].startswith('Context ready in ') and context['detail'].endswith(' ms')
     assert first['label'] == 'The model responded' and second['label'] == 'The model responded'
+    assert prefetched['label'] == 'Reading calc.py' and prefetched['seq'] < first['seq']
     assert read['label'] == 'Reading calc.py' and read['duration'] is not None
     assert check['label'] == 'Checked the reply'
     # Stable: the same items on every read, and the live events ended on exactly these items.
@@ -94,7 +103,7 @@ def test_a_tool_run_reads_as_context_model_tool_model_check_and_matches_its_live
     assert {seq: live[seq] for seq in live} == {i['seq']: i for i in view['items']}
     # The cursor: nothing after the last item, and the cursor stays put.
     assert activity(app, rid, view['next'])['items'] == [] and activity(app, rid, view['next'])['next'] == view['next']
-    assert [i['seq'] for i in activity(app, rid, first['seq'])['items']] == [i['seq'] for i in view['items'][2:]]
+    assert [i['seq'] for i in activity(app, rid, first['seq'])['items']] == [i['seq'] for i in view['items'][3:]]
 
 
 def test_recalled_memories_are_counted_with_the_context_time(env):
@@ -135,7 +144,7 @@ def test_an_approval_waits_then_reads_as_decided_and_no_held_text_or_prompt_appe
     settle(app, rid, 'completed')
     decided = well_formed(activity(app, rid))
     [approval] = [i for i in decided['items'] if i['kind'] == 'approval']
-    assert approval['label'] == 'Approved: Drafting notes.md' and approval['status'] == 'done'
+    assert approval['label'] == 'Approved by you: Drafting notes.md' and approval['status'] == 'done'  # F231
     assert approval['duration'] is not None
     assert 'HELD-DRAFT-TEXT' not in json.dumps(decided) and 'PRIVATE-CONTENT' not in json.dumps(decided)
 
@@ -158,6 +167,8 @@ def test_a_transient_failure_reads_as_a_retry_item(env):
     assert retry['duration'] is not None and retry['duration'] <= 8
     assert [i['label'] for i in view['items'] if i['kind'] == 'model'] == ['The model request failed',
                                                                             'The model responded (attempt 2)']
+    # Phase 45 (F247, audit round R11): the failed attempt Pebble tried again says so, without internal timings
+    assert [i['detail'] for i in view['items'] if i['kind'] == 'model'][0] == 'Pebble tried again, and the task went on.'
 
 
 def test_children_read_from_their_agent_nodes(env):
@@ -285,3 +296,15 @@ def test_the_feed_never_raises_into_a_run_when_publishing_fails():
     feed.reasoning('chat', 'run', 1, 1, 'text', live=False)
     feed.settle('run', 1, 1, 'committed')
     assert feed.text('run') == ''  # held text is never part of the readable summary
+
+
+def test_publish_never_raises_even_when_the_work_views_or_bookkeeping_fail(monkeypatch):
+    # the lead, 1.9.29: the runner calls publish at every step unguarded, so every part of it is display only
+    feed = ActivityFeed(store=None, runs=None, emit=lambda *a: None)
+    monkeypatch.setattr(feed, 'items', lambda rid, views=False: (None, [{'seq': 1, 'label': 'x', 'detail': '',
+                                                                           'status': 'done', 'duration': 0}], None))
+    monkeypatch.setattr(feed._views, 'digests', lambda rid: (_ for _ in ()).throw(RuntimeError('views failed')))
+    feed.publish('chat', 'run')  # nothing raised
+    monkeypatch.setattr(feed._views, 'digests', lambda rid: {})
+    monkeypatch.setattr(feed, '_sent', None)  # broken bookkeeping
+    feed.publish('chat', 'run')  # still nothing raised

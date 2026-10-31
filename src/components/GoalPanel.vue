@@ -371,7 +371,9 @@ onUnmounted(() => (alive = false));
 .goal-form fieldset { display: flex; gap: 6px; border: 0; padding: 0; margin: 0; flex-wrap: wrap; }
 .goal-form legend { float: left; font-size: 12px; margin-right: 6px; }
 .goal-check { gap: 3px !important; }
-.goal-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+.goal-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; display: block; overflow-x: auto; }
+/* Phase 45 (F109, audit round R3): as F020 did for the memory tables, headers keep their words */
+.goal-table th { overflow-wrap: normal; word-break: normal; white-space: nowrap; }
 .goal-table caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
 .goal-table th, .goal-table td { text-align: left; vertical-align: top; padding: 5px 6px; border-bottom: 1px solid var(--border, #b9b9b9); overflow-wrap: anywhere; }
 .goal-table th { font-weight: 500; color: var(--muted); }

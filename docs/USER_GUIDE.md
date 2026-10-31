@@ -89,14 +89,43 @@ and you can review and release them yourself.
 | Mode | Runs without asking | Always asks |
 | --- | --- | --- |
 | **Ask for approval** (the default) | Nothing that changes your project or your Mac. | Every edit, test run, terminal command, app launch, Git change and connector call. |
-| **Auto in project** | Edits to project files, test runs, and a short list of read-only commands (ls, cat, rg, head, tail, wc and a few more) in this project. | Changes to test files your request didn't ask for, other terminal commands (including grep and builds), app launches, Git changes, connector calls, installs, and network or dangerous commands. |
-| **Full access** | Everything Auto runs, plus app launches and Git changes that neither delete work nor publish it. | Other terminal commands (including grep and builds), connector calls, installs, presses in a Chrome tab, network or dangerous commands, and Git changes that delete work or publish it. |
+| **Auto in project** | Edits to project files, test runs, read-only commands (ls, cat, rg and a few more), commands that stay in this project without network (Pebble copies the project first), and Git steps it can undo. | Changes to test files your request didn't ask for, commands with network, installs or paths outside the project, Git pushes, deletions and history rewrites, app launches and connector calls. |
+| **Full access** | Commands that only read or make new files, and each step your messages ask for: commands (including grep and builds), installs, Git, connector calls, app launches, windows, sites, presses. | Spending money and your hooks' reviews. A step you didn't ask for, or a delete, push or send your words don't name, doesn't run; Pebble asks after 3 in a row or 20 in a task. |
 
-In every mode, reading project files, searching and reading the web, and creating views run without asking while their switches below are on. Connector calls, installs and every press in a Chrome tab you granted always ask; looking, typing and choosing in that tab run under your grant. Protected credentials stay blocked.
+In every mode, reading project files, searching and reading the web, and creating views run without asking while their switches below are on, and signing in is yours. In Ask and Auto, connector calls, installs and every press in a Chrome tab you granted always ask; looking, typing and choosing in that tab run under your grant. Protected credentials stay blocked.
 
 Below the modes, a switch for each kind of tool turns it off entirely: Read project files, Edit project files, Run
 isolated tests, Open installed apps, Search and read the web, Use terminal commands, Use connectors you enabled, Create
-interactive views, and Screen control: Chrome tabs you share (off until you turn it on).
+interactive views, Screen control: app windows and Chrome tabs you share (off until you turn it on), and Take
+screenshots when a task needs them.
+
+In a conversation without a project, Pebble can also use your Mac the way you would at a terminal:
+
+- **Commands** run in a sandbox. They can read your home folder, write only in the `Pebble Workbench` folder in your
+  home folder, and have no network. Pebble asks before a command writes anywhere else or reaches a website, naming the
+  folder or the site; "Always allow" keeps that folder or site allowed, and Settings › Permissions lists them with
+  Remove. Deleting or moving anything outside the workbench is asked about every time.
+- **Protected places** are never read or written, whatever you allow: keys and passwords, browser data, Messages, Mail,
+  Pebble's own data, other assistants' sign-ins and your shell history.
+- **Screenshots**: macOS asks you once to allow Pebble in System Settings › Privacy & Security › Screen & System Audio
+  Recording. After that Pebble takes one when your request needs it, and every screenshot appears in the chat.
+- **Undo**: before a command or a file write changes something, Pebble keeps a copy, and the change's card has "Undo this
+  change".
+- After three refused actions in a row, Pebble stops and asks you how to go on.
+- **App windows**: with Screen control on, Pebble can ask to use one window of an app that is open, for the current
+  task. The request names the app and the window, says why, and lists what Pebble could do: look around, fill in
+  (choose, tick and type, never into a password, code or card field) and, if asked for, press buttons. Nothing happens
+  until you choose Allow. Every press, and anything that sends, submits, saves, deletes or buys, still waits for your
+  approval, showing what Pebble would press; it is never retried. At a sign-in, a code or a check Pebble stops and
+  it's your turn. macOS asks once: allow Pebble in System Settings › Privacy & Security › Accessibility (**Windows
+  Pebble can use** has **Ask macOS for Accessibility…**). You can also share a window yourself there, and end access
+  at any time. Pebble never operates terminals, System Settings, Keychain Access, password managers, apps that run
+  code or erase disks, or itself. A window that is minimized or on another desktop has to be brought back first.
+
+**Pebble's Toolbox.** While it works, Pebble can make a small tested calculation for itself and use it at once. It keeps
+one on its own only when it passed every check, helped with your task and passed an independent check; then a card in
+the conversation tells you, with View code and Remove. Any other keep asks you first. Settings › Skills & connectors
+lists what is kept.
 
 Good to know:
 
@@ -301,8 +330,8 @@ The details, what is safe to delete, and how to remove everything: [Where Pebble
 
 ## What Pebble does not do
 
-- It does not control your whole Mac: it acts only through its tools, in the folders and Chrome tabs you grant. It cannot
-  see or operate other apps' windows yet; it can open an app when you approve.
+- It does not control your whole Mac: it acts only through its tools, in the folders, app windows and Chrome tabs you
+  grant, one window at a time. It does not move the pointer or press keys across your screen.
 - It does not run on Windows or Linux, check for updates by itself, or come notarized by Apple.
 - It cannot guarantee correct answers. Models make mistakes, and AgentGuard checks evidence such as test runs, not
   truth.

@@ -167,8 +167,9 @@ def test_each_run_sets_its_prompt_cache_key_and_clears_it(tmp_path):
     try:
         chat = app.new_chat()
         runner.run(app, app.chat(chat['id']), 'Say hello.', False, [])
-        rid = app.runs.list(chat['id'])[0]['id']
-        assert keys == [rid] and app.model.prompt_cache_key is None
+        # Phase 46: the conversation's id (each run sets it and clears it after), so follow-up turns share the cache
+        # route and the socket pool's connection, as Codex keys its thread
+        assert keys == [chat['id']] and app.model.prompt_cache_key is None
     finally:
         app.active = app.active_run = None
         app.close()

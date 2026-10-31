@@ -69,10 +69,21 @@ SUITES = {
     'phase35': 'validate_phase35.py',  # 1.3.0: requests above 8K extend each other; parallel tool calls (Phase 35)
     'phase36': 'validate_phase36.py',  # 1.4.0: a long task's older results sealed in chunks, read back exactly (Phase 36)
     'phase37': 'validate_phase37.py',  # 1.5.0: Pebble's Workshop part 1, Code Mode; the Stealth full-screen fix (Phase 37)
+    'phase38': 'validate_phase38.py',  # 1.5.1: the floating companion over full-screen apps; the workspace in its own Space (Phase 38)
+    'phase39': 'validate_phase39.py',  # 1.5.2: the companion and Stealth Lockdown's windows, as measured on a real Mac (Phase 39)
+    'phase40': 'validate_phase40.py',  # 1.6.0: the all-rounder core, the Companion's sandboxed general tools (Phase 40)
+    'phase41': 'validate_phase41.py',  # 1.7.0: Pebble's Workshop part 2, agent-made tools and Pebble's Toolbox (Phase 41)
+    'phase42': 'validate_phase42.py',  # 1.8.0: app control, the real AX backend and ScreenRequest (Phase 42)
+    # Phase 47 (2.0.0, D219): the first trial since D87 stopped them; phase43 (written for 1.9.0, run by every impact
+    # run since) joins the campaign with the release's own validator.
+    'phase43': 'validate_phase43.py',  # 1.9.0: browser control and computer use, M1 routes and contracts (Phase 43)
+    'phase47': 'validate_phase47.py',  # 2.0.0: the version and the notes' registered results (Phase 47)
+    'phase48': 'validate_phase48.py',  # 2.0.0: About's credit and the iPhone app's wording (Phase 48, D222)
 }
 PHASES = ('phase10', 'phase11', 'phase12', 'phase13', 'phase14', 'phase15', 'phase16', 'phase17', 'phase18', 'phase19',
           'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29',
-          'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37')
+          'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37',
+          'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48')
 # Historical suites that can no longer pass, kept unchanged as historical evidence, with the phase from
 # which they leave the default campaign and the reason. Each stays runnable with --suite.
 # Phase 32 (T4): suites that measure time or the machine, run alone after the pooled ones under --jobs N.
@@ -118,10 +129,11 @@ def sources():
     # scripts/fixtures data (Phase 17): validators read and report these inputs, so the snapshot binds them too.
     # Phase 22: Pebble for Chrome (shipped in the bundle by build_candidate_app.py) and the vault helper's C source.
     # Phase 27: the benchmark harness (benchmarks/), whose Claude Code driver validate_phase27 reads.
+    # Phase 45 (layer 4): and the screen helper's Swift source (scripts/build_screen_helper.py pins its build).
     for directory, suffixes in [('backend', {'.py'}), ('src', {'.vue', '.ts', '.mts', '.mjs', '.css'}), ('scripts', {'.py'}),
                                 ('scripts/fixtures', {'.json', '.md'}), ('benchmarks', {'.py'}),
                                 ('browser-extension', {'.js', '.mjs', '.json', '.html', '.css', '.svg', '.png'}),
-                                ('src-tauri/helpers', {'.c', '.h'})]:
+                                ('src-tauri/helpers', {'.c', '.h', '.swift'})]:
         names.update(path.relative_to(ROOT).as_posix() for path in (ROOT / directory).rglob('*')
                      if path.is_file() and not path.is_symlink() and path.suffix in suffixes)
     names.update(['backend/requirements.txt', 'package.json', 'package-lock.json', 'src-tauri/src/main.rs',
@@ -146,6 +158,9 @@ def sources():
     # Phase 22 (k22-identity): the pinned vault helper and its manifest, once scripts/build_vault_helper.py made them.
     names.update(rel for rel in ('src-tauri/resources/helpers/pebble-vault', 'src-tauri/resources/helpers/pebble-vault.json')
                  if (ROOT / rel).is_file())
+    # Phase 45 (layer 4): the pinned screen helper and its manifest, once scripts/build_screen_helper.py made them.
+    names.update(rel for rel in ('src-tauri/resources/helpers/pebble-screen-helper',
+                                 'src-tauri/resources/helpers/pebble-screen-helper.json') if (ROOT / rel).is_file())
     # Phase 24 (t24-validator): inputs validate_phase24 reads that no rule above covers: the golden 4K/8K request
     # fixture (four_k_requests_unchanged), the generated third-party notices and t24-publish's installer and allowlist.
     names.update(rel for rel in ('backend/tests/fixtures/phase24/agent_golden_requests.json',

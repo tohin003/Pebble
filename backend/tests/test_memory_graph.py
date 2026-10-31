@@ -138,7 +138,9 @@ def test_cross_file_contradiction_contests_both_and_recall_withholds_them(app, t
     assert readme['learning_status'] == config['learning_status'] == 'contested'
     edges = [e for e in app.learning.relations(readme['id']) if e['relation'] == 'contradicts']
     assert len(edges) == 1 and {edges[0]['from_id'], edges[0]['to_id']} == {readme['id'], config['id']}
-    assert '8080' not in json.dumps(edges) and '3000' not in json.dumps(edges)  # evidence is content-free
+    # evidence is content-free; the float timestamps are left out (1793380809.628 holds "8080": the lead, 1.9.29)
+    shown = json.dumps([{k: v for k, v in edge.items() if k != 'created'} for edge in edges])
+    assert '8080' not in shown and '3000' not in shown
     recalled = app.memory.retrieve('Which port does the service use? 8080 3000', chat['id'], str(root))
     assert not ids(recalled) & {readme['id'], config['id']}
     assert app.learning.withheld([readme['id'], config['id']]) == {readme['id']: 'contested', config['id']: 'contested'}

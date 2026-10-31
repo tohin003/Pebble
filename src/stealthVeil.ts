@@ -12,7 +12,7 @@
 // The honest line (D47): shown under the switch, in the README, the User Guide and the CHANGELOG, word for word.
 export const STEALTH_HONEST =
   "Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and interviews that forbid assistants still forbid it.";
-export const STEALTH_ON_TEXT = "On. Pebble is hidden from screen capture and won't take focus. Find it in the menu bar.";
+export const STEALTH_ON_TEXT = "On. Pebble is hidden from screen capture. Find it in the menu bar.";
 export const STEALTH_OFF_TEXT = "Off. Pebble shows in screen shares, the Dock and ⌘Tab as usual.";
 
 export const ACTIVATE = 1.25;

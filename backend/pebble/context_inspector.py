@@ -51,7 +51,9 @@ from .token_budget import TokenBudget
 ROUTES = ('context_inspect', 'context_compact')
 RECEIPT_EVENT = 'context_compact_receipt'
 CATEGORIES = ('system', 'tool_schemas', 'memory', 'project_host', 'conversation', 'tool_results', 'framing')
-PARTS = {'project_host': ('evidence', 'plan_goal', 'inbox', 'skills_plugins', 'sources', 'host_notes'),
+# Phase 45 (audit round R6): a screenshot of a window or the screen (the newest one) is its own part, so the person
+# can see that Pebble looked by picture
+PARTS = {'project_host': ('evidence', 'plan_goal', 'inbox', 'skills_plugins', 'sources', 'host_notes', 'screenshots'),
          'conversation': ('request', 'constraints', 'history', 'model_turns')}
 # Host markers in context_manifest's precedence order (a message with several takes the first), as (category, part).
 MARKERS = (
@@ -119,6 +121,8 @@ def classify(message, before_request):
         return 'system', 'system'
     if role == 'tool':
         return 'tool_results', 'tool_results'
+    if message.get('name') == 'pebble_screenshot':
+        return 'project_host', 'screenshots'
     if before_request:
         return 'conversation', 'history'  # earlier turns, replayed from the conversation
     # After the request, unmarked user messages are host notes (resume, completion and workflow checks); the
@@ -246,6 +250,19 @@ def at_boundary(snapshot):
         return True
     return (snapshot.get('phase') == 'tools' and bool(messages) and isinstance(messages[-1], dict)
             and messages[-1].get('role') == 'assistant' and not messages[-1].get('tool_calls'))
+
+
+def screenshots_sent(store, run_id):
+    """Phase 45 (F213, audit round R8): how many pictures of windows this task sent to the model (the journal's
+    'screenshot_sent' counts; the pictures themselves are never kept)."""
+    total = 0
+    for row in store.query("SELECT payload FROM run_events WHERE run_id=? AND kind='screenshot_sent'", (run_id,)):
+        try:
+            images = json.loads(row['payload']).get('images')
+        except (TypeError, ValueError, AttributeError):
+            continue
+        total += images if type(images) is int and images > 0 else 0
+    return total
 
 
 def route_budget(run):
@@ -419,6 +436,7 @@ class ContextInspector:
                 'live': bool(app.active == chat_id and app.active_run == rid) or run['state'] in LIVE,
                 **composition, 'window': window, 'tools_basis': tools_basis, 'tools_unidentified': unidentified,
                 'recorded': recorded, 'since_last_request': since, 'compactions': archives,
+                'screenshots_sent': screenshots_sent(app.store, rid),  # Phase 45 (F213)
                 'compact': {'available': reason is None, 'reason': reason},
                 'omissions': sorted(set(omissions)), 'authorization': 'none', 'inference': 'none'}
 

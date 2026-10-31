@@ -75,14 +75,25 @@ def edit(path, **changes):
 
 def test_the_inventory_covers_every_person_setting_with_the_apps_validators():
     assert settings_file.KEYS == ('theme', 'reduced_motion', 'memory_enabled', 'memory_layers', 'permissions',
-                                  'companion', 'notifications', 'stealth', 'storage')  # Phase 33: stealth
+                                  'companion', 'notifications', 'stealth', 'storage',
+                                  'fast_replies',  # Phase 33: stealth; Phase 46 (D166): OpenAI's Fast tier
+                                  'git_decisions',  # Phase 46 (D159): the Git actions that are the person's decision
+                                  # Phase 46 (1.9.29, D206): the work view's cards or rows; a new person-facing switch,
+                                  # so the inventory grows by it (presentation only: widening() gives it no reasons)
+                                  'work_view',
+                                  # Phase 46 (1.9.29, D195, w25-genui-b): "Visual answers", what the model is offered
+                                  # (never access: widening() gives it no reasons); "ask" by default (D216/D217)
+                                  'visual_answers')
+    assert settings_file.default('work_view') is True and settings_file.widening('work_view', False, True) == []
+    assert settings_file.default('visual_answers') == 'ask' and settings_file.widening('visual_answers', 'ask', 'auto') == []
     for key in settings_file.KEYS:
         assert settings_file.validate(key, settings_file.default(key)) == settings_file.default(key)
     schema = settings_file.schema()
     assert set(settings_file.KEYS) <= set(schema['properties']) and schema['additionalProperties'] is True
     for key, bad in (('theme', 'purple'), ('reduced_motion', 'yes'), ('stealth', 'yes'), ('permissions', {'mode': 'god', 'tools': {}}),
                      ('memory_layers', {'working': True}), ('storage', {'documents_mirror': True}),
-                     ('notifications', {}), ('companion', {'pointer': 1})):
+                     ('notifications', {}), ('companion', {'pointer': 1}), ('fast_replies', 'turbo'),
+                     ('visual_answers', 'always')):
         with pytest.raises(ValueError):
             settings_file.validate(key, bad)
 

@@ -63,6 +63,26 @@ pending    (Phase 24, V1-007) a grant made while no task can use it is a pending
            session for the conversation's next run (grant_chrome_session with run_id
            None); the extension learns it at once, with the same expiry.
 
+protocol 2 (Phase 43, 1.9.0, Pebble for Chrome 2) The hello names 'pebble-browser/2'; an
+           authenticated hello for another version gets a status frame saying which side to
+           reload or update (UPGRADE_OLDER, UPGRADE_NEWER) instead of a link, and status() keeps
+           the last mismatch for the main window. Pairing keeps its own label (PAIRING_LABEL),
+           so every pairing key and test vector is unchanged. The hello's extension facts name
+           the browser (BROWSER_FOLDERS' ids, or 'unknown'); the first sealed message on a
+           paired link proves a live handshake, kept per browser for Connect a browser.
+site grants (Phase 43, decision 3) One per task: the run, a lifetime, the act sites and the
+           read sites (exact origins; every act site is also a read site), made by the
+           main-window route after the person's review (grant_sites). The extension holds the
+           same grant as a second fence. Under it Pebble opens its own tabs at read sites,
+           inside its tab group (open_tab), moves them only between read sites (navigate_owned)
+           and closes them (close_owned); a tab is Pebble's only by the ID the extension created.
+           Page commands for an owned tab need its grant alive, and anything that changes the
+           page needs the tab on an act site (READ_ONLY_FUNCTIONS look without changing). A read
+           site joins only through add_read_origin, whose caller (the host's provenance rule)
+           gives the reason; act sites only ever come from the person. Site grants end with the
+           link, at their expiry, on end_site_grant and on Stop; their tabs stay open as the
+           person's own.
+
 Page text stays untrusted data (ScreenSessions labels every observation; a screenshot
 part says so too), and nothing here is a model tool: ScreenObserve and ScreenAct reach a
 Chrome tab only through a session the person granted in the main window.
@@ -96,7 +116,9 @@ from .policy import PolicyError
 from .screen_session import LIVE, ScreenRefused
 
 
-PROTOCOL = 'pebble-browser/1'
+PROTOCOL = 'pebble-browser/2'
+PROTOCOL_PATTERN = re.compile(r'pebble-browser/([1-9][0-9]{0,2})')  # every version Pebble for Chrome ever spoke
+PAIRING_LABEL = 'pebble-browser/1'  # the pairing code's derivation label (lib/crypto.mjs); never the link protocol
 HOST_NAME = 'com.pebble.browser'
 # The extension's public key is derived from this seed (derive_public_key); no private key exists anywhere.
 KEY_SEED = b'pebble-browser-extension/1'
@@ -130,7 +152,14 @@ HEX32 = re.compile(r'[0-9a-f]{32}')
 HEX64 = re.compile(r'[0-9a-f]{64}')
 ERROR_CODES = ('closed', 'timeout', 'protocol', 'refused', 'not_shared', 'not_granted', 'away', 'handback',
                'stopped', 'paused', 'rate_limited', 'detached', 'cdp_error', 'unsupported', 'invalid', 'too_large',
-               'expired')
+               'expired', 'read_only', 'limit')
+# Phase 43: every request this side makes of the extension (lib/policy.mjs OPS, pinned equal by a test).
+OPS = frozenset({'attach', 'tab_info', 'activate', 'navigate', 'detach', 'cdp', 'create_tab', 'close_tab',
+                 'list_owned'})
+MAX_SITE_GRANTS = 8
+MAX_SITE_ORIGINS = 16            # act and read sites together, per grant (lib/owned.mjs MAX_ORIGINS)
+MAX_OWNED = 16
+MAX_READ_REASON = 200
 SNAPSHOT_RATE = (60, 10.0)       # bucket size, refill per second: readback polls (5 a second) never drain it alone
 MAX_SCREENSHOT = 8_000_000       # bytes of PNG sent to a model, as images.parse_image bounds an attachment
 # Every page command BrowserAdapter sends; the extension's lib/policy.mjs METHODS is pinned equal by a test.
@@ -144,7 +173,13 @@ PAGE_METHODS = frozenset({
     'Fetch.continueRequest', 'Fetch.failRequest'})
 # Commands that only let go of something an earlier command held; they never need a live grant.
 RELEASES = frozenset({'Fetch.continueRequest', 'Fetch.failRequest', 'Fetch.disable', 'Runtime.releaseObjectGroup'})
-ISOLATED = frozenset({bs.CONTAINS_JS, bs.SELECT_ALL_JS, bs.CHOOSE_JS, bs.OPTION_JS, bs.DETAILS_JS, bs.FOCUSED_JS})
+ISOLATED = frozenset({bs.CONTAINS_JS, bs.SELECT_ALL_JS, bs.CHOOSE_JS, bs.OPTION_JS, bs.DETAILS_JS, bs.FOCUSED_JS,
+                      bs.CLICK_JS})  # Phase 44: a hidden tab's press
+# Phase 43: what changes a page (lib/policy.mjs EFFECTS), and the two isolated functions that only look; on a site a
+# grant lets Pebble read but not act on, only methods outside EFFECTS and those two functions pass.
+EFFECT_METHODS = frozenset({'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'DOM.focus',
+                            'DOM.scrollIntoViewIfNeeded', 'Runtime.callFunctionOn'})
+READ_ONLY_FUNCTIONS = frozenset({bs.CONTAINS_JS, bs.FOCUSED_JS})
 # Sign-in, password, payment and verification pages, by address. The page's own fields (password,
 # one-time-code and card autocomplete) are caught by the element facts; these catch the page before any read.
 # The extension's lib/credential.mjs holds the same lists (pinned by test_browser_bridge_22.py).
@@ -179,9 +214,26 @@ ADDRESS_ONLY = 'Type an address into the Address field to go there; nothing else
 OFF_SITE = ("That address is on another site, so Pebble does not open it in this tab. It's the person's call: ask "
             'them to open it, or to share a tab on that site.')
 CREDENTIAL_ADDRESS = "That is a sign-in or payment address, so it's the person's turn: ask them to open it."
+# Phase 44 (1.9.1, D117): Comet refuses the extension's debugger on every site ('Host access is restricted by policy.',
+# measured); Chrome's own ExtensionSettings policy has its own words. Either means no page reads in this browser.
+POLICY_BLOCK = re.compile(r'restricted by policy|cannot be scripted due to an ExtensionsSettings policy', re.I)
+DEBUGGER_POLICY = ("This browser keeps extensions out of its pages by its own policy, so Pebble for Chrome cannot read "
+                   "this tab. Ask again with BrowserRequest: Pebble then works in a new window of the browser through "
+                   "Accessibility.")
 DESTRUCTIVE_ADDRESS = ("That address looks like it would delete, send, buy or sign out. Press the page's own link "
                        'instead, so it goes to the person for review.')
 BAD_ADDRESS = 'Type a full address on the shared site, or a path that starts with /.'
+# Phase 43: the answer to an extension that speaks another protocol, and Pebble's own tabs.
+PANEL = 'Details \N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK} Browser'
+UPGRADE_OLDER = ("This copy of Pebble for Chrome is older than Pebble. On your browser's Extensions page press "
+                 f'Reload on Pebble for Chrome, or load the folder Pebble shows in {PANEL} again.')
+UPGRADE_NEWER = ('This copy of Pebble for Chrome is newer than Pebble. Update Pebble, or load the extension folder '
+                 f'Pebble shows in {PANEL}.')
+NO_SITE_GRANT = "This task's site grant has ended; ask the person to approve the sites again."
+OFF_GRANT = ("That address is on a site this task may not use, so Pebble does not open it. It's the person's call: ask "
+             'them to add the site.')
+READ_ONLY = 'Pebble may only read this site in this task; acting on it needs the person to add it as a site to act on.'
+NOT_OWNED = 'That tab is not one Pebble opened for this task.'
 
 
 class FrameError(Exception):
@@ -258,7 +310,7 @@ def _mac(key, text):
 
 
 def code_key(code):
-    return hashlib.sha256(f'{PROTOCOL}|pair|{code}'.encode('utf-8')).digest()
+    return hashlib.sha256(f'{PAIRING_LABEL}|pair|{code}'.encode('utf-8')).digest()
 
 
 def pair_proof(code, ext_nonce, link_nonce):
@@ -552,6 +604,8 @@ class ExtensionLink:
         extension = hello.get('extension') if isinstance(hello.get('extension'), dict) else {}
         self.version = ax_worker.clip(extension.get('version'), 32)
         self.chrome = ax_worker.clip(extension.get('chrome'), 64)
+        self.browser = browser_id(extension.get('browser'))  # Phase 43: the browser it names, else 'unknown'
+        self.verified = False                               # Phase 43: a sealed message arrived (a live handshake)
         nonce, pairing = hello.get('nonce'), hello.get('pairing_id')
         self.ext_nonce = nonce if isinstance(nonce, str) and HEX64.fullmatch(nonce) else None
         self.pairing_id = pairing if isinstance(pairing, str) and HEX32.fullmatch(pairing) else None
@@ -725,9 +779,10 @@ class BridgeServer:
     """The per-user socket the native host connects to. Owns the token; adopts each authenticated link."""
 
     def __init__(self, home, *, on_link, peer=peer_uid, uid=None, hello_seconds=HELLO_SECONDS, origin=None,
-                 host_paths=None, peer_path=peer_executable):
+                 host_paths=None, peer_path=peer_executable, on_mismatch=None):
         self.paths = bridge_paths(home)
         self.on_link, self.peer, self.peer_path = on_link, peer, peer_path
+        self.on_mismatch = on_mismatch  # Phase 43: told the protocol of an authenticated hello Pebble does not speak
         self.uid = os.getuid() if uid is None else uid
         self.hello_seconds = float(hello_seconds)
         self.origin = origin or EXTENSION_ORIGIN
@@ -736,6 +791,7 @@ class BridgeServer:
         self.sock = self.token = self.thread = self._wake = None
         self.stopped = True
         self.refused = {'peer': 0, 'path': 0, 'hello': 0, 'busy': 0}
+        self.upgrades = 0  # Phase 43: authenticated hellos in another protocol, answered with an upgrade message
         self.handshakes = threading.BoundedSemaphore(MAX_HANDSHAKES)
 
     @property
@@ -791,7 +847,11 @@ class BridgeServer:
             selector.close()
 
     def _check_hello(self, hello):
-        if not isinstance(hello, dict) or hello.get('type') != 'hello' or hello.get('protocol') != PROTOCOL:
+        """None for a hello this bridge takes; 'upgrade' for an authenticated one in another pebble-browser version
+        (Phase 43: answered with which side to reload or update); else the name of the failed check."""
+        protocol = hello.get('protocol') if isinstance(hello, dict) else None
+        if not isinstance(hello, dict) or hello.get('type') != 'hello' or not isinstance(protocol, str) \
+                or not PROTOCOL_PATTERN.fullmatch(protocol):
             return 'protocol'
         token = hello.get('token')
         if not isinstance(token, str) or not isinstance(self.token, str) \
@@ -804,7 +864,7 @@ class BridgeServer:
             return 'nonce'
         if pairing is not None and (not isinstance(pairing, str) or not HEX32.fullmatch(pairing)):
             return 'pairing'
-        return None
+        return 'upgrade' if protocol != PROTOCOL else None
 
     def _peer_ok(self, conn):
         try:
@@ -836,7 +896,24 @@ class BridgeServer:
                 hello = read_frame(reader.read)
             except (FrameError, OSError):
                 hello = None
-            if self.stopped or self._check_hello(hello):
+            verdict = 'stopped' if self.stopped else self._check_hello(hello)
+            if verdict == 'upgrade':
+                self.upgrades += 1
+                theirs = int(PROTOCOL_PATTERN.fullmatch(hello['protocol']).group(1))
+                ours = int(PROTOCOL_PATTERN.fullmatch(PROTOCOL).group(1))
+                try:
+                    conn.sendall(encode_frame({'type': 'status', 'state': 'upgrade', 'protocol': PROTOCOL,
+                                               'message': UPGRADE_OLDER if theirs < ours else UPGRADE_NEWER}))
+                except OSError:
+                    pass
+                conn.close()
+                if self.on_mismatch is not None:
+                    try:
+                        self.on_mismatch(hello['protocol'], hello)
+                    except Exception:
+                        pass
+                return
+            if verdict:
                 self.refused['hello'] += 1
                 conn.close()
                 return
@@ -912,6 +989,60 @@ def _share(row, now):
             'acting': row.get('acting') is True, 'since': now}
 
 
+def _owned_tab(row, now):
+    """Phase 43: a validated row for one of Pebble's own tabs as the extension reported it (lib/owned.mjs
+    forBackend), or None. An address or title off the grant's read sites is never kept."""
+    if not isinstance(row, dict):
+        return None
+    tab_id, grant_id, state, nav = row.get('tab_id'), row.get('grant_id'), row.get('state'), row.get('nav', 0)
+    origin = row.get('origin')
+    if not isinstance(tab_id, str) or not TAB.fullmatch(tab_id) or not isinstance(grant_id, str) \
+            or not HEX32.fullmatch(grant_id) or state not in STATES or type(nav) is not int or not 0 <= nav < 1 << 31:
+        return None
+    if state == 'away' or not isinstance(origin, str) or url_origin(origin + '/') != origin:
+        origin = None
+    url = row.get('url') if origin is not None else None
+    shown = display_url(url) if isinstance(url, str) else None
+    if shown is not None and url_origin(url) != origin:
+        shown = None
+    return {'tab_id': tab_id, 'grant_id': grant_id, 'origin': origin, 'state': state if origin or state == 'away'
+            else 'away', 'nav': nav, 'title': (ax_worker.clip(row.get('title'), 200) or '') if state == 'ready' else '',
+            'url': shown, 'acting': row.get('acting') is True, 'since': now}
+
+
+def _origins(values, what):
+    """Exact canonical origins (https anywhere, http only on this Mac), in order, or PolicyError."""
+    if not isinstance(values, (list, tuple)) or len(values) > MAX_SITE_ORIGINS:
+        raise PolicyError(f'Name the {what} sites as a list of at most {MAX_SITE_ORIGINS} origins.')
+    out = []
+    for value in values:
+        if not isinstance(value, str) or url_origin(value + '/') != value:
+            raise PolicyError(f'{what.capitalize()} sites are exact origins such as https://example.com.')
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _site_target(url, read):
+    """The address one of Pebble's tabs may open or move to: on a read site, never a sign-in, payment or
+    destructive-looking address. PolicyError with the person-facing reason otherwise."""
+    if not isinstance(url, str) or not url.strip() or len(url) > ax_worker.MAX_URL or ax_worker.CONTROL.search(url):
+        raise PolicyError('Give a full https address.')
+    url = url.strip()
+    origin = url_origin(url)
+    if origin is None or origin not in read:
+        raise PolicyError(OFF_GRANT)
+    if credential_url(url):
+        raise PolicyError(CREDENTIAL_ADDRESS)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        raise PolicyError('Give a full https address.') from None
+    if DESTRUCTIVE.search(parts.path or '') or DESTRUCTIVE.search(parts.query or ''):
+        raise PolicyError(DESTRUCTIVE_ADDRESS)
+    return url
+
+
 class BrowserBridge:
     """The Chrome bridge one App owns: the socket server, the current link, pairing, shares, grants and Stop.
 
@@ -927,7 +1058,7 @@ class BrowserBridge:
                  pairing=None, host_paths=None, peer_path=peer_executable, notify=None):
         self.home = Path(home)
         self.server = BridgeServer(home, on_link=self._adopt, peer=peer, hello_seconds=hello_seconds,
-                                   host_paths=host_paths, peer_path=peer_path)
+                                   host_paths=host_paths, peer_path=peer_path, on_mismatch=self._mismatch)
         self.on_revoke, self.wall, self.clock, self.timeout = on_revoke, wall, clock, float(timeout)
         self.notify_event = notify
         self.user_home = Path(user_home) if user_home is not None else None
@@ -936,6 +1067,10 @@ class BrowserBridge:
         self.lock = threading.RLock()
         self.link, self.sink, self.error, self.last_stop, self.pending = None, None, None, None, None
         self.shares, self.grants, self.paused = {}, {}, False
+        # Phase 43: site grants {grant_id: {...}}, Pebble's own tabs {tab_id: row}, the last live handshake per browser,
+        # and the last hello in another protocol (for the main window's upgrade line).
+        self.site_grants, self.owned_tabs, self.handshakes, self.mismatch = {}, {}, {}, None
+        self.blocked = set()  # Phase 44: browsers whose own policy refused the debugger (learned, for BrowserRequest)
         # Wrong codes across every code and link, how many locks so far, and when the current one ends.
         self.pair_failures, self.pair_locks, self.pair_locked_until = 0, 0, 0.0
         self.record = None  # the pairing record once read: a tuple, False for none, None for not read yet
@@ -987,7 +1122,7 @@ class BrowserBridge:
                 return False
             old, self.link = self.link, link
             link.on_message, link.on_close, link.on_pairing = self._on_message, self._on_close, self._on_pairing
-            self.shares, self.grants = {}, {}
+            self.shares, self.grants, self.site_grants, self.owned_tabs = {}, {}, {}, {}
             if self.pending is not None and self.pending['link'] is not link:
                 self.pending = None
         if old is not None:
@@ -1010,7 +1145,7 @@ class BrowserBridge:
         with self.lock:
             if link is not self.link:
                 return
-            self.link, self.shares, self.grants = None, {}, {}
+            self.link, self.shares, self.grants, self.site_grants, self.owned_tabs = None, {}, {}, {}, {}
             if self.pending is not None and self.pending['link'] is link:
                 self.pending = None
         self._ended(None)
@@ -1123,10 +1258,32 @@ class BrowserBridge:
 
     # -- messages from the paired extension --
 
+    def _mismatch(self, protocol, hello):
+        extension = hello.get('extension') if isinstance(hello.get('extension'), dict) else {}
+        with self.lock:
+            self.mismatch = {'protocol': protocol, 'expected': PROTOCOL,
+                             'version': ax_worker.clip(extension.get('version'), 32),
+                             'browser': browser_id(extension.get('browser')), 'at': self.wall()}
+
     def _on_message(self, link, message):
         if link is not self.link:
             return
+        if not link.verified:  # Phase 43: a message sealed with the pairing's session key is a live handshake
+            link.verified = True
+            with self.lock:
+                self.handshakes[link.browser] = {'at': self.wall(), 'version': link.version, 'chrome': link.chrome}
+                self.mismatch = None
         kind = message.get('type')
+        if kind == 'browser':  # the person said which browser this is, in the popup
+            browser = browser_id(message.get('browser'))
+            with self.lock:
+                if browser != link.browser:
+                    link.browser = browser
+                    self.handshakes[browser] = {'at': self.wall(), 'version': link.version, 'chrome': link.chrome}
+            return
+        if kind == 'owned':
+            self._set_owned(message.get('tabs'))
+            return
         if kind == 'shares':
             self._set_shares(message.get('shares'))
         elif kind == 'event':
@@ -1166,6 +1323,176 @@ class BrowserBridge:
             self._event({'kind': 'shared', 'tabs': [{k: s[k] for k in ('tab_id', 'origin', 'scope')} for s in new],
                          'shared': len(fresh)})
 
+    # -- Phase 43: Pebble's own tabs, as the extension reports them --
+
+    def _set_owned(self, rows):
+        fresh = {}
+        for row in (rows if isinstance(rows, list) else [])[:MAX_OWNED]:
+            tab = _owned_tab(row, self.wall())
+            if tab is not None and tab['tab_id'] not in fresh:
+                fresh[tab['tab_id']] = tab
+        with self.lock:
+            old = self.owned_tabs
+            for tab_id, tab in fresh.items():
+                if tab_id in old:
+                    tab['since'] = old[tab_id]['since']
+            self.owned_tabs = fresh
+        for tab_id, tab in old.items():
+            if tab_id not in fresh or fresh[tab_id]['grant_id'] != tab['grant_id']:
+                self._ended(tab_id)
+
+    # -- Phase 43: site grants (the main-window route makes them after the person's review; see grant_sites) --
+
+    def grant_sites(self, run_id, act, read, ttl_seconds):
+        """Record one task's site grant and tell the extension: {grant_id, act, read, expires_in}. Every act site is
+        also a read site; each is an exact origin (https anywhere, http only on this Mac)."""
+        if not isinstance(run_id, str) or not HEX32.fullmatch(run_id):
+            raise PolicyError('A site grant needs the run it is for.')
+        act_sites, read_sites = _origins(act, 'act'), _origins(read, 'read')
+        sites = list(dict.fromkeys([*act_sites, *read_sites]))
+        if not sites or len(sites) > MAX_SITE_ORIGINS:
+            raise PolicyError(f'A site grant names 1 to {MAX_SITE_ORIGINS} sites.')
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 1800:
+            raise PolicyError('Choose a lifetime from 1 to 1800 seconds.')
+        grant_id = uuid.uuid4().hex
+        with self.lock:
+            link = self.link
+            if link is None or link.closed or not link.paired:
+                raise PolicyError(NOT_CONNECTED)
+            now = self.clock()
+            for gid in [g for g, item in self.site_grants.items() if item['deadline'] <= now]:
+                self.site_grants.pop(gid, None)
+            if len(self.site_grants) >= MAX_SITE_GRANTS:
+                raise PolicyError(f'At most {MAX_SITE_GRANTS} site grants at a time.')
+            self.site_grants[grant_id] = {'grant_id': grant_id, 'run_id': run_id, 'act': list(act_sites),
+                                          'read': sites, 'deadline': now + ttl_seconds, 'reads_added': []}
+        link.send({'type': 'control', 'action': 'site_grant', 'grant_id': grant_id, 'act': list(act_sites),
+                   'read': sites, 'expires_in': ttl_seconds})
+        return {'grant_id': grant_id, 'act': list(act_sites), 'read': sites, 'expires_in': ttl_seconds,
+                'authorization': 'none'}
+
+    def site_grant(self, grant_id):
+        """A live site grant (a copy), or None."""
+        with self.lock:
+            grant = self.site_grants.get(grant_id) if isinstance(grant_id, str) else None
+            if grant is None or grant['deadline'] <= self.clock():
+                return None
+            return {**grant, 'act': list(grant['act']), 'read': list(grant['read']),
+                    'reads_added': [dict(r) for r in grant['reads_added']]}
+
+    def add_read_origin(self, grant_id, origin, reason):
+        """One more read site for a live grant. Only the host's provenance rule calls this (decision 3: the address's
+        origin is known and the task read nothing private), with its reason; an act site never arrives this way."""
+        site = _origins([origin], 'read')[0]
+        why = ' '.join(str(reason or '').split())[:MAX_READ_REASON]
+        if not why:
+            raise PolicyError('A new read site needs the reason Pebble may read it.')
+        with self.lock:
+            grant = self.site_grants.get(grant_id) if isinstance(grant_id, str) else None
+            if grant is None or grant['deadline'] <= self.clock():
+                raise PolicyError(NO_SITE_GRANT)
+            if site in grant['read']:
+                return {'grant_id': grant_id, 'read': list(grant['read']), 'added': False}
+            if len(grant['read']) >= MAX_SITE_ORIGINS:
+                raise PolicyError(f'A site grant names at most {MAX_SITE_ORIGINS} sites.')
+            grant['read'].append(site)
+            grant['reads_added'].append({'origin': site, 'reason': why, 'at': self.wall()})
+            link = self.link
+            read = list(grant['read'])
+        if link is not None and link.paired:
+            link.send({'type': 'control', 'action': 'site_read', 'grant_id': grant_id, 'origin': site})
+        return {'grant_id': grant_id, 'read': read, 'added': True}
+
+    def end_site_grant(self, grant_id):
+        """The task ended or the person ended the grant: the extension lets go of its tabs (they stay open)."""
+        with self.lock:
+            grant = self.site_grants.pop(grant_id, None) if isinstance(grant_id, str) else None
+            tabs = [t for t, row in self.owned_tabs.items() if row['grant_id'] == grant_id]
+            for tab_id in tabs:
+                self.owned_tabs.pop(tab_id, None)
+            link = self.link
+        if grant is not None and link is not None and link.paired:
+            link.send({'type': 'control', 'action': 'site_ungrant', 'grant_id': grant_id})
+        for tab_id in tabs:
+            self._ended(tab_id)
+        return grant is not None
+
+    def _owned_live(self, tab_id):
+        """(owned row, live grant) for one of Pebble's tabs, or (None, None)."""
+        with self.lock:
+            row = self.owned_tabs.get(tab_id)
+            grant = self.site_grants.get(row['grant_id']) if row else None
+            if row is None or grant is None or grant['deadline'] <= self.clock():
+                return None, None
+            return dict(row), {**grant, 'act': list(grant['act']), 'read': list(grant['read'])}
+
+    def owned(self, grant_id=None):
+        """Pebble's tabs (of one grant): {tab_id, grant_id, origin, state, title, url, acting}; page text untrusted."""
+        with self.lock:
+            rows = sorted(self.owned_tabs.values(), key=lambda r: r['since'])
+        return [{k: r[k] for k in ('tab_id', 'grant_id', 'origin', 'state', 'title', 'url', 'acting')} for r in rows
+                if grant_id is None or r['grant_id'] == grant_id]
+
+    def open_tab(self, grant_id, url, *, active=False, timeout=None):
+        """Open one of Pebble's tabs at a read site of a live grant: {tab_id, origin}. Never a sign-in, payment or
+        destructive-looking address (the person's turn, or the page's own reviewed link)."""
+        grant = self.site_grant(grant_id)
+        if grant is None:
+            raise PolicyError(NO_SITE_GRANT)
+        target = _site_target(url, grant['read'])
+        try:
+            result = self.request('create_tab', None, timeout=timeout, grant_id=grant_id, url=target,
+                                  active=active is True)
+        except LinkError as exc:
+            raise PolicyError(exc.message or 'The tab could not be opened.') from None
+        tab_id = (result or {}).get('tab_id') if isinstance(result, dict) else None
+        if not isinstance(tab_id, str) or not TAB.fullmatch(tab_id):
+            raise PolicyError('The tab could not be opened.')
+        with self.lock:
+            self.owned_tabs.setdefault(tab_id, {'tab_id': tab_id, 'grant_id': grant_id, 'origin': url_origin(target),
+                                                'state': 'ready', 'nav': 0, 'title': '', 'url': display_url(target),
+                                                'acting': False, 'since': self.wall()})
+        return {'tab_id': tab_id, 'origin': url_origin(target), 'authorization': 'none'}
+
+    def navigate_owned(self, tab_id, url, *, timeout=None):
+        """Move one of Pebble's tabs to another read site of its grant (never elsewhere); it may have started even
+        when the answer is lost, so a lost answer is uncertain, never retried."""
+        row, grant = self._owned_live(tab_id)
+        if row is None:
+            raise PolicyError(NOT_OWNED if tab_id not in self.owned_tabs else NO_SITE_GRANT)
+        target = _site_target(url, grant['read'])
+        try:
+            self.request('navigate', tab_id, timeout=timeout, url=target)
+        except LinkError as exc:
+            if exc.code in ('refused', 'not_granted', 'away', 'handback', 'paused', 'invalid'):
+                raise PolicyError(exc.message or OFF_GRANT) from None
+            raise AXError('uncertain', f'navigate: {exc.code}') from None
+        return {'navigated': True, 'url': display_url(target), 'origin': url_origin(target), 'authorization': 'none'}
+
+    def close_owned(self, tab_id, *, timeout=None):
+        """Close one of Pebble's tabs (only one it opened)."""
+        with self.lock:
+            row = self.owned_tabs.get(tab_id)
+        if row is None:
+            raise PolicyError(NOT_OWNED)
+        try:
+            self.request('close_tab', tab_id, timeout=timeout)
+        except LinkError as exc:
+            raise PolicyError(exc.message or 'The tab could not be closed.') from None
+        return {'closed': True, 'tab_id': tab_id, 'authorization': 'none'}
+
+    def access(self, tab_id):
+        """How a page command may see one tab: a shared tab's share, or one of Pebble's tabs as a share-like row
+        ({..., 'owned': True, 'act': [...], 'read': [...]}; 'share_id' names its grant). None for anything else."""
+        share = self.share(tab_id)
+        if share is not None:
+            return {**share, 'owned': False}
+        row, grant = self._owned_live(tab_id)
+        if row is None:
+            return None
+        return {**row, 'share_id': 'owned-' + row['grant_id'], 'scope': 'owned', 'owned': True,
+                'act': grant['act'], 'read': grant['read']}
+
     # -- grants (the main-window grant route records them; see grant_chrome_session) --
 
     def granted(self, session, *, screenshots=False):
@@ -1195,10 +1522,22 @@ class BrowserBridge:
         for session_id in [s for s, g in self.grants.items() if g['deadline'] <= now]:
             self.grants.pop(session_id, None)
 
+    def note_blocked(self):
+        """Phase 44: the connected browser refused the debugger by its own policy; BrowserRequest then takes the window
+        route there (screen_session.browser_request_proposal)."""
+        link = self.link
+        if link is not None and link.browser not in (None, 'unknown'):
+            with self.lock:
+                self.blocked.add(link.browser)
+
     def grant_live(self, tab_id):
         now = self.clock()
         with self.lock:
-            return any(g['tab_id'] == tab_id and g['deadline'] > now for g in self.grants.values())
+            if any(g['tab_id'] == tab_id and g['deadline'] > now for g in self.grants.values()):
+                return True
+            row = self.owned_tabs.get(tab_id)  # Phase 43: one of Pebble's tabs, while its site grant lives
+            grant = self.site_grants.get(row['grant_id']) if row else None
+            return bool(grant and grant['deadline'] > now)
 
     def screenshots_for(self, session_id):
         now = self.clock()
@@ -1245,7 +1584,7 @@ class BrowserBridge:
         """The kill switch: clear every share, detach every debugger and end every Chrome screen session."""
         with self.lock:
             link, had = self.link, len(self.shares)
-            self.shares = {}
+            self.shares, self.site_grants, self.owned_tabs = {}, {}, {}
             self.last_stop = {'reason': reason, 'at': self.wall()}
         if tell and link is not None and link.paired:
             link.send({'type': 'control', 'action': 'stop_all', 'reason': reason})
@@ -1261,10 +1600,22 @@ class BrowserBridge:
             pending = self.pending if self.pending is not None and now < self.pending['deadline'] else None
             granted = sorted({g['tab_id'] for g in self.grants.values() if g['deadline'] > now})
             locked_for = round(self.pair_locked_until - now) if now < self.pair_locked_until else None
+            site_grants = [{'grant_id': g['grant_id'], 'act': list(g['act']), 'read': list(g['read']),
+                            'expires_in': round(g['deadline'] - now)} for g in self.site_grants.values()
+                           if g['deadline'] > now]
+            owned = [{k: r[k] for k in ('tab_id', 'grant_id', 'origin', 'state', 'title', 'acting')}
+                     for r in sorted(self.owned_tabs.values(), key=lambda r: r['since'])]
+            handshakes = {b: dict(h) for b, h in self.handshakes.items()}
+            mismatch = dict(self.mismatch) if self.mismatch else None
         return {
             'extension': {'connected': bool(link and link.paired), 'present': link is not None, 'id': EXTENSION_ID,
                           'version': link.version if link else None, 'chrome': link.chrome if link else None,
-                          'connected_at': link.connected_at if link else None},
+                          'connected_at': link.connected_at if link else None,
+                          'browser': link.browser if link else None, 'protocol': PROTOCOL,
+                          'debugger_blocked': bool(link and link.browser in self.blocked)},
+            # Phase 43: Connect a browser's facts per browser, Pebble's own tabs and its site grants.
+            'browsers': browser_hosts(self.user_home, handshakes),
+            'mismatch': mismatch, 'site_grants': site_grants, 'owned_tabs': owned,
             'pairing': {'paired': record is not None, 'paired_at': record[2] if record else None,
                         'pending': {'code': pending['code'], 'expires_in': round(pending['deadline'] - now),
                                     'attempts_left': pending['attempts']} if pending else None,
@@ -1284,9 +1635,52 @@ HOST_FOLDERS = {'chrome': 'Google/Chrome', 'chrome-beta': 'Google/Chrome Beta', 
                 'chromium': 'Chromium'}
 
 
+# Phase 43 (decision 8, Connect a browser): every Chromium-family browser Pebble can connect, by the id the extension
+# names, with its support folder (each checked on the person's Mac by name only, 2026-10-25) and its name in Pebble's
+# words. HOST_FOLDERS stays the Chrome family (scripts/pebble_install.py's removal list mirrors it).
+BROWSER_FOLDERS = {'chrome': 'Google/Chrome', 'comet': 'Comet', 'brave': 'BraveSoftware/Brave-Browser',
+                   'edge': 'Microsoft Edge', 'arc': 'Arc/User Data', 'chromium': 'Chromium',
+                   'chrome-beta': 'Google/Chrome Beta', 'chrome-canary': 'Google/Chrome Canary'}
+BROWSER_NAMES = {'chrome': 'Chrome', 'comet': 'Comet', 'brave': 'Brave', 'edge': 'Microsoft Edge', 'arc': 'Arc',
+                 'chromium': 'Chromium', 'chrome-beta': 'Chrome Beta', 'chrome-canary': 'Chrome Canary'}
+
+
+def browser_id(value):
+    """A browser the extension names (BROWSER_FOLDERS' ids, or 'other'), else 'unknown'."""
+    return value if isinstance(value, str) and (value in BROWSER_FOLDERS or value == 'other') else 'unknown'
+
+
 def host_manifest_path(user_home, browser='chrome'):
-    return Path(user_home) / 'Library/Application Support' / HOST_FOLDERS[browser] / 'NativeMessagingHosts' / \
+    return Path(user_home) / 'Library/Application Support' / BROWSER_FOLDERS[browser] / 'NativeMessagingHosts' / \
         f'{HOST_NAME}.json'
+
+
+def _host_installed(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    except OSError:
+        return False
+    with os.fdopen(fd, 'rb') as handle:
+        raw = handle.read(65_537)
+    try:
+        doc = decode_body(raw) if len(raw) <= 65_536 else None
+    except FrameError:
+        doc = None
+    return bool(doc and doc.get('name') == HOST_NAME and doc.get('allowed_origins') == [EXTENSION_ORIGIN])
+
+
+def browser_hosts(user_home=None, handshakes=None):
+    """Phase 43: per browser {name, support, host, handshake}: whether its support folder exists (the browser has run
+    for this user), whether Pebble's host manifest is installed there (only that one file is read) and the last live
+    handshake. Read-only; nothing inside a browser's profile is listed or read."""
+    base = Path(user_home) if user_home is not None else Path.home()
+    seen = handshakes or {}
+    out = {}
+    for browser, folder in BROWSER_FOLDERS.items():
+        support = base / 'Library/Application Support' / folder
+        out[browser] = {'name': BROWSER_NAMES[browser], 'support': support.is_dir() and not support.is_symlink(),
+                        'host': _host_installed(host_manifest_path(base, browser)), 'handshake': seen.get(browser)}
+    return out
 
 
 def installed_hosts(user_home=None):
@@ -1363,6 +1757,12 @@ class ExtensionCDP:
             raise _refused('invalid', 'Pebble runs only its own isolated-world functions in a Chrome tab.')
         if method not in RELEASES and not self.tabs.bridge.grant_live(tab_id):
             raise _refused('not_granted', EXPIRED)
+        if method in EFFECT_METHODS and not (method == 'Runtime.callFunctionOn'
+                                             and (params or {}).get('functionDeclaration') in READ_ONLY_FUNCTIONS):
+            # Phase 43: one of Pebble's own tabs changes a page only on an act site of its grant (the first fence)
+            access = self.tabs.bridge.access(tab_id)
+            if access is not None and access.get('owned') and access.get('origin') not in access['act']:
+                raise _refused('read_only', READ_ONLY)
 
     def call(self, method, params=None, *, session=None, timeout=None):
         timeout = self.tabs.timeout if timeout is None else timeout
@@ -1427,7 +1827,7 @@ class ChromeTabs:
         return None if self.running else NOT_CONNECTED
 
     def instance_for(self, tab_id):
-        link, share = self.bridge.link, self.bridge.share(tab_id)
+        link, share = self.bridge.link, self.bridge.access(tab_id)  # Phase 43: a share, or one of Pebble's tabs
         if link is None or link.closed or not link.paired or share is None:
             return None
         return f'{link.instance}.{share["share_id"]}'
@@ -1451,7 +1851,7 @@ class ChromeTabs:
                 if instance is not None:
                     raise ScreenRefused('session_expired', DISCONNECTED)
                 raise ScreenRefused('unsupported_target', NOT_CONNECTED)
-            share = self.bridge.share(tab_id)
+            share = self.bridge.access(tab_id)
             if share is None:
                 raise ScreenRefused('session_revoked' if instance is not None else 'target_gone', UNSHARED)
             current = self.instance_for(tab_id)
@@ -1498,7 +1898,11 @@ class ChromeTabs:
                     raise ScreenRefused('session_expired', EXPIRED) from None
                 if code in ('away', 'handback'):
                     raise ScreenRefused('stale_ui', AWAY if code == 'away' else HANDBACK_TEXT) from None
-                raise ScreenRefused('ax_failed') from None
+                text = getattr(exc, 'message', None) or getattr(exc, 'detail', '') or ''
+                if POLICY_BLOCK.search(text):  # Phase 44 (D117): this browser keeps the debugger out of every page
+                    self.bridge.note_blocked()
+                    raise ScreenRefused('unsupported_target', DEBUGGER_POLICY) from None
+                raise ScreenRefused('ax_failed', f'The debugger could not attach ({code}).') from None
             with self.event_lock:
                 self.tabs_by_id[tab_id] = tab
             return tab, current
@@ -1555,8 +1959,9 @@ class ChromeTabs:
         return {'mime': 'image/png', 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': data}
 
     def navigate(self, tab_id, url, origins, instance=None):
-        """Go to an address on the granted site in the shared tab (the Address field's effect); never elsewhere."""
-        share = self.bridge.share(tab_id)
+        """Go to an address on the granted site in the shared tab (the Address field's effect); never elsewhere.
+        Phase 43: one of Pebble's own tabs goes to any act site of the session (navigation_target's owned rule)."""
+        share = self.bridge.access(tab_id)
         if share is None:
             raise ScreenRefused('session_revoked', UNSHARED)
         if share['state'] != 'ready' or self.bridge.paused:
@@ -1596,7 +2001,8 @@ def navigation_target(share, origins, text):
     origin = url_origin(url)
     if origin is None and '://' not in url:
         raise ScreenRefused('invalid', BAD_ADDRESS)
-    if origin is None or origin != share['origin'] or origin not in origins:
+    # A shared tab stays on its one shared site; one of Pebble's own tabs (Phase 43) may go to any granted act site.
+    if origin is None or (origin != share['origin'] and not share.get('owned')) or origin not in origins:
         raise ScreenRefused('action_not_applicable', OFF_SITE)
     try:
         parts = urlsplit(url)
@@ -1640,12 +2046,18 @@ class ChromeAdapter(BrowserAdapter):
         return self.browser.tabs()
 
     def pin(self, target):
-        """Bind the link and the share; the debugger attaches only when Pebble first looks at a granted tab."""
-        share = self.bridge.share(target['tab_id'])
+        """Bind the link and the share; the debugger attaches only when Pebble first looks at a granted tab.
+        Phase 43: one of Pebble's own tabs pins to its site grant: the session's sites must be the grant's act sites
+        (and its read sites, when the target names them, the grant's read sites)."""
+        share = self.bridge.access(target['tab_id'])
         if share is None:
             raise ScreenRefused('target_gone' if self.browser.running else 'unsupported_target',
                                 UNSHARED if self.browser.running else NOT_CONNECTED)
-        if not set(target['origins']) <= {share['origin']}:
+        if share.get('owned'):
+            if not set(target['origins']) <= set(share['act']) \
+                    or not set(target.get('read') or ()) <= set(share['read']):
+                raise ScreenRefused('invalid', OFF_GRANT)
+        elif not set(target['origins']) <= {share['origin']}:
             raise ScreenRefused('invalid', ONE_SITE)
         instance = self.browser.instance_for(target['tab_id'])
         if instance is None:
@@ -1657,7 +2069,7 @@ class ChromeAdapter(BrowserAdapter):
             raise ScreenRefused('session_expired', DISCONNECTED, dispatched=False)
         if not self.browser.running:
             raise ScreenRefused('session_expired', DISCONNECTED, dispatched=False)
-        share = self.bridge.share(target['tab_id'])
+        share = self.bridge.access(target['tab_id'])
         if share is None:
             raise ScreenRefused('session_revoked', UNSHARED, dispatched=False)
         if self.browser.instance_for(target['tab_id']) != pin['instance']:
@@ -1709,9 +2121,11 @@ class ChromeAdapter(BrowserAdapter):
         granted site, and reads back by its address; anything else on it is refused with a hand-back message."""
         if element.get('path') != ADDRESS_PATH:
             return None
+        if action == 'focus' and target.get('read') is not None:
+            return None  # Phase 44: focus on Pebble's own tab's Address row shows the tab (perform)
         if action != 'type':
             raise ScreenRefused('action_not_applicable', ADDRESS_ONLY)
-        share = self.bridge.share(target['tab_id'])
+        share = self.bridge.access(target['tab_id'])
         if share is None:
             raise ScreenRefused('session_revoked', UNSHARED)
         return navigation_target(share, target['origins'], text)[1]
@@ -1725,6 +2139,9 @@ class ChromeAdapter(BrowserAdapter):
         if share['state'] != 'ready':
             raise ScreenRefused('stale_ui', AWAY if share['state'] == 'away' else HANDBACK_TEXT, dispatched=False)
         if element.get('path') == ADDRESS_PATH:
+            if action == 'focus' and target.get('read') is not None:
+                self.focus_window(target, pin)  # Phase 44: shows Pebble's own tab (sound and video need it showing)
+                return None
             if action != 'type':
                 raise ScreenRefused('action_not_applicable', ADDRESS_ONLY, dispatched=False)
             self.browser.navigate(target['tab_id'], text, target['origins'], pin['instance'])

@@ -119,7 +119,8 @@ def test_tool_schema_and_pure_validators():
     assert schema['name'] == 'ProposeGitChange' and schema['parameters']['additionalProperties'] is False
     assert schema['parameters']['properties']['operation']['enum'] == list(OPERATIONS)
     assert set(schema['parameters']['properties']) == {'operation', 'paths', 'message', 'name', 'branch', 'remote',
-                                                       'remote_branch', 'receipt_id', 'switch'}
+                                                       'remote_branch', 'receipt_id', 'switch',
+                                                       'argv'}  # Phase 46: the reviewed Git command (git_commands)
     assert 'host broker' in schema['description'] and 'native review' in schema['description']
     for name in ('-x', 'a..b', 'a//b', 'a@{1}', 'x.lock', 'a/b.lock/c', 'x/', 'x.', 'HEAD', '.hidden', 'a/.b', 'a b',
                  'a~1', 'a^', 'a:b', 'a\\b', 'a*', 'a?', 'a[', '0' * 40, 'x' * 101, '', None, 7):
@@ -203,7 +204,11 @@ def test_commit_selected_paths_only_preserves_other_work_exactly(host):
 
 
 @macos
-def test_identity_resolution_and_validation(host):
+def test_identity_resolution_and_validation(host, monkeypatch):
+    # No ~/.gitconfig and no usable default identity: the one case still refused
+    monkeypatch.setenv('HOME', str(host.tmp / 'person'))
+    monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+    monkeypatch.setattr(git_plans, 'automatic_identity', lambda: None)
     (host.repo / 'app.py').write_text('print("identity")\n')
     git(host.repo, 'config', '--unset', 'user.name')
     with pytest.raises(PolicyError, match='Set user.name and user.email'):
@@ -218,6 +223,65 @@ def test_identity_resolution_and_validation(host):
         (host.repo / 'app.py').write_text(f'print({name!r})\n')
         with pytest.raises(PolicyError, match='Git author name'):
             host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+
+
+@macos
+def test_identity_from_the_persons_git_settings_then_gits_default(host, monkeypatch):
+    # Golden-set dev case d-gw-01 (2026-10-27): Pebble refused to commit where Git, Codex and Claude Code commit (no
+    # identity in the repository or Settings), because it never read ~/.gitconfig nor used Git's own default.
+    person = host.tmp / 'person'
+    (person / '.config' / 'git').mkdir(parents=True)
+    monkeypatch.setenv('HOME', str(person))
+    monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+    monkeypatch.setattr(git_plans, 'automatic_identity', lambda: ('Mac Account', 'account@mac.example'))
+    git(host.repo, 'config', '--unset', 'user.name')
+    git(host.repo, 'config', '--unset', 'user.email')
+    (host.repo / 'app.py').write_text('print("default")\n')
+    plan = host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+    assert plan['bindings']['identity'] == {'name': 'Mac Account', 'email': 'account@mac.example', 'source': 'automatic'}
+    assert "Mac Account <account@mac.example> (Git's default" in plan['summary']
+    # The XDG file, then ~/.gitconfig over it, as Git reads them; includes and every other key are left alone.
+    (person / '.config' / 'git' / 'config').write_text('[user]\n\tname = Xdg Person\n\temail = xdg@example.invalid\n')
+    (person / 'other.inc').write_text('[user]\n\tname = Included Person\n')
+    (person / '.gitconfig').write_text('[include]\n\tpath = other.inc\n[core]\n\tfsmonitor = touch hooked\n'
+                                       '[user]\n\temail = home@example.invalid\n')
+    plan = host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+    assert plan['bindings']['identity'] == {'name': 'Xdg Person', 'email': 'home@example.invalid', 'source': 'global'}
+    assert '(Git' not in plan['summary']
+    host.plans.execute(host.chat, plan)
+    assert git(host.repo, 'log', '-1', '--format=%an <%ae>').stdout.strip() == 'Xdg Person <home@example.invalid>'
+    assert not (host.repo / 'hooked').exists() and not (person / 'hooked').exists()
+    # This repository's own values still come first, key by key.
+    git(host.repo, 'config', 'user.name', 'Repo Person')
+    (host.repo / 'app.py').write_text('print("mixed")\n')
+    plan = host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+    assert plan['bindings']['identity'] == {'name': 'Repo Person', 'email': 'home@example.invalid',
+                                            'source': 'repository+global'}
+    # A Pebble identity in Settings comes before the person's Git settings when the repository lacks a full pair.
+    host.app.store.set_setting('git_identity', {'name': 'Settings Person', 'email': 'settings@example.invalid'})
+    plan = host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+    assert plan['bindings']['identity']['source'] == 'settings'
+    # A symlinked ~/.gitconfig (kept with dotfiles) is read through its target; a key it lacks is Git's default.
+    (person / '.config' / 'git' / 'config').unlink()
+    (person / '.gitconfig').unlink()
+    (person / '.gitconfig').symlink_to(person / 'other.inc')
+    host.app.store.set_setting('git_identity', None)
+    git(host.repo, 'config', '--unset', 'user.name')
+    plan = host.plans.prepare(host.chat, 'commit', {'paths': ['app.py'], 'message': 'x'})
+    assert plan['bindings']['identity'] == {'name': 'Included Person', 'email': 'account@mac.example',
+                                            'source': 'global+automatic'}
+    assert "(partly Git's default" in plan['summary']
+
+
+def test_gits_default_identity_follows_git(monkeypatch):
+    entry = SimpleNamespace(pw_name='sam', pw_gecos='& Example,Room 1,,')
+    monkeypatch.setattr(git_plans.pwd, 'getpwuid', lambda uid: entry)
+    monkeypatch.setattr(git_plans.socket, 'gethostname', lambda: 'studio.example.invalid')
+    assert git_plans.automatic_identity() == ('Sam Example', 'sam@studio.example.invalid')
+    entry.pw_gecos = ''
+    assert git_plans.automatic_identity() == ('sam', 'sam@studio.example.invalid')
+    monkeypatch.setattr(git_plans.socket, 'gethostname', lambda: 'studio')  # Git refuses a host without a domain
+    assert git_plans.automatic_identity() is None
 
 
 @macos

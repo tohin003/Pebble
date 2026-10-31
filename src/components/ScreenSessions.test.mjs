@@ -105,7 +105,8 @@ Panel.render = evaluate(template.code).render;
 assert.ok(!/v-html|\binnerHTML\b|\beval\s*\(|new Function|<iframe|srcdoc|document\.write/.test(source), 'titles render as literal native content');
 const methods = [...source.matchAll(/\brpc(?:<[^>]*>)?\(([^,)]*)/g)].map(match => match[1].trim());
 assert.ok(methods.length && methods.every(method => /^'[a-z_]+'$/.test(method)), 'every native method name is a fixed literal');
-assert.deepEqual([...new Set(methods)].sort(), ["'screen_handoff_done'", "'screen_session_grant'", "'screen_session_revoke'", "'screen_sessions'", "'screen_windows'"], 'only the screen routes are reachable');
+// D103 (Phase 42, 1.8.0): the Accessibility state and macOS's own request join the screen routes.
+assert.deepEqual([...new Set(methods)].sort(), ["'app_control_request'", "'app_control_status'", "'screen_handoff_done'", "'screen_session_grant'", "'screen_session_revoke'", "'screen_sessions'", "'screen_windows'"], 'only the screen routes are reachable');
 assert.deepEqual([...source.matchAll(/from '([^']+)'/g)].map(match => match[1]).sort(), ['../bridge', 'vue']);
 assert.ok(/shallowRef<HTMLElement \| null>\(null\), grantCard = shallowRef<HTMLElement/.test(source), 'template element refs are shallow');
 // Generated views, mods and the pet window never render a screen panel.

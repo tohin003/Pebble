@@ -7,11 +7,18 @@ export interface Message {
   attachments?: Attachment[];
   // Phase 22: the run that wrote this reply, when the host tags it (links "Thought for N s").
   run_id?: string;
+  // Phase 40 (D93): small previews of the screenshots the run took, shown with the reply.
+  captures?: { preview: string; width?: number; height?: number }[];
 }
 export interface Action {
   id: string;
   chat_id: string;
-  kind: "edit" | "tests" | "app" | "command" | "plugin" | "git" | "worktree" | "install";
+  kind: "edit" | "tests" | "app" | "command" | "plugin" | "git" | "worktree" | "install" | "shell" | "file"
+    | "screen" | "screen_grant"  // Phase 42 (1.8.0): a press in a shared window; a window Pebble asked for
+    | "url"  // Phase 43 (1.9.0): a web address opened in the person's browser
+    | "screen_raise"  // Phase 43 (1.9.0): a granted window brought forward
+    | "app_action"  // Phase 43 (1.9.0): a fixed scripting verb (Shortcuts, Music, Notes, Calendar, Mail, Finder)
+    | "browser_grant";  // Phase 43 (1.9.0): sites in the person's browser Pebble asked for
   status: string;
   payload: Record<string, any>;
 }
@@ -26,6 +33,7 @@ export interface Chat {
   questions?: AgentQuestion[];
   plan?: AgentPlan | null;
   trashed?: boolean; // Phase 24 (V1-018): in Recently deleted
+  updated?: number; // Phase 45 (F047): the chats row's own time (Unix seconds), shown in the companion's list
 }
 export interface RunSummary {
   id: string;
@@ -107,13 +115,18 @@ export interface TableArtifactData {
   caption?: string;
 }
 export interface ChartArtifactData {
-  type: "bar" | "line";
+  // Phase 46 (1.9.29, D195): area to donut, the number format and a unit are the visual catalog's (chartModel.ts)
+  type: "bar" | "line" | "area" | "scatter" | "stacked" | "pie" | "donut";
   x_key: string;
   y_keys: string[];
   rows: Record<string, ArtifactPrimitive>[];
   labels?: Record<string, string>;
   caption?: string;
+  format?: "number" | "percent" | "compact";
+  unit?: string;
 }
+// Phase 46 (1.9.29, D195): the visual catalog's kinds (artifact_schema.CATALOG_KINDS), drawn by VisualCatalog.vue
+export type CatalogArtifact = ArtifactBase & { kind: "compare" | "metrics" | "timeline" | "record"; data: Record<string, any> };
 export interface PlanArtifactData {
   steps: {
     id: string;
@@ -133,6 +146,7 @@ export type NativeArtifact = ArtifactBase &
     | { kind: "chart"; data: ChartArtifactData }
     | { kind: "plan"; data: PlanArtifactData }
     | { kind: "evidence"; data: EvidenceArtifactData }
+    | { kind: "compare" | "metrics" | "timeline" | "record"; data: Record<string, any> }
   );
 // Quiz v2: the host keeps the answer key, so the view holds public questions only.
 export interface QuizV2Question {
@@ -270,6 +284,8 @@ export interface CompanionSettings {
   status_words: "rotate" | "fixed" | "off";
   ui_guidance: boolean;
 }
+// Phase 46 (D166): which requests ask for OpenAI's Fast tier (backend/pebble/runner.py fast_now; settings_file.FAST).
+export type FastReplies = "off" | "follow_ups" | "long_tasks" | "always";
 export interface State {
   job_notifications?: { id: string; chat_id: string; title: string; created: number }[];
   chats: Chat[];
@@ -283,10 +299,13 @@ export interface State {
     theme: string;
     reduced_motion: boolean;
     stealth?: boolean; // Phase 33: Stealth Lockdown
+    work_view?: boolean; // Phase 46 (1.9.29, D206): Pebble's work as cards (absent: on)
+    visual_answers?: "ask" | "auto"; // Phase 46 (1.9.29, D195): artifact_schema.visual_offer (absent: ask)
     memory_enabled: boolean;
     memory_layers?: Record<string, boolean>;
     permissions: Permissions;
     companion?: CompanionSettings;
+    fast_replies?: FastReplies; // Phase 46 (D166): OpenAI's Fast tier on the ChatGPT sign-in
   };
   memory?: {
     enabled: boolean;
@@ -314,6 +333,7 @@ export interface Permissions {
     plugins: boolean;
     views: boolean;
     screen?: boolean; // Phase 16: off by default
+    capture?: boolean; // Phase 40 (D93): on by default; macOS Screen Recording is the person's own gate
   };
 }
 export interface Usage {

@@ -23,6 +23,11 @@ carries no Pebble state. The installed app runs it as
 `pebble-backend --browser-native-host --home <data home> <origin>` through the
 launcher that scripts/install_native_host.py writes; browser_bridge holds the
 server side and pins these constants to its own.
+
+Phase 43 (1.9.0, Pebble for Chrome 2): any `pebble-browser/<n>` hello is relayed,
+so Pebble itself answers an older or newer extension; its 'upgrade' status (which
+side to reload or update) reaches the extension as is, and the relay ends. The
+hello's extension facts may name the browser (a short id), passed through as such.
 """
 
 import json
@@ -33,7 +38,8 @@ import struct
 import sys
 import threading
 
-PROTOCOL = 'pebble-browser/1'
+PROTOCOL = 'pebble-browser/2'
+PROTOCOL_PREFIX = 'pebble-browser/'
 EXTENSION_ID = 'ilmkbniehiecgoodnbkkcjgaelebehbj'
 EXTENSION_ORIGIN = f'chrome-extension://{EXTENSION_ID}/'
 BRIDGE_DIR, SOCKET_NAME, TOKEN_NAME = 'chrome', 'bridge.sock', 'token'
@@ -189,6 +195,19 @@ def _hex(value, size):
     return isinstance(value, str) and len(value) == size and all(c in '0123456789abcdef' for c in value)
 
 
+def _protocol(value):
+    """Any 'pebble-browser/<n>' (Phase 43): Pebble, not the relay, answers a version it does not speak."""
+    number = value[len(PROTOCOL_PREFIX):] if isinstance(value, str) and value.startswith(PROTOCOL_PREFIX) else ''
+    return 1 <= len(number) <= 3 and number[0] != '0' and all(c in '0123456789' for c in number)
+
+
+def _browser(value):
+    """A short browser id the extension names (chrome, comet, ...), or None."""
+    ok = isinstance(value, str) and 2 <= len(value) <= 24 and value[0] in 'abcdefghijklmnopqrstuvwxyz' \
+        and all(c in 'abcdefghijklmnopqrstuvwxyz-' for c in value)
+    return value if ok else None
+
+
 def _pump(source, sink, read_order, write_order, check):
     """Copy messages until source ends; raises Ended on a bad message."""
     while True:
@@ -226,7 +245,8 @@ def main(argv=None, stdin=None, stdout=None, *, peer=peer_uid):
         return EXIT_PROTOCOL
     if hello is None:
         return EXIT_OK
-    if hello.get('type') != 'hello' or hello.get('protocol') != PROTOCOL:
+    protocol = hello.get('protocol')
+    if hello.get('type') != 'hello' or not _protocol(protocol):
         return EXIT_PROTOCOL
     try:
         sock, token = connect(home, peer=peer)
@@ -239,17 +259,24 @@ def main(argv=None, stdin=None, stdout=None, *, peer=peer_uid):
     extension = hello.get('extension') if isinstance(hello.get('extension'), dict) else {}
     # The extension's pairing ID and nonce pass through untouched (hex only); the pairing key never reaches the host.
     nonce, pairing = hello.get('nonce'), hello.get('pairing_id')
+    browser = extension.get('browser')
     try:
         try:
-            sock.sendall(encode({'type': 'hello', 'protocol': PROTOCOL, 'token': token, 'origin': origin,
+            sock.sendall(encode({'type': 'hello', 'protocol': protocol, 'token': token, 'origin': origin,
                                  'host': {'version': HOST_VERSION},
                                  'nonce': nonce if _hex(nonce, 64) else None,
                                  'pairing_id': pairing if _hex(pairing, 32) else None,
                                  'extension': {'version': _text(extension.get('version'), 32),
-                                               'chrome': _text(extension.get('chrome'), 64)}}, 'little'))
+                                               'chrome': _text(extension.get('chrome'), 64),
+                                               'browser': _browser(browser)}}, 'little'))
             welcome = read_message(sock, 'little')
         except (OSError, Ended):
             welcome = None
+        if welcome is not None and welcome.get('type') == 'status' and welcome.get('state') == 'upgrade':
+            # Phase 43: Pebble answered another protocol; its words (what to reload or update) reach the extension.
+            write_message(stdout, {'type': 'status', 'state': 'upgrade', 'message': _text(welcome.get('message'), 300)
+                                   or REFUSED, 'protocol': _text(welcome.get('protocol'), 32)})
+            return EXIT_PROTOCOL
         if welcome is None or welcome.get('type') != 'welcome':
             write_message(stdout, {'type': 'status', 'state': 'refused', 'message': REFUSED})
             return EXIT_PROTOCOL

@@ -108,8 +108,9 @@ DRAFT_MARK, REPLY_MARK = 'draft-' + TOKEN, 'reply-' + TOKEN
 PHASE19_TOOLS = PHASE18_TOOLS  # Phase 19 added no model tool (validate_phase19 pins its catalogue)
 # Permission groups for every scenario: all on except screen (off by default; nothing here observes a screen).
 TOOLS_ON = {'files': True, 'edits': True, 'tests': True, 'apps': True, 'web': True, 'terminal': True,
-            'plugins': True, 'views': True, 'screen': False}
-HOST_LINE = 'I prepared the actions shown below. Review them before they run.'  # runner.py's line for no text
+            'plugins': True, 'views': True, 'screen': False,
+            'capture': True}  # D95 (Phase 40, 1.6.0): the screenshot group, on by default; every other value kept
+HOST_LINE = 'I prepared the actions waiting for your review; nothing runs until you allow it.'  # runner.py's line for no text (Phase 45, F127)
 H1C = 'The person already sees your reply so far; continue it without repeating it.'  # Phase 19 resume line
 COVERAGE_HEAD = 'HOST RESEARCH COVERAGE'  # research.PROGRESS_HEAD starts with it (pinned by the tests)
 DIAGNOSTICS_HEAD = 'HOST DIAGNOSTICS'
@@ -1378,7 +1379,9 @@ class Campaign:
             assert [line for t in texts for line in t.splitlines() if line.startswith('FINAL:')] == ['FINAL: summarised']
             assert DRAFT_MARK not in compact(facts['chat']) and not any(DRAFT_MARK in t for t in facts['tokens'])
             assert 'Verification remains incomplete' not in compact(texts)
-            reads = [t for t in facts['tools'] if t['name'] == 'Read']
+            # The model's two Reads, before and after the change (Phase 46: above 8K the host's prefetch reads the named
+            # notes.md first, host:prefetch_1)
+            reads = [t for t in facts['tools'] if t['name'] == 'Read' and not t['call_id'].startswith('host:')]
             assert len(reads) == 2 and facts['changed'], (len(reads), facts['changed'])
             requests = self.requests('a2')
             assert requests[-1]['emitted'] == 'content' and requests[-1]['completion_checks']

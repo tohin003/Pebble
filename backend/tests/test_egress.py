@@ -30,6 +30,12 @@ from pebble.policy import PolicyError
 MAC = sys.platform == 'darwin' and Path('/usr/bin/sandbox-exec').is_file()
 
 
+# Restated 2026-10-30 (the lead): Xcode 27.1 became the selected developer directory on this Mac (2026-10-29), and
+# /usr/bin/python3, Apple's shim, follows xcode-select into Xcode, which these profiles do not allow ("unable to
+# load libxcrun", on 1.9.27's tree too). The shim launches name the developer directory their own profile allows,
+# as git_workflows and recipes do; what the sandbox allows and refuses is unchanged.
+CLT_ENV = {'DEVELOPER_DIR': '/Library/Developer/CommandLineTools'} if Path('/Library/Developer/CommandLineTools').is_dir() else {}
+
 def wait_for(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -506,7 +512,7 @@ def test_sandboxed_client_reaches_only_the_broker(tmp_path, brokers, upstreams):
       {network_profile(broker.port)}'''
     result = subprocess.run(['/usr/bin/sandbox-exec', '-p', profile, '/usr/bin/python3', '-I', str(script.resolve()),
                              str(broker.port), f'localhost:{upstream.port}', str(upstream.port)],
-                            capture_output=True, text=True, timeout=60, env={'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path)})
+                            capture_output=True, text=True, timeout=60, env={'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path), **CLT_ENV})
     assert result.returncode == 0, result.stderr[-2000:]
     out = json.loads(result.stdout.strip().splitlines()[-1])
     assert out['head'].startswith('HTTP/1.1 200') and out['echo'] == 'through-broker'
@@ -1131,7 +1137,7 @@ def test_confined_client_never_holds_the_credential_and_the_broker_host_args_hol
     (helper_dir / 'helper.py').write_text(HELPER)
     (client_dir / 'client.py').write_text(CONFINED)
     backend = str(Path(egress.__file__).resolve().parents[1])
-    clean = {'PATH': '/usr/bin:/bin', 'HOME': str(helper_dir), 'LANG': 'en_US.UTF-8'}
+    clean = {'PATH': '/usr/bin:/bin', 'HOME': str(helper_dir), 'LANG': 'en_US.UTF-8', **CLT_ENV}
     helper = subprocess.Popen([sys.executable, '-I', str(helper_dir / 'helper.py'), backend], stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean, cwd=helper_dir, text=True)
     control = subprocess.Popen([sys.executable, '-I', '-c', 'import sys; sys.stdin.read()'], stdin=subprocess.PIPE,
@@ -1156,7 +1162,7 @@ def test_confined_client_never_holds_the_credential_and_the_broker_host_args_hol
                                  str(client_dir.resolve() / 'client.py'), str(port), str(upstream.port), str(helper.pid),
                                  str(control.pid), str(client_dir.resolve())],
                                 capture_output=True, text=True, timeout=60,
-                                env={'PATH': '/usr/bin:/bin', 'HOME': str(client_dir / 'home')})
+                                env={'PATH': '/usr/bin:/bin', 'HOME': str(client_dir / 'home'), **CLT_ENV})
         assert result.returncode == 0, result.stderr[-2000:]
         out = json.loads(result.stdout.strip().splitlines()[-1])
         helper.stdin.write('\n')

@@ -67,7 +67,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = 'pebble.resources/1'
 RESOURCES = ROOT / 'src-tauri/resources'
 ENV_ALLOWLIST = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR',
-                 '__CF_USER_TEXT_ENCODING')  # exactly src-tauri/src/main.rs
+                 '__CF_USER_TEXT_ENCODING',
+                 # Phase 45 (F164): layer 4's two switches, Pebble's own and secret-free
+                 'PEBBLE_SCREEN_CAPTURE', 'PEBBLE_FOREGROUND_INPUT')  # exactly src-tauri/src/main.rs
 TOOLS = {'lsof': '/usr/sbin/lsof', 'nettop': '/usr/bin/nettop', 'top': '/usr/bin/top', 'pmset': '/usr/bin/pmset'}
 TOOL_SECONDS = 20
 SAMPLE_SECONDS = 1.0

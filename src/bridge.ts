@@ -47,6 +47,8 @@ export async function selectFile(
   const result = await open({
     directory,
     multiple: false,
+    // Phase 45 (F029): the bare picker said nothing about what it chose
+    title: directory ? "Choose a project folder" : undefined,
     filters: directory
       ? undefined
       : skill

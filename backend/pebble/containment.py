@@ -230,6 +230,8 @@ class _Anchor:
                 cwd = self.spec.get('cwd') or os.getcwd()
                 env = self.spec.get('env') or {}
                 os.chdir(cwd)
+                if isinstance(self.spec.get('limits'), dict):
+                    _limit(self.spec['limits'])  # Phase 46 (1.9.28, the w13b security review F2)
                 os.execve(self.spec['argv'][0], self.spec['argv'], env)
             except BaseException as exc:
                 try:
@@ -386,6 +388,23 @@ class _Anchor:
             os.write(self.status_fd, (json.dumps(message) + '\n').encode())
         except OSError:
             pass
+
+
+def _limit(limits):
+    """Phase 46 (1.9.28, the w13b security review F2): a command Auto runs without a card gets enforced rlimits, set here
+    in the anchor's single-threaded child before exec (never in the multi-threaded backend): CPU seconds per process, the
+    largest file it may write, no core file, and the person's processes an absolute cap the host counted outside the
+    sandbox (RLIMIT_NPROC counts every process of the UID). Soft and hard are both lowered, so the command cannot raise
+    them again. A limit the kernel refuses stops the command before it starts (fail closed)."""
+    import resource
+    for key, which in (('cpu_seconds', resource.RLIMIT_CPU), ('fsize_bytes', resource.RLIMIT_FSIZE),
+                       ('nproc', resource.RLIMIT_NPROC)):
+        value = limits.get(key)
+        if type(value) is int and value > 0:
+            hard = resource.getrlimit(which)[1]
+            cap = value if hard == resource.RLIM_INFINITY else min(value, hard)
+            resource.setrlimit(which, (cap, cap))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def _exit_code(status):

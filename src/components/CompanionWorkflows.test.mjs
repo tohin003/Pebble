@@ -285,7 +285,7 @@ try {
   assert.equal(firstPin, pin(chats['chat-a'], { max_steps: 12, max_seconds: 600 }), 'the fingerprint is the host’s, unchanged');
   assert.equal(focused, state.scheduleCard.value, 'focus moves to the review');
   text = textOf(region('Schedule review'));
-  for (const expected of ['Morning digest copy', 'Summarise the overnight issues.', 'Daily at 07:30 (Europe/London)', '12 steps · 600 seconds per run', 'successful results only when they change', 'Next fires2031-01-01T08:00:00Z · 2031-01-02T08:00:00Z', 'Workspace/work/a', 'Model{"id":"local-qwen","kind":"local","model":"qwen-3.5"}', 'Effortmedium', 'Permissions{"file_write":"ask","shell":"ask","network":"deny"}', 'Limits{"max_steps":12,"max_seconds":600}', 'Configuration fingerprint' + firstPin, '"workspace_pinned": true', 'Permissions still apply on each run', 'only while the Pebble service is running']) {
+  for (const expected of ['Morning digest copy', 'Summarise the overnight issues.', 'Daily at 07:30 (Europe/London)', 'successful results only when they change', 'Next fires2031-01-01T08:00:00Z · 2031-01-02T08:00:00Z', 'Workspace/work/a', 'Modelqwen-3.5 (on this Mac)', 'EffortMedium', 'Permissionswriting files: asks first · commands: asks first · network: off', 'Limits12 steps, 10 minutes per run', 'Technical details', 'Configuration fingerprint' + firstPin, '"workspace_pinned": true', 'Permissions still apply on each run', 'only while the Pebble service is running']) {
     assert.ok(text.includes(expected), 'review missing ' + expected);
   }
   assert.ok(!findButton('Review schedule'));
@@ -357,7 +357,7 @@ try {
   chats['chat-a'].previewExtras = { approval: 'auto', approved: true, grants: ['shell'], origin: 'host', authority: 'model', permissions: { shell: 'allow' }, auto_approve: true };
   await click('Review schedule');
   assert.deepEqual(Object.keys(state.draft.value).sort(), ['config', 'config_fingerprint', 'next_times', 'payload', 'version']);
-  assert.ok(textOf(region('Schedule review')).includes('Efforthigh') && state.draft.value.config_fingerprint !== beforeDrift);
+  assert.ok(textOf(region('Schedule review')).includes('EffortHigh') && state.draft.value.config_fingerprint !== beforeDrift);  // Phase 45 (F143): in words
   await click('Create reviewed schedule');
   assert.deepEqual(Object.keys(paramsFor('job_create')).sort(), exactCreate, 'no origin, approval, grant, permission or config field is sent');
   assert.equal(paramsFor('job_create').config_fingerprint, pin(chats['chat-a'], defaults));
@@ -380,7 +380,7 @@ try {
   const resumePin = state.pending.value.review.config_fingerprint;
   assert.equal(resumePin, pin(chats['chat-a'], defaults));
   text = textOf(region('Resume Morning digest'));
-  for (const expected of ['Workspace/work/a', 'Efforthigh', 'Permissions{"file_write":"ask","shell":"ask","network":"deny"}', 'Limits{"max_steps":64,"max_seconds":900}', 'Configuration fingerprint' + resumePin, 're-pins exactly this configuration', 'resuming is refused']) {
+  for (const expected of ['Workspace/work/a', 'EffortHigh', 'Permissionswriting files: asks first · commands: asks first · network: off', 'Limits64 steps, 15 minutes per run', 'Configuration fingerprint' + resumePin, 're-pins exactly this configuration', 'resuming is refused']) {
     assert.ok(text.includes(expected), 'resume review missing ' + expected);
   }
   await click('Confirm resume');

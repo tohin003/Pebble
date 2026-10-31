@@ -12,7 +12,12 @@ const CONNECTION = {
   refused: { tone: 'off', text: "Pebble didn't accept the connection", note: 'Quit and reopen Pebble, then try again.' },
   not_installed: { tone: 'off', text: "Pebble's Chrome helper isn't set up" },
   forbidden: { tone: 'off', text: "Pebble doesn't recognise this copy of the extension" },
+  // Phase 43: Pebble answered another protocol; its own message (the note) says which side to reload or update.
+  upgrade: { tone: 'off', text: "Pebble and this extension don't match" },
 };
+// Phase 43 (1.9.0): which browser this is (lib/worker.mjs BROWSERS), in the words Pebble's Connect a browser uses.
+export const BROWSER_NAMES = Object.freeze({ chrome: 'Chrome', comet: 'Comet', brave: 'Brave', edge: 'Edge', arc: 'Arc',
+  chromium: 'Chromium', 'chrome-beta': 'Chrome Beta', 'chrome-canary': 'Chrome Canary', other: 'Another browser' });
 // Phase 24 (V1-043): the Browser panel is in Pebble's Details drawer (the /browser command opens it); Settings has no
 // Browser page. "Connect Chrome" there adds the helper after one confirmation.
 const WHERE = 'Details › Browser (or type /browser)';
@@ -25,6 +30,12 @@ const FORBIDDEN = [
   `Load the extension from the folder Pebble shows in ${WHERE}.`,
   "If it still says this, remove this copy from chrome://extensions and load Pebble's folder again.",
 ];
+const UPGRADE = [
+  "Open this browser's Extensions page and press Reload on Pebble for Chrome.",
+  `If it still says this, load the extension folder Pebble shows in ${WHERE} again, or update Pebble.`,
+];
+const OWNED_LINE = { ready: 'Pebble is using this tab for a task.', away: 'Paused: this tab left the sites the task may use.',
+  handback: "Your turn: Pebble doesn't act on sign-in or payment pages." };
 
 const plainText = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
 
@@ -35,15 +46,35 @@ function shareLine(share) {
   return share.granted ? 'A task in Pebble can use this tab.' : 'Shared. Choose it for a task in Pebble.';
 }
 
+// Phase 43: the browser this is ({id, chosen, detected} from the worker), or null when the worker does not say.
+function browserOf(v) {
+  const item = v.browser && typeof v.browser === 'object' ? v.browser : null;
+  if (!item) return null;
+  const id = Object.hasOwn(BROWSER_NAMES, item.id) ? item.id : 'unknown';
+  return { id, name: id === 'unknown' ? '' : BROWSER_NAMES[id], chosen: Object.hasOwn(BROWSER_NAMES, item.chosen) ? item.chosen : null };
+}
+
 export function model(view) {
   const v = view && typeof view === 'object' ? view : {};
   const connection = CONNECTION[v.connection] || CONNECTION.idle;
   const pairing = v.pairing && typeof v.pairing === 'object' ? v.pairing : {};
-  const out = { status: { tone: connection.tone, text: connection.text, note: connection.note || plainText(v.message, 200) },
-    paused: v.paused === true, setup: [], pair: null, tab: null, others: [], stop: false, retry: false, unpair: false };
-  if (v.connection === 'not_installed') out.setup = SETUP;
+  const browser = browserOf(v);
+  const named = browser && browser.id !== 'chrome' && browser.name ? browser.name : null;  // a browser other than Chrome
+  const out = { status: { tone: connection.tone, text: connection.text, note: connection.note || plainText(v.message, 300) },
+    paused: v.paused === true, setup: [], pair: null, tab: null, others: [], stop: false, retry: false, unpair: false,
+    owned: [], ownTabs: null, browser: null, unpairLabel: `Unpair this ${named || 'Chrome'}` };
+  if (v.connection === 'not_installed') {
+    out.setup = named ? [SETUP[0], `Choose "Connect ${named}" and confirm: Pebble adds a small helper that lets ${named} talk to it.`, SETUP[2]]
+      : SETUP;
+    if (named) out.status.text = `Pebble's helper for ${named} isn't set up`;
+  }
   if (v.connection === 'forbidden') out.setup = FORBIDDEN;
-  out.retry = ['not_installed', 'forbidden', 'app_not_running', 'refused'].includes(v.connection);
+  if (v.connection === 'upgrade') out.setup = UPGRADE;
+  out.retry = ['not_installed', 'forbidden', 'app_not_running', 'refused', 'upgrade'].includes(v.connection);
+  if (browser) {
+    out.browser = { id: browser.id, label: browser.name ? `This browser: ${browser.name}` : 'Which browser is this?',
+      choices: Object.entries(BROWSER_NAMES).map(([id, name]) => ({ id, name })), chosen: browser.chosen };
+  }
   if (v.connection === 'unpaired' || v.connection === 'mismatch') {
     const pending = pairing.pending && typeof pairing.pending === 'object' ? pairing.pending : null;
     out.pair = pending
@@ -57,10 +88,25 @@ export function model(view) {
   out.unpair = pairing.paired === true && v.connection === 'connected';
   const current = v.current && typeof v.current === 'object' ? v.current : null;
   const shares = Array.isArray(v.shares) ? v.shares : [];
+  if (typeof v.ownTabs === 'boolean' && v.connection === 'connected') {
+    out.ownTabs = v.ownTabs
+      ? { on: true, label: 'Stop Pebble opening tabs here', note: 'Pebble may open its own tabs here, in its "Pebble" tab group, only for tasks and sites you approve in Pebble.' }
+      : { on: false, label: 'Let Pebble open its own tabs here', note: 'For tasks you approve in Pebble, on the sites you approve there. Your own tabs stay yours.' };
+  }
+  for (const item of Array.isArray(v.owned) ? v.owned : []) {
+    if (!item || typeof item !== 'object') continue;
+    out.owned.push({ tabId: item.tabId, label: plainText(item.title, 200) || plainText(item.origin, 300) || "Pebble's tab",
+      origin: plainText(item.origin, 300), line: item.acting ? 'Pebble is working in this tab now.' : OWNED_LINE[item.state] || OWNED_LINE.away });
+  }
   if (current) {
     const origin = plainText(current.origin, 300);
     const title = plainText(current.title, 200);
-    if (current.share) {
+    if (current.owned && typeof current.owned === 'object') {  // Phase 43: a tab Pebble opened for a task
+      out.tab = { kind: 'owned', title, origin, heading: 'Pebble opened this tab',
+        line: current.owned.acting ? 'Pebble is working in this tab now.' : OWNED_LINE[current.owned.state] || OWNED_LINE.away,
+        note: 'Pebble uses it only for the task you approved in Pebble, and only on the sites you approved there. Anything that sends, buys, posts or deletes still waits for your approval.',
+        actions: [] };
+    } else if (current.share) {
       const share = current.share;
       out.tab = { kind: 'shared', title, origin, heading: 'Pebble can use this tab', line: shareLine(share),
         scope: share.scope === 'site' ? `Kept for ${origin} in this tab` : `Just this visit to ${origin}`,
@@ -85,7 +131,7 @@ export function model(view) {
     out.others.push({ tabId: share.tabId, label: plainText(share.title, 200) || plainText(share.origin, 300) || 'A tab',
       origin: plainText(share.origin, 300), line: shareLine(share) });
   }
-  out.stop = shares.length > 0;
+  out.stop = shares.length > 0 || out.owned.length > 0;
   return out;
 }
 
@@ -165,6 +211,18 @@ export function render(root, m, doc, onAction) {
     }
     root.append(card);
   }
+  if (m.owned.length) {  // Phase 43: Pebble's own tabs, for the person to see (they close them like any tab)
+    const list = el('ul', 'others');
+    list.setAttribute('aria-label', "Pebble's tabs");
+    for (const item of m.owned) {
+      const row = el('li');
+      const words = el('div', 'other-words');
+      words.append(el('span', 'other-label', item.label), el('span', 'note', item.line));
+      row.append(words);
+      list.append(row);
+    }
+    root.append(el('h3', '', "Pebble's tabs"), list);
+  }
   if (m.others.length) {
     const list = el('ul', 'others');
     list.setAttribute('aria-label', 'Other shared tabs');
@@ -183,8 +241,27 @@ export function render(root, m, doc, onAction) {
       el('p', 'hint', 'Ends every shared tab and anything Pebble is doing in Chrome.'));
     root.append(stop);
   }
+  if (m.ownTabs) {
+    const own = el('div', 'action');
+    own.append(button(m.ownTabs.label, m.ownTabs.on ? 'own-tabs-off' : 'own-tabs-on', null, 'secondary'), el('p', 'hint', m.ownTabs.note));
+    root.append(own);
+  }
   const footer = el('div', 'footer');
   footer.append(el('p', '', 'Pebble only sees tabs you share. Page text is never treated as instructions.'));
-  if (m.unpair) footer.append(button('Unpair this Chrome', 'unpair', null, 'quiet'));
+  if (m.browser) {  // Phase 43: Pebble's Connect a browser needs to know which browser this is
+    const label = el('label', 'browser-choice', m.browser.label);
+    const select = el('select', 'browser');
+    const choices = m.browser.chosen ? m.browser.choices : [{ id: '', name: 'Choose…' }, ...m.browser.choices];
+    for (const choice of choices) {
+      const option = el('option', '', choice.name);
+      option.value = choice.id;
+      if (choice.id === (m.browser.chosen || '')) option.selected = true;
+      select.append(option);
+    }
+    select.addEventListener('change', () => onAction('browser', null, select.value));
+    label.append(select);
+    footer.append(label);
+  }
+  if (m.unpair) footer.append(button(m.unpairLabel || 'Unpair this Chrome', 'unpair', null, 'quiet'));
   root.append(footer);
 }

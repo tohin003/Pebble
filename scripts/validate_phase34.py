@@ -325,8 +325,11 @@ class Campaign:
             assert runner.PRECISION in large and runner.PRECISION not in small, 'the writing rules are misplaced'
             completion = 'run them with RunTests before your final answer.'
             assert large.index(completion) + len(completion) == large.index(runner.TEST_SCOPE), 'test rule not with it'
+            # Phase 46 (1.9.27, restated with its reason): W4 now keeps a set-aside source's figures out too ("without its
+            # path, link or figures") and says "quote no figure" for an unknown answer (private d-rf-92 on Opus quoted a
+            # rumour's figure beside the right answer; runner.PRECISION, shorter than before)
             for needle in ('satisfies both', 'exactly that shape', 'ends your reply, not a file', 'cite only that source',
-                           'without its path or link', 'do not quote a figure'):
+                           'without its path, link or figures', 'quote no figure'):
                 assert needle in runner.PRECISION, ('PRECISION lacks', needle)
             from pebble.tool_catalogue import TOOLS
             spec = next(t['function'] for t in TOOLS if t['function']['name'] == 'RunTests')

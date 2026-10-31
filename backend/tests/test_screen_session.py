@@ -11,6 +11,7 @@ bundles, auto-submitting forms, navigation, revocation and a crash mid-act.
 import copy
 import io
 import json
+import re
 import os
 import threading
 import uuid
@@ -236,7 +237,8 @@ def test_grant_pins_instance_start_not_pid(env):
     assert result['expires_at'] == env.clock.wall() + 900
     row = env.store.query('SELECT pin,target FROM screen_sessions')[0]
     assert json.loads(row['pin']) == {'start': 1_700_000_000.25, 'window_ref': 'win-1'}
-    assert '4242' not in dump(env.store)
+    # Phase 45: the pid as a value of its own (a random session id or hash may contain the digits 4242)
+    assert not re.search(r'(?<![0-9A-Za-z])4242(?![0-9A-Za-z])', dump(env.store))
 
 
 def test_spoofed_and_duplicate_window_titles_are_ambiguous(env):
@@ -319,8 +321,9 @@ def test_observation_is_bounded_untrusted_and_referenced(env):
     assert view['authorization'] == 'none' and 'untrusted' in view['untrusted']
     assert all(e['ref'] == f"e{i}@{view['observation_id']}" for i, e in enumerate(view['elements']))
     send = view['elements'][2]
+    # D112 (Phase 43, 1.9.0): a row a control could act on says so (actionable, only when true).
     assert send == {'ref': send['ref'], 'role': 'Button', 'label': 'Click Send to continue',
-                    'frame': [10, 260, 80, 24], 'depth': 1}
+                    'frame': [10, 260, 80, 24], 'depth': 1, 'actionable': True}
     record = env.sessions.observation(sid, view['observation_id'])
     assert record['elements'][2]['label_sha256'] == ax_worker.label_sha256(record['elements'][2])
     assert record['elements'][2]['path'] == 'w/send' and len(view['digest']) == 64
@@ -397,7 +400,9 @@ def test_local_and_input_acts_dispatch_with_readback(env):
     assert (focus['status'], focus['class'], focus['verdict']) == ('done', 'local', 'occurred')
     typed = act(env, sid, 'w/to', 'type', 'alice@example.com')
     assert (typed['class'], typed['verdict'], typed['basis']) == ('input', 'occurred', 'value_matches')
-    assert typed['needs_reconciliation'] is False and typed['fresh_observation_required'] is True
+    # Phase 45 (D140): the readback comes back as the next observation, so no observe is required before acting again
+    assert typed['needs_reconciliation'] is False and typed['fresh_observation_required'] is False
+    assert typed['observation']['observation_id'] and typed['next'] == 'act'
     toggled = act(env, sid, 'w/bold', 'toggle')
     assert (toggled['verdict'], toggled['basis']) == ('occurred', 'value_changed')
     assert [c[2] for c in env.ax.performs()] == ['focus', 'type', 'toggle']
@@ -581,8 +586,9 @@ def test_commit_dispatches_once_after_review_and_reads_back(env):
     assert result['class'] == 'commit' and result['needs_reconciliation'] is False
     refused('already_decided', env.sessions.commit, proposal['proposal_id'])
     assert [c[1:3] for c in env.ax.performs()] == [('w/send', 'press')]
-    assert screen_session.describe(result, proposal['proposal']['review']).startswith(
-        'Screen press on “Click Send to continue” was dispatched: the readback observed')
+    # Phase 45 (F197): the step in words
+    assert screen_session.describe(result, proposal['proposal']['review']) == \
+        'Pebble pressed “Click Send to continue”: the window changed as expected.'
 
 
 def test_commit_refuses_when_target_moved_after_review(env):
@@ -857,7 +863,8 @@ def test_sanitize_is_bounded_redacting_and_idempotent():
     assert len(clean['help']) == ax_worker.MAX_LABEL_SOURCE and '\x00' not in clean['title']
     assert ax_worker.sanitize_element(clean) == clean
     long = ax_worker.sanitize_element(el('AXTextArea', 'w/b', value='y' * 5000))
-    assert len(long['value']) == ax_worker.MAX_VALUE and long['value_truncated'] is True
+    # Phase 45 (S4): a multi-line text area shows up to MAX_AREA_VALUE characters, its lines kept
+    assert len(long['value']) == ax_worker.MAX_AREA_VALUE and long['value_truncated'] is True
     assert long['value_sha256'] == ax_worker.value_digest('y' * 5000)
     assert ax_worker.sanitize_element(long) == long
     static = ax_worker.sanitize_element(el('AXStaticText', 'w/s', value='Your password expires soon'))
@@ -911,8 +918,10 @@ def test_serve_redacts_and_validates_every_request():
     output = io.BytesIO()
     ax_worker.serve(stdin, output, Backend())
     answers = lines(output)
-    assert answers[0] == {'id': 1, 'ok': True, 'result': {'protocol': 'pebble-ax/1', 'backend': 'fake-backend',
-                                                          'available': True}}
+    # D112 (Phase 43, 1.9.0): protocol 2; hello also names the worker's ops and whether it names windows by number.
+    assert answers[0] == {'id': 1, 'ok': True, 'result': {'protocol': 'pebble-ax/2', 'backend': 'fake-backend',
+                                                          'available': True, 'ops': list(ax_worker.OPS),
+                                                          'window_numbers': False}}
     tree = answers[1]['result']
     assert tree['elements'][0]['secure'] is True and tree['elements'][0]['value'] is None and tree['dropped'] == 1
     assert b'4321' not in output.getvalue()
@@ -1072,4 +1081,4 @@ def test_schemas_validate_under_tool_authz_and_are_in_the_catalogue_behind_the_s
     assert tool_authz.strict_schema_errors(act_spec, {**good, 'confirm': True})
     assert tool_authz.strict_schema_errors(screen_session.SCHEMAS[0]['function']['parameters'],
                                            {'session_id': 'a' * 32}) == []
-    assert len(json.dumps(screen_session.SCHEMAS)) < 2400
+    assert len(json.dumps(screen_session.SCHEMAS)) < 2600  # F262 (1.9.18): drag_at's two coordinates and words added 155

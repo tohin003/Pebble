@@ -32,7 +32,7 @@ BASE_HUMAN = 'Committed human notes.\n'
 DIRTY_HUMAN = 'Uncommitted human work that must stay untouched.\n'
 WORKTREE_TOOLS = {'ReadGitWorktrees', 'PreviewWorktreeExport', 'ReadWorktreeExport', 'IntegrateWorktreeFile'}
 OFFERED = WORKTREE_TOOLS | {'ReadGitStatus', 'RunTests'}
-STEPS = 8
+STEPS = 7  # Phase 46 (D154): the run waits at the staged RunTests (runner.STAGED_STOP); no held turn
 
 
 def sha(data):
@@ -102,10 +102,8 @@ def main():
             assert edit_approved.wait(25), 'native edit approval never arrived'
             return {'tool_calls': [tool('RunTests', 'root-tests', {'recipe': 'python-unittest'})]}
         if step == 7:
-            pending = latest(values, 'kind')
-            assert pending and pending['kind'] == 'tests' and pending['status'] == 'awaiting_user_approval', 'test proposal'
-            return {'content': 'The isolated test run waits for native review.'}
-        if step == 8:
+            # Phase 46 (D154): the run waited at the staged RunTests, so this request follows the native test approval
+            # (the test proposal's pending state is checked from the run's journal before it, in main)
             assert tests_approved.wait(25), 'native test approval never arrived'
             return {'content': 'Integrated calc.py from the managed worktree; the isolated unittest run passed.'}
         raise AssertionError(f'Unexpected root inference step {step}.')
@@ -282,8 +280,13 @@ def main():
                            'the outer integration receipt mirrors the applied outcome and keeps its correlation metadata']
 
                 run, chat = settle(service, cid, rid, 'pending isolated tests',
-                                   lambda run, chat: run['state'] == 'waiting_approval' and steps['root'] >= 7 and pending(chat, 'tests'))
-                assert not errors and steps['root'] == 7, diagnostics('seven root steps', run, chat)
+                                   lambda run, chat: run['state'] == 'waiting_approval' and steps['root'] >= 6 and pending(chat, 'tests'))
+                assert not errors and steps['root'] == 6, diagnostics('six root steps', run, chat)
+                # Phase 46 (D154): the run waits at the staged RunTests (runner.STAGED_STOP), so the test proposal the model
+                # would have read on a seventh step is read from the run's journal
+                [proposal] = [t for t in run['tools'] if t['name'] == 'RunTests']
+                assert proposal['result']['kind'] == 'tests' and proposal['result']['status'] == 'awaiting_user_approval', \
+                    'test proposal'
                 [tests] = pending(chat, 'tests')
                 assert tests['payload']['recipe'] == 'python-unittest' and tests['payload']['drafts'] == []
                 assert [a['status'] for a in chat['actions'] if a['kind'] == 'edit'] == ['applied']
@@ -295,7 +298,7 @@ def main():
                 checks.append('the resumed root requests isolated tests and native approval runs the actual macOS sandbox snapshot with exit 0')
 
                 run, chat = settle(service, cid, rid, 'completed root', lambda run, chat: run['state'] == 'completed')
-                assert not errors and steps['root'] == STEPS, diagnostics('eight root steps', run, chat)
+                assert not errors and steps['root'] == STEPS, diagnostics('seven root steps', run, chat)
                 [runtests] = [t for t in run['tools'] if t['name'] == 'RunTests']
                 assert runtests['result']['status'] == 'applied' and runtests['result']['result']['exit_code'] == 0
                 assert {t['call_id']: t for t in run['tools']}[write['call_id']]['result']['status'] == 'applied'

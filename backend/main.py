@@ -60,11 +60,18 @@ def refusal(exc):
     return isinstance(exc, ValueError) and not isinstance(exc, (UnicodeError, json.JSONDecodeError))
 
 
+# Phase 45 (F239, audit round R10): a defect's own words ("App._route_table.<locals>.<lambda>() got an unexpected keyword
+# argument 'id'") reached the person in a red banner; a programming error reads as one sentence, its traceback in the log
+DEFECTS = (TypeError, KeyError, AttributeError, IndexError, NameError)
+DEFECT_TEXT = "Pebble couldn't do that because of an internal error. It is recorded in Pebble's log."
+
+
 def error_reply(ident, exc, friendly):
     """The RPC error payload: the message, plus 'code' when the exception carries a content-free one (sign-in
-    classes, handoff_required, trashed_conversation, disk_full). friendly(exc) words database failures."""
+    classes, handoff_required, trashed_conversation, disk_full). friendly(exc) words database failures; a defect
+    (DEFECTS) reads as DEFECT_TEXT."""
     shown = friendly(exc) or exc
-    reply = {"id": ident, "error": str(shown)}
+    reply = {"id": ident, "error": DEFECT_TEXT if shown is exc and isinstance(exc, DEFECTS) else str(shown)}
     code = getattr(shown, 'code', None)
     if isinstance(code, str) and ERROR_CODE.fullmatch(code):
         reply['code'] = code
@@ -133,6 +140,8 @@ def main():
     parser.add_argument('--mcp-schema-worker', action='store_true')
     parser.add_argument('--mcp-media-image-worker')
     parser.add_argument('--ax-worker', action='store_true')
+    # Phase 42 (E-N2): the macOS backend, asked for only by ax_worker.probe (the shell's diagnostic).
+    parser.add_argument('--ax-backend', choices=('blocked', 'mac'), default='blocked')
     # Phase 22 (k22-identity): one-shot vault maintenance, run by the parent as the installed bundle's own backend (the
     # vault helper's owner): `status` reports the one-time Keychain migration; `cleanup-legacy` deletes the old
     # per-item Keychain items only when asked (after the person no longer wants a no-sign-in rollback).
@@ -164,9 +173,9 @@ def main():
         schema_worker_main()
         return
     if args.ax_worker:
-        # Phase 16 D04: serves only the blocked backend until experiment E-N2.
+        # Phase 16 D04: serves only the blocked backend until experiment E-N2 (Phase 42: --ax-backend mac for its probe).
         from pebble.ax_worker import worker_main as ax_main
-        ax_main()
+        ax_main(args.ax_backend)
         return
     if args.code_worker:
         from pebble.code_worker import main as code_main
@@ -218,7 +227,14 @@ def main():
             output.write(json.dumps(data, ensure_ascii=False) + "\n")
             output.flush()
 
-    emit = lambda name, data: write({"event": name, "data": data})
+    # Phase 46 (1.9.29, D214): Pebble Remote, the iPhone bridge, sees every event the windows see. It is off until the
+    # person turns it on in Settings > iPhone; until then it holds no thread or socket and its tee is one attribute check.
+    from pebble.remote import RemoteHub
+    remote = RemoteHub()
+
+    def emit(name, data):
+        write({"event": name, "data": data})
+        remote.tee(name, data)
     # Phase 22 (s22-storage): --home, then PEBBLE_HOME, then ~/.pebble. A --home that is not ~/.pebble and came
     # without --legacy-home is a flat home exactly as before (tests and validators): the database sits in it.
     from pebble import data_home
@@ -271,12 +287,15 @@ def main():
             raise
         logging.warning("Startup is waiting for an upgrade step: %s", exc.reason)
         app = Maintenance(home, exc, start, emit)
+    else:
+        remote.attach(app, home, emit)  # starts the bridge only when the person left Remote on
 
     rpc_log = logging.getLogger(RPC_LOG)
 
     def request(req):
         try:
-            result = app.dispatch(req["method"], req.get("params", {}))
+            method, params = req["method"], req.get("params", {})
+            result = remote.dispatch(method, params) if remote.owns(method) else app.dispatch(method, params)
             write({"id": req["id"], "result": result})
         except Exception as exc:
             reply, shown = error_reply(req.get("id"), exc, friendly_error)
@@ -319,6 +338,7 @@ def main():
             executor.shutdown(wait=False, cancel_futures=True)
         # Answered before the store closes under them, as when they ran on the reader thread; bounded.
         wait(answering, timeout=CLOSE_ANSWER_SECONDS)
+        remote.close()  # the phones go before the store does
         app.close()
 
 

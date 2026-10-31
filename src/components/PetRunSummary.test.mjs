@@ -160,6 +160,14 @@ assert.ok(/<div class="companion-task-status" role="status"><i class="running"><
 assert.ok(sidebar.includes('aria-label="Task activity, newest first"'));
 assert.ok(sidebar.includes("Reading &lt;img src=x onerror=host()&gt;2") && !/<img\b/.test(sidebar));
 assert.ok(sidebar.indexOf("onerror=host()&gt;2") < sidebar.indexOf("onerror=host()&gt;0"), "newest first");
+// Phase 45 (F078): a step's start and end are one row, shown done; a different step keeps its own
+const paired = [{ chat_id: "chat-a", label: "Searching the web", kind: "working", tool: "WebSearch", at: 1700000000000 },
+  { chat_id: "chat-a", label: "Searching the web", kind: "done", tool: "WebSearch", at: 1700000001000 },
+  { chat_id: "chat-a", label: "Reading a public web source", kind: "working", tool: "ReadURL", at: 1700000002000 }];
+const pairedHtml = await renderToString(createSSRApp(Sidebar, { ...sidebarProps, activity: paired }));
+assert.equal((pairedHtml.match(/Searching the web/g) || []).length, 1, "one row for a step's start and end");
+assert.ok(/<li class="done"><i><\/i><div><span>Searching the web<\/span>/.test(pairedHtml), "the merged row is done");
+assert.ok(/<li class="working"><i><\/i><div><span>Reading a public web source/.test(pairedHtml), "a running step stays running");
 const idle = await renderToString(createSSRApp(Sidebar, { ...sidebarProps, active: null }));
 assert.ok(idle.includes('role="status"><i class=""></i>Task history</div>'));
 assert.deepEqual(vueErrors, []);

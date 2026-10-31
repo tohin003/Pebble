@@ -2466,7 +2466,9 @@ def _derive(run, claim, verified, trace):
 
 def _derivations(run, claims, trace):
     """[{claim_id, basis, from}] for the answer's unsupported or uncited numeric claims that follow from values the
-    host verified (repeated, rounded, converted or computed). Everything else stays as checked."""
+    host verified (repeated, rounded, converted or computed), and for an uncited version or section number that repeats
+    a verified one (as a closing "FINAL: 10.2.3" after the cited sentence). Dates and quotations keep their own
+    citation rule (test_reply_after_decision_20, pilot 5 case 2). Everything else stays as checked."""
     verified = [c for c in claims if c['support'] == 'supported' and c['kind'] in DERIVED_KINDS + ('date',)
                 and c['claim_id'] in trace['spans']]
     candidates = [c for c in claims if c['support'] in ('unsupported', 'uncited') and c['kind'] in DERIVED_KINDS
@@ -2476,6 +2478,15 @@ def _derivations(run, claims, trace):
         found = _derive(run, claim, verified, trace)
         if found:
             out.append({'claim_id': claim['claim_id'], **found})
+            if len(out) >= MAX_DERIVED:
+                return out
+    for claim in claims:
+        if claim['support'] != 'uncited' or claim['kind'] != 'ver':
+            continue
+        same = [v['claim_id'] for v in claims if v['support'] == 'supported' and v['kind'] == claim['kind']
+                and v['key'] == claim['key']]
+        if same:
+            out.append({'claim_id': claim['claim_id'], 'basis': 'repeated', 'from': same[:4]})
             if len(out) >= MAX_DERIVED:
                 break
     return out

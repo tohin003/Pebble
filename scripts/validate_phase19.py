@@ -101,7 +101,13 @@ PHASE18_TOOLS = frozenset((
 # D72 (Phase 37): model tools added after Phase 18, each named with its phase. The whole-catalogue checks compare the
 # current catalogue with PHASE18_TOOLS plus these, so any other addition still fails; PHASE18_TOOLS itself is unchanged,
 # and the 4K offers are still checked against it alone.
-LATER_TOOLS = frozenset({'RunCode'})  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
+LATER_TOOLS = frozenset({'RunCode',  # Phase 37, 1.5.0: Pebble's Workshop, Code Mode
+                         # Phase 40, 1.6.0 (D90): the Companion's general tools
+                         'Shell', 'ReadFile', 'WriteFile', 'EditFile', 'Screenshot', 'FindTool',
+                         'ScreenRequest',  # D103: Phase 42, 1.8.0: asking the person for one app window
+                         'OpenURL',  # D106: Phase 43, 1.9.0: a web address in the person's browser
+                         'AppAction',  # D112: Phase 43, 1.9.0: fixed verbs for Shortcuts, Music, Notes, Calendar, Mail, Finder
+                         'BrowserRequest'})  # D113: Phase 43, 1.9.0: asking the person for sites in their browser
 UI_SCHEMA_BYTES_18 = {'UIRender': 1108, 'UIUpdate': 702}
 LEGACY_KINDS = ('quiz', 'diagram', 'html', 'form', 'table', 'chart', 'plan', 'evidence')
 LAYERS = ('working', 'episodic', 'semantic', 'procedural', 'temporal', 'profile')
@@ -113,6 +119,9 @@ NATIVE_ONLY_18 = frozenset({'lifecycle_event', 'lifecycle_quit_summary', 'notifi
 PHASE19_ROUTES = ('artifact_refresh', 'quiz_attempt', 'quiz_start', 'quiz_save', 'quiz_submit', 'quiz_share')
 PET_PHASE19_ROUTES = ('artifact_refresh', 'quiz_attempt', 'quiz_start', 'quiz_save', 'quiz_submit')
 MAIN_ONLY = ('approve', 'reject', 'artifact_stop', 'process_inspect', 'process_input_human', 'run_reconcile', 'quiz_share')
+# Phase 45 (D133, the person, 2026-10-26): the companion may answer simple cards only, through these two routes; the
+# backend refuses every other kind (app.SIMPLE_CARDS). approve and reject stay main-only (MAIN_ONLY above).
+SIMPLE_CARD_ROUTES = frozenset({'approve_simple', 'reject_simple'})
 # What the shell adds to quiz_share for the main window (parent patch; the validator stands in for the shell).
 SHELL_SHARE = {'surface': 'main'}
 BINDING_SOURCES = frozenset({'runs.recent', 'runs.usage', 'jobs.fires', 'agents.tree', 'artifacts.revisions',
@@ -561,10 +570,13 @@ class Campaign:
             allowed, pet = set(facts['allowed']), set(facts['pet'])
             assert {'artifact_get', 'artifact_history'} <= pet <= allowed, sorted(pet - allowed)
             assert not pet & set(MAIN_ONLY), sorted(pet & set(MAIN_ONLY))
+            approvals = {r for r in pet if 'approve' in r or 'reject' in r}
+            assert approvals <= SIMPLE_CARD_ROUTES, sorted(approvals - SIMPLE_CARD_ROUTES)  # D133
             missing = sorted(set(PHASE19_ROUTES) - allowed) + sorted('pet:' + r for r in set(PET_PHASE19_ROUTES) - pet)
             if missing:
                 raise Pending('routes', 'Missing: ' + ', '.join(missing))
-            return {'allowed': len(allowed), 'pet': len(pet), 'main_only': list(MAIN_ONLY)}
+            return {'allowed': len(allowed), 'pet': len(pet), 'main_only': list(MAIN_ONLY),
+                    'pet_simple_card_routes': sorted(pet & SIMPLE_CARD_ROUTES)}
         self.check('s1_both_windows_reach_the_phase19_routes_and_approval_stop_and_sharing_stay_in_the_main_window', windows)
 
         def surface():

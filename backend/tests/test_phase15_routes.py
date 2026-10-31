@@ -160,8 +160,10 @@ def test_handoff_routes_are_native_only():
     assert names <= set(re.findall(r'"([a-z_]+)"', allowed.group(1)))
     from pebble.tool_authz import NATIVE_ONLY
     assert names <= NATIVE_ONLY  # A catalogue entry with one of these names is refused for every model actor.
+    # Phase 46 (1.9.29, D214): remote_policy.py is the iPhone bridge's copy of main.rs's ALLOWED, which names every
+    # main-window route; the phone reaches them through the same App.dispatch as the main window, after its unlock.
     for path in (ROOT / 'backend/pebble').glob('*.py'):
-        if path.name not in {'app.py', 'model_handoff.py', 'tool_authz.py'}:
+        if path.name not in {'app.py', 'model_handoff.py', 'tool_authz.py', 'remote_policy.py'}:
             assert 'model_handoff_start' not in path.read_text(), path.name
 
 

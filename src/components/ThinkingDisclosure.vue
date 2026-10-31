@@ -94,7 +94,9 @@ const took = (duration: number | null) => (duration !== null && duration >= 1 ? 
       <span class="thinking-caret" :class="{ open: own }" aria-hidden="true"></span>
     </button>
     <p v-if="!controlled && verdict" class="thinking-verdict" :class="{ unverified: !verdict.startsWith('Verified') }">{{ verdict }}</p>
-    <div v-if="shown" :id="id" ref="scroller" class="thinking-body" @scroll="scrolled">
+    <!-- Phase 46 (1.9.29): a window may draw the body itself (the work view's cards) under this receipt -->
+    <div v-if="shown && $slots.body" :id="id" class="thinking-cards"><slot name="body" /></div>
+    <div v-else-if="shown" :id="id" ref="scroller" class="thinking-body" @scroll="scrolled">
       <ol v-if="list.length" class="thinking-steps" :aria-label="running ? 'What Pebble is doing' : 'What Pebble did'">
         <li v-if="record.dropped" class="thinking-more">{{ record.dropped }} earlier {{ record.dropped === 1 ? "step is" : "steps are" }} not shown.</li>
         <template v-for="entry in entries" :key="entry.type === 'group' ? 'g' + entry.key : entry.item.seq">
@@ -194,6 +196,9 @@ const took = (duration: number | null) => (duration !== null && duration >= 1 ? 
 }
 .live .thinking-body {
   margin: 6px 0 16px 10px;
+}
+.thinking-cards {
+  margin: 2px 0 14px;
 }
 .full .thinking-body {
   max-height: none;

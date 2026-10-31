@@ -54,6 +54,12 @@ IDENTIFIERS = {'release': 'com.pebble.local', 'test': 'com.pebble.candidate', 'b
 HELPER_SOURCE = 'src-tauri/helpers/pebble-vault/pebble_vault.c'
 HELPER_FOLDER, HELPER_BINARY, HELPER_MANIFEST = 'helpers', 'pebble-vault', 'pebble-vault.json'
 HELPER_FORMAT = 'pebble.vault-helper/1'
+# Phase 45 (layer 4): the pinned screen helper shares that folder (scripts/build_screen_helper.py). Its identifier is
+# kept out of IDENTIFIERS, whose four requirements status() reports as they were.
+SCREEN_HELPER_SOURCE = 'src-tauri/helpers/screen/main.swift'
+SCREEN_HELPER_BINARY, SCREEN_HELPER_MANIFEST = 'pebble-screen-helper', 'pebble-screen-helper.json'
+SCREEN_HELPER_FORMAT = 'pebble.screen-helper/1'
+SCREEN_HELPER_IDENTIFIER = 'com.pebble.screen-helper'
 LOCK_SECONDS = 900  # the identity keychain locks itself 15 minutes after use and on sleep
 STAMP = re.compile(r'\d{8}T\d{6}Z')
 SHA1 = re.compile(r'[0-9A-F]{40}')
@@ -309,9 +315,13 @@ def check_pinned_helper(root, identity=None):
     folder = Path(root) / 'src-tauri/resources' / HELPER_FOLDER
     if not os.path.lexists(folder):
         return None
-    if _mode(folder)['kind'] != 'directory' or sorted(os.listdir(folder)) != sorted([HELPER_BINARY, HELPER_MANIFEST]):
-        raise Refused('vault_helper_invalid', 'The helpers folder must hold exactly the helper and its manifest.',
-                      path=str(folder), found=sorted(os.listdir(folder)) if folder.is_dir() else None)
+    # Phase 45: or the vault helper, its manifest and the pinned screen helper with its manifest (checked below).
+    allowed = (sorted([HELPER_BINARY, HELPER_MANIFEST]),
+               sorted([HELPER_BINARY, HELPER_MANIFEST, SCREEN_HELPER_BINARY, SCREEN_HELPER_MANIFEST]))
+    if _mode(folder)['kind'] != 'directory' or sorted(os.listdir(folder)) not in allowed:
+        raise Refused('vault_helper_invalid', 'The helpers folder must hold exactly the helper and its manifest (and '
+                      'the screen helper with its manifest).', path=str(folder),
+                      found=sorted(os.listdir(folder)) if folder.is_dir() else None)
     for name in (HELPER_BINARY, HELPER_MANIFEST):
         if _mode(folder / name)['kind'] != 'file':
             raise Refused('vault_helper_invalid', 'A pinned helper file is not a regular file.', path=str(folder / name))
@@ -338,6 +348,47 @@ def check_pinned_helper(root, identity=None):
         raise Refused('vault_helper_identity_mismatch', 'The pinned helper is signed by another identity, so it would '
                       'refuse this build\'s backend.', helper=(manifest['identity'] or {}).get('sha1'),
                       build=identity.sha1)
+    return manifest
+
+
+def check_pinned_screen_helper(root, identity=None):
+    """Phase 45 (layer 4): the pinned screen helper in <root>/src-tauri/resources/helpers, checked as
+    check_pinned_helper checks the vault helper: the binary and its manifest together, both regular files, the
+    manifest's format and identifier, the binary's SHA-256, the Swift source's SHA-256 and, given an identity, the same
+    signer. Returns the manifest, or None when the folder holds no screen helper. Reads files only; the candidate
+    builder also checks the cdhash with codesign --display and never re-signs it."""
+    folder = Path(root) / 'src-tauri/resources' / HELPER_FOLDER
+    present = [name for name in (SCREEN_HELPER_BINARY, SCREEN_HELPER_MANIFEST) if os.path.lexists(folder / name)]
+    if not present:
+        return None
+    if len(present) != 2 or any(_mode(folder / name)['kind'] != 'file' for name in present):
+        raise Refused('screen_helper_invalid', 'The screen helper and its manifest are pinned together, as regular '
+                      'files.', path=str(folder), found=present)
+    try:
+        manifest = json.loads((folder / SCREEN_HELPER_MANIFEST).read_bytes())
+    except ValueError:
+        raise Refused('screen_helper_invalid', 'The screen helper manifest is not JSON.',
+                      path=str(folder / SCREEN_HELPER_MANIFEST)) from None
+    keys = ('format', 'identifier', 'sha256', 'cdhash', 'designated_requirement', 'identity', 'source')
+    if not isinstance(manifest, dict) or any(key not in manifest for key in keys) \
+            or manifest['format'] != SCREEN_HELPER_FORMAT or manifest['identifier'] != SCREEN_HELPER_IDENTIFIER:
+        raise Refused('screen_helper_invalid', 'The screen helper manifest is malformed.',
+                      path=str(folder / SCREEN_HELPER_MANIFEST))
+    binary = hashlib.sha256((folder / SCREEN_HELPER_BINARY).read_bytes()).hexdigest()
+    if binary != manifest['sha256']:
+        raise Refused('screen_helper_differs', 'The pinned screen helper is not the manifest\'s.',
+                      expected=manifest['sha256'], actual=binary)
+    try:
+        source = hashlib.sha256((Path(root) / SCREEN_HELPER_SOURCE).read_bytes()).hexdigest()
+    except OSError:
+        source = None
+    if not isinstance(manifest['source'], dict) or manifest['source'].get('sha256') != source:
+        raise Refused('screen_helper_source_differs', 'The pinned screen helper was built from another source.',
+                      expected=(manifest['source'] or {}).get('sha256') if isinstance(manifest['source'], dict) else None,
+                      actual=source)
+    if identity is not None and (manifest['identity'] or {}).get('sha1') != identity.sha1:
+        raise Refused('screen_helper_identity_mismatch', 'The pinned screen helper is signed by another identity than '
+                      'this build.', helper=(manifest['identity'] or {}).get('sha1'), build=identity.sha1)
     return manifest
 
 

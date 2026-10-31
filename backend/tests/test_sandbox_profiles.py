@@ -160,7 +160,8 @@ def test_clt_python_starts(tmp_path):
     profile = build(executable=CLT_PY, exec_paths=[sandbox_profiles.CLT], read_paths=[sandbox_profiles.CLT],
                     project_root=root, temp=temp, job_marker=marker())
     out = subprocess.run(['/usr/bin/sandbox-exec', '-p', profile, str(CLT_PY), '-c', 'print("CLT-OK")'],
-                         env={'PATH': '/usr/bin:/bin', 'HOME': str(temp), 'TMPDIR': str(temp)},
+                         env={'PATH': '/usr/bin:/bin', 'HOME': str(temp), 'TMPDIR': str(temp),
+                              'DEVELOPER_DIR': str(sandbox_profiles.CLT)},  # restated 2026-10-30: see test_egress.CLT_ENV
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and 'CLT-OK' in out.stdout, out.stderr
 

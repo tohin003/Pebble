@@ -466,6 +466,23 @@ def test_small_route_hides_file_effect_schemas_only_for_explicit_read_only_goals
     native_grants_intact(app, staged.rid)
 
 
+@pytest.mark.parametrize('goal,runs', [
+    ("Run calc.py to print the totals, but don't change calc.py.", True),
+    ("Please run calc.py and report what it prints; don't edit anything.", True),
+    ("Explain what calc.py prints when I run it; don't change anything.", False),
+    ("Don't modify anything; delegate a review of calc.py to an agent.", False),
+])
+def test_a_read_only_goal_that_asks_to_run_something_keeps_run_command(staged, goal, runs):
+    # Phase 46 (runner.RUN_ASKED): the file-writing schemas stay hidden; only RunCommand comes back
+    app = staged.app
+    staged.rid = app.runs.create(staged.cid, goal, app.runtime_config(staged.chat, False), [])
+    staged.script = lambda env, index: text('Reported.')
+    app.work(staged.chat, goal, False, [], run_id=staged.rid)
+    [record] = staged.requests
+    offered = {t['function']['name'] for t in record['body']['tools']}
+    assert offered - AGENT_ROOT_TOOLS == (BASE | {'RunCommand'} if runs else BASE)
+
+
 def test_budget_note_is_added_once_per_step_on_large_routes_and_resumed_snapshots(staged):
     """Large routes keep SpawnAgent in `available` across steps; the note must not accumulate."""
     app = staged.app

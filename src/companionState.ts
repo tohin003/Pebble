@@ -362,6 +362,10 @@ export function fromEvent(event: { event: string; data: any }): HostSignal[] {
         : [];
     case "token":
       return [{ k: "token", run_id: str(d.run_id) ?? null }];
+    // Phase 45 (F105): text arriving in the stream is writing too (the checked reply is presented at the end, H20); the
+    // status said "Connecting" for the whole of a 62-second story
+    case "stream":
+      return d.type === "delta" && str(d.run_id) ? [{ k: "token", run_id: d.run_id }] : [];
     case "idle":
       return [{ k: "idle", run_id: str(d.run_id) ?? null }];
     case "error":

@@ -12,7 +12,14 @@ interface MemoryRow { kind: string; chat_id?: string | null }
 interface Candidate { kind: string; status: string; run_id: string }
 interface Tool { call_id: string; name: string; state: string }
 
-const props = defineProps<{ chatId: string; runId?: string | null; layers?: Layer[]; enabled?: boolean }>();
+const props = defineProps<{ chatId: string; runId?: string | null; layers?: Layer[]; enabled?: boolean; request?: string }>();
+// Phase 45 (F021, audit round R1): the heading named the task by its id ("task e5c3a036"); it quotes the message that
+// asked for it when the window knows it (as the context view does, F141), the id staying in the tooltip.
+const heading = computed(() => {
+  const asked = (props.request || "").replace(/\s+/g, " ").trim();
+  if (asked) return "“" + (asked.length > 60 ? asked.slice(0, 59) + "…" : asked) + "”";
+  return props.runId ? "task " + props.runId.slice(0, 8) : "this conversation";
+});
 const LAYERS: readonly (readonly [string, string])[] = [
   ["working", "Working context"],
   ["episodic", "Past experiences"],
@@ -109,7 +116,7 @@ onUnmounted(() => (alive = false));
 <template>
   <section class="impact-tables" aria-label="Memory impact">
     <div class="impact-head">
-      <strong>Memory impact · {{ runId ? "task " + runId.slice(0, 8) : "this conversation" }}</strong>
+      <strong :title="runId ? 'Task ' + runId : undefined">Memory impact · {{ heading }}</strong>
       <button type="button" class="secondary-button" :disabled="loading" @click="load">{{ loading ? "Loading…" : "Refresh" }}</button>
     </div>
     <p v-if="enabled === false" class="impact-note">
@@ -166,7 +173,10 @@ onUnmounted(() => (alive = false));
 .impact-error { color: var(--danger); font-size: 12px; margin: 6px 0; }
 .impact-tables table { width: 100%; border-collapse: collapse; margin: 10px 0; }
 .impact-tables caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
-.impact-tables th, .impact-tables td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--border, #b9b9b9); overflow-wrap: anywhere; }
+.impact-tables th, .impact-tables td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--border, #b9b9b9); overflow-wrap: normal; word-break: normal; hyphens: auto; }
+/* Phase 45 (F020): in the narrow drawer the table scrolls sideways instead of breaking words a letter per line. */
+.impact-tables { overflow-x: auto; }
+.impact-tables thead th { min-width: 4.5em; }
 .impact-tables th { font-weight: 500; color: var(--muted); }
 .impact-tables tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 </style>

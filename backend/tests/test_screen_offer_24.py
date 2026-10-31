@@ -297,11 +297,11 @@ def test_with_patch_p1_the_phase16_and_phase22_route_contracts_hold(tmp_path, mo
                                                   'actions': ['focus'], 'screenshots': True})
         app.active = app.active_run = None
         # validate_phase16 s1: screen control on, a run waiting on the person; app windows and Pebble's browser still
-        # refuse (E-N2, E-B1) and nothing is recorded.
+        # refuse and nothing is recorded (D102, Phase 42: E-N2 passed, so the app target, not running, refuses as such).
         screen(app, True)
         chat = app.chat(cid)
         start(app, chat, 'waiting_input')
-        for target, marker in ((app_target(), 'E-N2'), ({'kind': 'browser', 'profile': 'pebble', 'tab_id': 'T1',
+        for target, marker in ((app_target(), 'not running'), ({'kind': 'browser', 'profile': 'pebble', 'tab_id': 'T1',
                                                          'origins': ['https://www.example.com']}, 'E-B1')):
             with pytest.raises(PolicyError) as exc:
                 app.dispatch('screen_session_grant', {'id': cid, 'target': target, 'actions': ['focus']})

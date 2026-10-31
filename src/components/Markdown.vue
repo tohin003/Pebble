@@ -16,6 +16,25 @@ export function decorate(html: string): string {
     .replace(/<table>/g, '<div class="table-scroll" role="region" aria-label="Table" tabindex="0"><table>')
     .replace(/<\/table>/g, "</table></div>");
 }
+/**
+ * Phase 45 (F130, audit round R4): a source marker Pebble's research writes in a reply ([S7], [S1, S3]) becomes a small
+ * button naming the source; code and link text keep their words. Only Pebble's own constant markup is added: the
+ * sanitized HTML's tags are passed over whole (quoted attribute values included), text inside pre, code and a is left
+ * alone, and the marker's own S and digits are the only text reused.
+ */
+export function citations(html: string): string {
+  let skip = 0;
+  return html.replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>|[^<]+/g, (part) => {
+    if (part[0] === "<") {
+      if (/^<(?:pre|code|a)\b/i.test(part)) skip++;
+      else if (/^<\/(?:pre|code|a)\b/i.test(part)) skip = Math.max(0, skip - 1);
+      return part;
+    }
+    if (skip) return part;
+    return part.replace(/\[(S[1-9]\d{0,2}(?:\s*,\s*S[1-9]\d{0,2}){0,5})\]/g, (_, list: string) =>
+      list.split(/\s*,\s*/).map((id) => `<button type="button" class="cite" data-source="${id}" aria-label="Source ${id}">${id}</button>`).join(""));
+  });
+}
 export const LINK_REFUSED = "Pebble opens only secure web links (https).";
 /** A link the person's browser may open: https, or a local preview this Mac serves. */
 export function openable(href: string | null | undefined): href is string {
@@ -60,13 +79,13 @@ const html = ref("");
 // Parsed once now (history and first paint), then at most once per frame while a reply streams: 0.6.1 re-parsed
 // the whole reply for every token in both windows (738 ms per 2,000-word reply).
 function render() {
-  html.value = decorate(
+  html.value = citations(decorate(
     DOMPurify.sanitize(marked.parse(props.text, { breaks: true, async: false }) as string, {
       ALLOWED_TAGS,
       ALLOWED_ATTR: ["href", "title"],
       FORBID_ATTR: ["style"],
     }),
-  );
+  ));
 }
 render();
 const frame = perFrame(render);
@@ -101,6 +120,13 @@ function click(e: MouseEvent) {
   if (copy) {
     e.preventDefault();
     void copyCode(copy);
+    return;
+  }
+  // F130: a source marker asks the window (App.vue, Pet.vue) to show its source
+  const cite = target?.closest?.(".cite");
+  if (cite) {
+    e.preventDefault();
+    root.value?.dispatchEvent(new CustomEvent("pebble-source", { bubbles: true, detail: cite.getAttribute("data-source") }));
     return;
   }
   const anchor = target?.closest?.("a");

@@ -83,6 +83,9 @@ NAVIGATION_WAIT = 2.0            # a snapshot waits this long for a pending main
 NAVIGATION_POLL = 0.1
 READ_ATTEMPTS = 3
 FRAME_TOLERANCE = 8              # px, as screen_session.FRAME_TOLERANCE
+SCALE_PROBES = 6                 # boxes that may measure a snapshot's layout units per CSS px
+MIN_SCALE, MAX_SCALE = 0.25, 8.0
+SCALE_AGREEMENT = 0.02           # width and height must give the same scale within this share
 MAX_MESSAGE = 32 * 1024 * 1024   # one CDP message; larger ends the connection
 MAX_FRAMES = 16
 MAX_DOCUMENTS = 32
@@ -139,6 +142,9 @@ OPTION_JS = ('function(){const s=this.closest("select");if(!s)return false;this.
 DETAILS_JS = ('function(o){const d=this.tagName==="SUMMARY"?this.parentElement:this;'
               'if(!d||d.tagName!=="DETAILS")return false;d.open=o;return true}')
 FOCUSED_JS = 'function(){return this.ownerDocument.activeElement===this}'
+# Phase 44 (1.9.1, measured in Chrome 2026-10-25): a hidden tab (Pebble's own, in the background) never answers
+# Input.dispatchMouseEvent, so a press there is the element's own click, sent with a user gesture.
+CLICK_JS = 'function(){this.click();return true}'
 ENTER = {'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13, 'nativeVirtualKeyCode': 13, 'text': '\r'}
 BACKSPACE = {'key': 'Backspace', 'code': 'Backspace', 'windowsVirtualKeyCode': 8, 'nativeVirtualKeyCode': 51}
 
@@ -1066,6 +1072,13 @@ class _Doc:
         self.frame_id, self.url, self.base, self.scroll = frame_id, url, base, scroll
         self.nodes, self.by_index, self.children, self._forms = {}, [], {}, None
 
+    def rescale(self, factor):
+        """Bounds and scroll from the snapshot's layout units to CSS pixels (BrowserAdapter._scale)."""
+        self.scroll = (self.scroll[0] / factor, self.scroll[1] / factor)
+        for node in self.by_index:
+            if node.bounds is not None:
+                node.bounds = [v / factor for v in node.bounds]
+
     def form_of(self, node):
         ref = node.attrs.get('form')
         if ref:
@@ -1499,7 +1512,9 @@ class BrowserAdapter:
                 raise AXError('uncertain', f'{method}: {exc.code}') from None
             if exc.code == 'closed':
                 raise ScreenRefused('session_expired', RESTARTED) from None
-            raise ScreenRefused('ax_timeout' if exc.code == 'timeout' else 'ax_failed') from None
+            # Phase 44: the step and its code travel with the refusal (content-free), never a bare 'could not be read'
+            raise ScreenRefused('ax_timeout' if exc.code == 'timeout' else 'ax_failed',
+                                f'{method} failed ({getattr(exc, "reason", None) or exc.code}).') from None
 
     def _sync(self, tab):
         """A cheap round trip: when it answers, every event the browser sent before has been handled."""
@@ -1544,7 +1559,8 @@ class BrowserAdapter:
                   'url': display_url(main['url']), 'origin': main['origin'],
                   'navigation_id': f"{entries[current].get('id')}.{tab.requested}", 'loader_id': main['loader_id'],
                   'focused': False, 'frame': None}
-        if main['origin'] is None or main['origin'] not in target['origins']:
+        readable = target.get('read') or target['origins']  # Phase 43: a site grant's read sites (Pebble's own tabs)
+        if main['origin'] is None or main['origin'] not in readable:
             return {'window': window, 'elements': [], 'truncated': False}  # never read outside the grant
         try:
             state = self._call('Runtime.evaluate', {'expression': VISIBILITY_JS, 'returnByValue': True,
@@ -1553,10 +1569,15 @@ class BrowserAdapter:
             tab.worlds.clear()
             raise
         window['focused'] = (state.get('result') or {}).get('value') == 'visible'
+        tab.visible = window['focused']  # Phase 44: a hidden tab is pressed by the element's own click (_click)
         docs = _documents(self._call('DOMSnapshot.captureSnapshot', {'computedStyles': [], 'includeDOMRects': True},
                                      session=session))
         if main['id'] not in docs:
             raise ScreenRefused('ax_failed')
+        scale = self._scale(tab, docs[main['id']])
+        if scale != 1.0:
+            for doc in docs.values():
+                doc.rescale(scale)
         owners = {}
         for doc in docs.values():
             owners.update(doc.children)
@@ -1570,11 +1591,53 @@ class BrowserAdapter:
                 continue
             if type(backend) is int:
                 owners[backend] = frame['id']
-        walk = _Walk(limit, target['origins'], frames, docs, owners,
+        walk = _Walk(limit, readable, frames, docs, owners,
                      lambda frame_id: self._ax(tab, frame_id), skip=self.SKIP_TAGS)
         scroll = docs[main['id']].scroll
         walk.frame(main, (-scroll[0], -scroll[1]))
         return {'window': window, 'elements': walk.elements, 'truncated': walk.truncated}
+
+    def _scale(self, tab, doc):
+        """Snapshot layout units per CSS pixel, measured on the page's own boxes, never assumed.
+
+        DOMSnapshot reports bounds and scroll in device pixels where Chrome zooms for the display (2 on a Retina Mac:
+        E-B1, 2026-10-25), while DOM.getContentQuads and input events use CSS pixels, so every re-check refused the
+        element as moved. A page whose scale cannot be measured is not read.
+
+        Phase 44 (measured on YouTube, 2026-10-25): an app-shell page gives HTML and BODY no height (its app is
+        positioned out of flow) and its doctype is named HTML too, so the root boxes measured only when they have a
+        size; otherwise two of the page's largest boxes (never a pseudo-element) must agree, by width, since a page
+        still loading grows taller between the snapshot and the quads. A box drawn in several pieces (wrapped inline
+        text) never measures.
+        """
+        boxes = [n for n in doc.by_index if n.backend is not None and n.bounds is not None
+                 and n.bounds[2] >= 1 and n.bounds[3] >= 1 and not n.name.startswith(('::', '#'))]
+        roots = [n for n in boxes if n.name in ('HTML', 'BODY')]
+        largest = sorted((n for n in boxes if n.name not in ('HTML', 'BODY')),
+                         key=lambda n: n.bounds[2] * n.bounds[3], reverse=True)
+        found = []
+        for node in [*roots, *largest][:SCALE_PROBES]:
+            try:
+                quads = self._call('DOM.getContentQuads', {'backendNodeId': node.backend}, session=tab.session).get(
+                    'quads')
+            except ScreenRefused:
+                continue
+            rect = _quad_rect(quads[0]) if isinstance(quads, list) and len(quads) == 1 else None
+            if rect is None or rect[2] < 1 or rect[3] < 1:
+                continue
+            wide, tall = node.bounds[2] / rect[2], node.bounds[3] / rect[3]
+            if not MIN_SCALE <= wide <= MAX_SCALE:
+                continue
+            if node.name in ('HTML', 'BODY'):
+                if abs(wide - tall) <= SCALE_AGREEMENT * wide:
+                    return wide
+                continue
+            # Phase 44 (measured on YouTube's watch page): a page still growing changes its boxes' heights between the
+            # snapshot and the quads, never their widths, so the other boxes measure by width, and two must agree
+            if any(abs(wide - other) <= SCALE_AGREEMENT * wide for other in found):
+                return wide
+            found.append(wide)
+        raise ScreenRefused('ax_failed', "Pebble could not measure this page's layout scale.")
 
     def _ax(self, tab, frame_id):
         nodes = self._call('Accessibility.getFullAXTree', {'frameId': frame_id}, session=tab.session).get('nodes')
@@ -1657,10 +1720,10 @@ class BrowserAdapter:
             raise ScreenRefused('stale_ui', 'The element is gone from the page.')
         return object_id
 
-    def _apply(self, tab, object_id, js, args):
-        result = self._effect(tab, 'Runtime.callFunctionOn', {'functionDeclaration': js, 'objectId': object_id,
-                                                              'arguments': [{'value': a} for a in args],
-                                                              'returnByValue': True})
+    def _apply(self, tab, object_id, js, args, *, gesture=False):
+        params = {'functionDeclaration': js, 'objectId': object_id, 'arguments': [{'value': a} for a in args],
+                  'returnByValue': True}
+        result = self._effect(tab, 'Runtime.callFunctionOn', {**params, 'userGesture': True} if gesture else params)
         return (result.get('result') or {}).get('value')
 
     def _function(self, tab, frame, backend, js, args):
@@ -1697,6 +1760,11 @@ class BrowserAdapter:
         if other != backend and (hit.get('frameId') not in (None, frame['id'])
                                  or not self._contains(tab, frame, backend, other)):
             raise ScreenRefused('stale_ui', 'Something else covers the element now.')
+        if getattr(tab, 'visible', True) is False:
+            target = self._object(tab, frame, backend)
+            self._current(tab)
+            self._apply(tab, target, CLICK_JS, [], gesture=True)
+            return
         self._current(tab)
         self._effect(tab, 'Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y})
         for kind, buttons in (('mousePressed', 1), ('mouseReleased', 0)):

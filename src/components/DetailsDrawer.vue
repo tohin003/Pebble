@@ -63,9 +63,10 @@ const keepItem = (index: number) => (el: unknown) => {
   menuItems[index] = (el as HTMLElement | null) || null;
 };
 const moreButton = ref<HTMLElement | null>(null);
+// The button toggles the menu: opening focuses the first item, closing returns focus to the button.
 function openMenu() {
   menu.value = !menu.value;
-  if (menu.value) nextTick(() => menuItems[0]?.focus());
+  nextTick(() => (menu.value ? menuItems[0] : moreButton.value)?.focus());
 }
 function reveal(id: string) {
   menu.value = false;
@@ -73,7 +74,9 @@ function reveal(id: string) {
   emit("update:tab", id);
   if (props.tabs.length) focus();
 }
-// Focus leaving the menu closes it (Tab away or a click elsewhere).
+// Focus leaving the menu closes it (Tab away or a click elsewhere). Phase 44 (1.9.1): a press on the menu or its button
+// never moves focus (mousedown is prevented there). WebKit, the macOS web view, does not focus a clicked button: the
+// press cleared the focus, this closed the menu, and the click that followed found no item, so a section never opened.
 function leave(event: FocusEvent) {
   const box = event.currentTarget as HTMLElement | null;
   if (box?.contains && !box.contains(event.relatedTarget as Node | null)) menu.value = false;
@@ -203,11 +206,12 @@ onUnmounted(() => (drag = null));
           aria-haspopup="menu"
           :aria-expanded="menu"
           aria-controls="details-more-menu"
+          @mousedown.prevent
           @click="openMenu"
         >
           <span class="details-dots" aria-hidden="true"></span>
         </button>
-        <div v-if="menu" id="details-more-menu" class="details-menu" role="menu" aria-label="More sections">
+        <div v-if="menu" id="details-more-menu" class="details-menu" role="menu" aria-label="More sections" @mousedown.prevent>
           <button
             v-for="(t, i) in more"
             :key="t.id"

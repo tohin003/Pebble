@@ -12,7 +12,7 @@ from . import VERSION
 from .store import Store, LISTED_CHATS, error_kind, friendly_error
 from .policy import Workspace, PolicyError, installed_apps
 # Phase 16 D03: launches are pinned to the reviewed bundle and signing team, re-read before opening.
-from .native_apps import launch as launch_app, pin as pin_app, describe as describe_launch
+from .native_apps import launch as launch_app, pin as pin_app, describe as describe_launch, document as app_document
 from .providers import Providers
 from .memory import Memory
 from .permissions import DEFAULT, GROUP, OPTIONAL_TOOLS, automatic, validate as validate_permissions
@@ -20,7 +20,7 @@ from .web import weather, search
 from .guard import GuardAdapter
 from .sources import fetch_url
 from .testing import run_tests
-from .terminal import inspect_command, run_command
+from .terminal import LONGER_NOTE, inspect_command, run_command
 from .vault import Vault
 from .extensions import Extensions
 from .hooks import HookInterrupted
@@ -36,9 +36,13 @@ from .provenance import SourceProvenance
 from .search_index import SearchIndex
 
 
-from .tool_catalogue import TOOLS, CORE_TOOLS  # TOOLS: re-exported (tests import it from here)
+from .tool_catalogue import TOOLS, CORE_TOOLS, COMPANION_TOOLS  # TOOLS: re-exported (tests import it from here)
 from .tool_authz import Actor, canonical_catalogue, catalogue_digest, check as authorize_tool, pin as authz_pin
-from . import companion_settings, quiz_grading, ui_guidance
+from . import companion_settings, quiz_grading, settings_file, ui_guidance
+
+HOOK_REVIEW = 'The hook requires native review before this effect.'
+# Phase 45 (D128): only a request to pause or stop lets ScreenAct press Play or Pause on a page that is making sound.
+PAUSE_REQUEST = re.compile(r'\b(pause|stop|mute|silence|quiet)\b', re.I)
 
 
 class PlanVault(Vault):
@@ -55,6 +59,41 @@ def plan_guard_text(raw):
     except (TypeError, ValueError, AttributeError):
         return str(raw)[:2000]
 
+
+# Phase 45 (D133, the person): the cards the companion may answer: a site in the person's browser, an app window, and
+# bringing a granted window forward. Every other card is answered in the workspace.
+SIMPLE_CARDS = frozenset({'browser_grant', 'screen_grant', 'screen_raise'})
+# D136: a run in one of these states may still use its windows; any other has finished
+RUN_LIVE_STATES = frozenset({'queued', 'running', 'retry_wait', 'waiting_input', 'waiting_approval', 'paused'})
+
+
+# Phase 46: a question that asks the person to approve or review changes the run already holds for review.
+APPROVAL_QUESTION = re.compile(r'\b(?:approv\w*|review\w*)\b', re.I)
+# Phase 46 (1.9.28, b-new G3): what a command run without write access, because the request keeps the project unchanged,
+# tells the model when a write it tried was refused, in words it can report.
+WRITE_REFUSED = re.compile(r'operation not permitted|permission denied|read-only file system|\bE(?:PERM|ACCES|ROFS)\b', re.I)
+READ_ONLY_RUN = ('This command ran without write access to the project, because the request says not to change anything '
+                 'in it: "Operation not permitted" on a write is that protection, and the project is unchanged. Report '
+                 'what the command printed, and that its write was refused; do not look for another way to write.')
+
+
+def keeps_whole_project(text):
+    """Phase 46 (1.9.28, b-new G3, security review of w12): whether a request keeps the whole project unchanged, by the
+    runner's own read-only decision (runner.read_only_goal), never by the ledger's READ_ONLY pattern alone. That pattern
+    also matched a quoted "Read-only file system" and "add a read-only mode" in edit requests, which then lost command
+    write access, and missed "Never change anything in this project". Its whole-project rule on every route: 8K and
+    below, the runner's older rule also takes a prohibition on named files ("run the report to produce out/report.csv;
+    the script and the data are reviewed, so don't change them", private d-rc-106), whose run then could not write its
+    output."""
+    from .runner import read_only_goal
+    return read_only_goal(text or '', True)[0]
+# Phase 46 (1.9.28, App.git_restored): tools whose effects on project files nobody but the model can see; a command
+# writes until it finishes, a background process or plan at any time after it starts
+COMMAND_WRITERS = frozenset({'RunCommand', 'Shell'})
+BACKGROUND_WRITERS = frozenset({'StartCommand', 'RunPlan', 'WriteProcessInput'})
+# Phase 46 (1.9.29): what a RunCommand that ran as a reviewed Git command shows of its receipt (App.raw_git_review)
+GIT_SHOWN = frozenset({'receipt_id', 'operation', 'state', 'summary', 'destructive', 'publication', 'hooks_run',
+                       'network', 'authorization'})
 
 class App:
     def __init__(self, home, resources, emit):
@@ -156,7 +195,9 @@ class App:
             on_revoke=lambda tab_id=None: revoke_chrome_sessions(self.screens, tab_id),
             notify=lambda data: self.emit('browser', data))  # Phase 24 (V1-043): pairing waits, a tab was shared
         self.chrome_tabs = ChromeTabs(self.browser_bridge)
-        self.screens = ScreenSessions(self.store, {'app': AppAdapter(ax_worker.BlockedBackend()),
+        # Phase 42 (1.8.0): app windows through the real Accessibility backend in its worker (E-N2 passed on the
+        # person's Mac); it answers not_trusted until the person allows Pebble in Accessibility.
+        self.screens = ScreenSessions(self.store, {'app': AppAdapter(ax_worker.production_backend()),
                                                    'browser': BrowserRouter({'pebble': BrowserAdapter(self.browser),
                                                                              'chrome': ChromeAdapter(self.chrome_tabs)})})
         self.provenance = SourceProvenance(self.store, self.runs)
@@ -448,8 +489,11 @@ class App:
         for item in attached:
             by_message.setdefault(item["message_id"], []).append(item)
         produced = self._message_runs(cid)
+        captures = self._run_captures(set(produced.values()))
         for message in messages:
             message["attachments"] = by_message.get(message["id"], [])
+            if message["id"] in produced and captures.get(produced[message["id"]]):
+                message["captures"] = captures[produced[message["id"]]]  # Phase 40 (D93): screenshots Pebble took
             if message["id"] in metrics:
                 message["usage"] = metrics[message["id"]]
             if message["role"] == "assistant" and message["id"] in produced:
@@ -495,6 +539,30 @@ class App:
             "questions": questions,
             "plan": self.interactions.plan(focused['id']) if focused else None,
         }
+
+    def _run_captures(self, run_ids):
+        """Phase 40 (1.6.0, D93): {run id: [{preview, width, height}]} for the screenshots each run took, so every
+        capture appears in the chat with the reply it served (at most four per run)."""
+        found = {}
+        ids = sorted(run_ids)
+        for start in range(0, len(ids), 200):
+            chunk = ids[start:start + 200]
+            try:
+                rows = self.store.query("SELECT run_id,payload FROM run_events WHERE kind='screenshot' AND run_id IN (%s) "
+                                        'ORDER BY sequence' % ','.join('?' * len(chunk)), chunk)
+            except Exception:
+                return found
+            for row in rows:
+                try:
+                    data = json.loads(row['payload'])
+                except (TypeError, ValueError):
+                    continue
+                preview = data.get('preview') if isinstance(data, dict) else None
+                if isinstance(preview, str) and preview.startswith('data:image/jpeg;base64,'):
+                    items = found.setdefault(row['run_id'], [])
+                    if len(items) < 4:
+                        items.append({'preview': preview, 'width': data.get('width'), 'height': data.get('height')})
+        return found
 
     def _message_runs(self, cid):
         """{assistant message id: run id} for a conversation (Phase 22). A run writes one reply message, whose id its
@@ -573,6 +641,10 @@ class App:
             "set_model": self.set_model,
             "approve": self.approve,
             "reject": self.reject,
+            # Phase 45 (D133, the person): the companion answers simple cards only (a site, a window, bringing a window
+            # forward); approve and reject stay the main window's
+            "approve_simple": lambda id, action_id: self._simple_card(id, action_id) and self.approve(id, action_id),
+            "reject_simple": lambda id, action_id: self._simple_card(id, action_id) and self.reject(id, action_id),
             "apps": lambda **p: installed_apps(),
             "attach": self.attach,
             "attach_bytes": self.attach_bytes,
@@ -580,6 +652,7 @@ class App:
             "remove_source": self.remove_source,
             "delete_chat": self.delete_chat,
             "chat_rename": self.chat_rename,  # Phase 24 V1-125: main window only (NATIVE_ONLY; main.rs ALLOWED, never the pet)
+            "chat_search": self.chat_search,  # Phase 45 F031: main window only, as chat_rename
             "setting": self.setting,
             "open_app": self.open_app,
             "undo": self.undo,
@@ -661,6 +734,17 @@ class App:
             'screen_windows': lambda target: self.screens.windows(target),
             'screen_session_grant': self.screen_session_grant,
             'screen_sessions': lambda id: self.screens.sessions(id),
+            # Phase 40 (1.6.0): the Companion Shell's grants and undo, main window only (main.rs ALLOWED).
+            'shell_grants': lambda: self._companion().grants(self),
+            'shell_grant_add': lambda kind, value, scope: self._companion().add_grant(self, kind, value, scope),
+            'shell_grant_remove': lambda kind, value: self._companion().remove_grant(self, kind, value),
+            'shell_undo': lambda snapshot_id: self._companion().undo(self, snapshot_id),
+            # Phase 41 (1.7.0): Pebble's Toolbox, main window only (main.rs ALLOWED)
+            'toolbox_list': lambda: self._workshop().listing(self),
+            'toolbox_get': lambda name: self._workshop().detail(self, name),
+            'toolbox_remove': lambda name: self._workshop().remove(self, name),
+            'toolbox_decide': lambda pending_id, keep: self._workshop().decide(self, pending_id, keep),
+            'toolbox_undo_remove': lambda name: self._workshop().undo_remove(self, name),  # Phase 45 (F178)
             'screen_handoff_done': lambda session_id: self.screens.resume(session_id),
             'screen_session_revoke': lambda session_id: self.screen_session_revoke(session_id),
             'browser_status': lambda **p: self.browser.status(),
@@ -729,6 +813,12 @@ class App:
             'export_native_ready': lambda pdf=False: self.exports.native_ready(pdf),
             'export_pdf_attach': lambda chat_id, export_id, attach_token, sha256: self.exports.pdf_attach(chat_id, export_id, attach_token, sha256),
             'export_pdf_failed': lambda chat_id, export_id, attach_token, reason='': self.exports.pdf_failed(chat_id, export_id, attach_token, reason),
+            # Phase 42 (E-N2): the shell's PEBBLE_SHELL_DIAG `ax_probe` command only (backend.call from main.rs's diag
+            # thread; never in ALLOWED). Content-free facts: trust, counts, digests.
+            'diag_ax_probe': lambda bundle_id, title_contains: self._ax_probe(bundle_id, title_contains),
+            # Phase 42 (1.8.0): app control's Accessibility state and macOS's own request (main window only).
+            'app_control_status': lambda **p: self.app_control(prompt=False),
+            'app_control_request': lambda **p: self.app_control(prompt=True),
             # Phase 18 E06 telemetry (main-window Settings only; never the pet).
             'telemetry_get': lambda **p: self.telemetry.status(),
             'telemetry_set': self.telemetry_set,
@@ -778,6 +868,10 @@ class App:
                     ('memory_layers', {k: True for k in ('working','episodic','semantic','procedural','temporal','profile')}),
                     ("permissions", DEFAULT),
                     (companion_settings.KEY, companion_settings.DEFAULT),
+                    ('fast_replies', settings_file.FAST_DEFAULT),  # Phase 46 (D166): runner.fast_now
+                    ('git_decisions', settings_file.default('git_decisions')),  # Phase 46 (D159, D174): all on
+                    ('work_view', True),  # Phase 46 (1.9.29, D206): Pebble's work as cards; presentation only
+                    ('visual_answers', settings_file.VISUAL_DEFAULT),  # Phase 46 (1.9.29, D195): visual_offer
                 ]
             },
             "data_dir": str(self.home),
@@ -1176,6 +1270,9 @@ class App:
                 return json.loads(item.get('content') or '{}').get('run_id') or ''
             except ValueError:
                 return ''
+        captured = (self.store.setting('memory_capture_runs', {}) or {}).get(ident)
+        if isinstance(captured, str) and captured:
+            return captured  # Phase 46: a capture typed to the model on this Mac (Memory.attribute_capture)
         rows = self.store.query('SELECT run_id FROM memory_evidence WHERE memory_id=?', (ident,))
         if rows and rows[0]['run_id'] != 'person':  # V1-035 person rows are judged as unlinked records below
             # An archive the person imported natively is not tied to a model route.
@@ -1339,10 +1436,39 @@ class App:
         from .browser_session import forget_browser_profile
         return forget_browser_profile(self.browser, self.screens)
 
+    def _screen_note(self, kind, result):
+        """Phase 43 (1.9.0, §8): content-free facts of one observation or act for the run's cost-per-task telemetry:
+        the route (app window or browser tab), the envelope's status and coverage and the observation's size, or an
+        act's class and typed outcome. Never page or window text."""
+        if not self.active_run or not isinstance(result, dict):
+            return
+        facts = {'environment': result.get('environment') or result.get('kind'), 'status': result.get('status')}
+        if kind == 'screen_observed':
+            facts.update(coverage=result.get('coverage'), version=result.get('version'),
+                         bytes=len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()))
+        else:
+            facts.update({k: result.get(k) for k in ('class', 'action', 'dispatch', 'outcome', 'basis')})
+            facts['observation_returned'] = isinstance(result.get('observation'), dict)  # Phase 45 (D140)
+        try:
+            self.runs.note(self.active_run, kind, facts)
+        except Exception:
+            pass  # telemetry never fails a step
+
     def screen_session_revoke(self, session_id):
-        """End access. For a Chrome tab the extension also drops the grant at once (Phase 22)."""
+        """End access. For a Chrome tab the extension also drops the grant at once (Phase 22). Phase 43: ending one of
+        Pebble's own tabs ends its site grant too (the tab stays open as the person's)."""
         from .browser_bridge import end_chrome_session
-        return end_chrome_session(self.screens, self.browser_bridge, session_id)
+        owned = None
+        try:
+            target = self.screens._session(session_id)['target']
+            access = self.browser_bridge.access(target['tab_id']) if target.get('profile') == 'chrome' else None
+            owned = access['share_id'].removeprefix('owned-') if access and access.get('owned') else None
+        except Exception:
+            pass  # not a session of an owned tab, or already gone
+        ended = end_chrome_session(self.screens, self.browser_bridge, session_id)
+        if owned:
+            self.browser_bridge.end_site_grant(owned)
+        return ended
 
     def browser_extension_pause(self):
         from .browser_bridge import pause_chrome_sessions
@@ -1353,8 +1479,16 @@ class App:
         return resume_chrome_sessions(self.screens, self.browser_bridge)
 
     def browser_screenshot_parts(self, session_id, run_id):
-        """Phase 22 (runner P8): image parts after a ScreenObserve of a Chrome grant that allowed screenshots."""
+        """Phase 22 (runner P8): image parts after a ScreenObserve of a Chrome grant that allowed screenshots. Phase 45
+        (layer 4): or of an app window whose observation took a screenshot (sent once, never persisted)."""
         from .browser_bridge import screenshot_for_session
+        try:
+            take = getattr(self.screens, 'screenshot_parts', None)
+            parts = take(session_id, run_id) if callable(take) else None
+        except Exception:
+            parts = None
+        if parts:
+            return parts
         try:
             return screenshot_for_session(self.screens, self.browser_bridge, self.chrome_tabs, session_id, run_id)
         except Exception:  # a screenshot is extra evidence; it never fails the observation
@@ -1418,13 +1552,21 @@ class App:
             raise PolicyError(
                 "Wait for the current task before starting a terminal command."
             )
-        return self.execute(
+        result = self.execute(
             "RunCommand",
             {"command": command, "network": network},
             Workspace(chat["workspace"]) if chat["workspace"] else None,
             id,
             actor=Actor.native(),
         )
+        # Phase 45 (F023): a command the person ran shows its command and output in the conversation, as an approved
+        # one does (perform_action); before, an automatic run left it only at the bottom of the Activity drawer.
+        if isinstance(result, dict) and result.get('status') == 'applied' and result.get('action_id'):
+            action = next((a for a in self.store.actions(id) if a['id'] == result['action_id']), None)
+            if action is not None:
+                self.store.message(id, 'assistant', self.action_summary(action['kind'], action['payload'],
+                                                                        result.get('result')))
+        return result
 
     def open_url(self, url):
         from urllib.parse import urlsplit
@@ -1459,6 +1601,71 @@ class App:
     def policy_version(self):
         return self.store.setting('permissions_version', 0)
 
+    def offer_git_tools(self, command):
+        """Phase 46 (git_workflow): a refused raw Git command offers the reviewed Git tools from the run's next step
+        (runner reads found_tools, as for FindTool), whatever words the request used; permissions still decide."""
+        if self.active_run and isinstance(command, str) and re.match(r'\s*(?:[\w./-]*/)?git(?:\s|$)', command):
+            from .companion_tools import state as companion_state
+            st = companion_state(self)
+            with st.lock:
+                st.found.setdefault(self.active_run, set()).update(
+                    {'ProposeGitChange', 'ReadGitPlanReceipt', 'ReadGitStatus', 'ReadGitDiff', 'ReadGitHistory'})
+
+    def raw_git_review(self, cid, args, argv, ws, policy, hook_review, decision):
+        """Phase 46 (1.9.29, golden held-out git_workflow: one task's three phrasings ended honestly on both models after a
+        changing Git command typed in RunCommand was refused, as Codex and Claude Code run it in their terminals): a
+        RunCommand that git_commands.review takes (ProposeGitChange's "command" operation takes it as typed) is that
+        operation: the same plan bound to the repository, the same card or Full-access check, the person's hooks for
+        either tool, the planted-host and push checks, snapshots and Undo, and needs what ProposeGitChange needs (Edit).
+        A request that keeps the whole project unchanged gets no Git change this way, unless it names one (runner's
+        GIT_ASKED, as for ProposeGitChange). Its result is RunCommand's: the
+        plan's status, with Git's exit code, output and next step on top once it ran. PEBBLE_1929_RAW_GIT_REVIEW=0 keeps
+        1.9.28's refusal."""
+        from .runner import GIT_ASKED, read_only_goal
+        refusal = 'Raw Git commands that change the repository run as reviewed Git commands, '
+        if not policy['tools']['files']:
+            raise PolicyError('Terminal commands require project read access.')
+        if not policy['tools'].get('edits'):
+            raise PolicyError(refusal + 'which need Edit in Permissions; it is off, so nothing ran.')
+        kept, requested = read_only_goal(self.current_text or '', True)  # as keeps_whole_project reads the request
+        if self.active_run and self.active == cid and kept and not GIT_ASKED.search(requested):
+            # ("Tag the current commit as v2.0. Don't change anything." asks for its Git change: the runner's own rule)
+            raise PolicyError(refusal + 'and the request asks to change nothing in the project, so nothing ran.')
+        routed = {'operation': 'command', 'argv': json.dumps(argv)}
+        from .git_commands import planted_words
+        self.planted_refusal(ws, words=planted_words(argv))  # Phase 46 (1.9.28, review 1b), as ProposeGitChange's
+        command_hook = self.hook_event('before_command', args.get('command'), {'tool': 'RunCommand'})['decision']
+        held = bool(hook_review or self.tool_hook('ProposeGitChange', routed) or command_hook == 'review')
+        self.hook_review_now = self.hook_review_now or held  # D141: a hook's review is the person's
+        self.offer_git_tools('git ' + argv[0])  # its receipts and the typed operations, from the next step
+        result = self.coding.root_tool(cid, 'ProposeGitChange', routed, ws, held or decision['action'] != 'allow')
+        shown = {'command': args.get('command'), 'reviewed_as': {'tool': 'ProposeGitChange', **routed}, **result}
+        receipt = result.get('result') if isinstance(result.get('result'), dict) else {}
+        facts = receipt.get('result') if isinstance(receipt.get('result'), dict) else {}
+        if result.get('status') == 'applied' and facts:
+            # Git's own outcome on top, as a command's; the receipt without its snapshots, which stay in the action for
+            # Undo and readback (the model reads them back with ReadGitPlanReceipt and receipt_id when it needs them)
+            shown.update({key: facts[key] for key in ('exit_code', 'output', 'next') if key in facts})
+            shown['result'] = {**{key: value for key, value in receipt.items() if key in GIT_SHOWN}, 'result': {
+                key: value for key, value in facts.items() if key not in ('snapshot', 'exit_code', 'output', 'next')}}
+        return shown
+
+    def offer_process_tools(self, result):
+        """Phase 46 (1.9.28, recovery: a command that needs longer than RunCommand's 60 s had no other way to run): a
+        RunCommand stopped at its time bound offers StartCommand (up to 300 s) and the process tools from the run's next
+        step, above 8K where found tools join (runner), and its note says so; the same broker, review and permissions
+        decide. The terminal's contracts are unchanged."""
+        profile = self.model.current()
+        budget = profile.get('budget', profile['context']) if profile and profile['kind'] != 'gguf' else 4096
+        if not self.active_run or not result.get('timed_out') or budget <= 8192:
+            return result
+        from .companion_tools import state as companion_state
+        st = companion_state(self)
+        with st.lock:
+            st.found.setdefault(self.active_run, set()).update(
+                {'StartCommand', 'WaitProcess', 'ReadProcess', 'StopProcess'})
+        return {**result, 'note': result.get('note', '') + LONGER_NOTE}
+
     def setting(self, key, value):
         if key == "permissions":
             if not self._settled_for_change():
@@ -1478,6 +1685,18 @@ class App:
                 db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key, json.dumps(revised)))
             self.emit('settings',{})
             return True
+        if key in ('fast_replies', 'visual_answers'):
+            # Phase 46 (D166): OpenAI's Fast tier on the ChatGPT sign-in (runner.fast_now); speed, not access.
+            # Phase 46 (1.9.29, D195): visual answers (artifact_schema.visual_offer); what is offered, not access
+            self.store.set_setting(key, settings_file.validate(key, value))
+            self.emit('settings', {})
+            return True
+        if key == 'git_decisions':
+            # Phase 46 (D159): the Git actions that are the person's decision (git_plans.GitPlans._decided); the
+            # settings file's own edits that turn one on wait for the main window's confirmation (settings_file.widening)
+            self.store.set_setting(key, settings_file.validate(key, value))
+            self.emit('settings', {})
+            return True
         if key == 'memory_layers':
             from .memory import KINDS
             if not isinstance(value, dict) or set(value) != set(KINDS) or any(type(v) is not bool for v in value.values()):
@@ -1489,7 +1708,7 @@ class App:
         if (
             key == "theme"
             and value in ("system", "light", "dark")
-            or key in {"reduced_motion", "memory_enabled", "stealth"}
+            or key in {"reduced_motion", "memory_enabled", "stealth", "work_view"}  # work_view: Phase 46 (1.9.29)
             and isinstance(value, bool)
         ):
             self.store.set_setting(key, value)
@@ -1516,6 +1735,37 @@ class App:
         status = self.telemetry.enable(consent_version) if enabled else self.telemetry.disable()
         self.emit('settings', {})
         return status
+
+    def chat_search(self, query=''):
+        """Phase 45 (F031, audit round R1): the conversations whose words contain the query (the window matches titles
+        itself), most recently used first, at most 30, each with a short excerpt around the newest match. Recently
+        deleted conversations are left out, as in the list. Main window only (NATIVE_ONLY; main.rs ALLOWED, never the
+        pet)."""
+        words = ' '.join(str(query or '').split())[:200]
+        if len(words) < 2:
+            return {'query': words, 'matches': []}
+        from .store import VISIBLE_CHATS
+        like = '%' + words.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+        rows = self.store.query(
+            "SELECT m.chat_id AS chat_id, m.content AS content, MAX(m.created) AS at FROM messages m JOIN chats c "
+            "ON c.id = m.chat_id WHERE m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\' AND c."
+            + VISIBLE_CHATS + " GROUP BY m.chat_id ORDER BY c.updated DESC LIMIT 30", (like,))
+        matches = []
+        for row in rows:
+            # F133 (audit round R4): excerpts showed the reply's markdown (**, `) and began mid-word
+            text = ' '.join(re.sub(r'[*_`#>]+', '', str(row['content'] or '')).split())
+            at = text.lower().find(words.lower())
+            start = max(0, at - 40) if at >= 0 else 0
+            if start:
+                space = text.find(' ', start)
+                start = space + 1 if 0 <= space < at else start
+            end = start + 120
+            if end < len(text):
+                space = text.rfind(' ', start, end)
+                end = space if space > max(at + len(words), start) else end
+            matches.append({'id': row['chat_id'], 'excerpt': ('…' if start else '') + text[start:end]
+                            + ('…' if end < len(text) else '')})
+        return {'query': words, 'matches': matches}
 
     def chat_rename(self, id, title):
         """Phase 24 (V1-125): the person renames a conversation in the main window. Only its title changes (not its
@@ -1619,6 +1869,22 @@ class App:
         if storage is not None:
             storage.chat_deleted(id, copies)  # V1-156: the windows clear their quiz drafts of these artifacts
         return True
+
+    def app_control(self, prompt):
+        """Phase 42 (1.8.0): whether Pebble may use Accessibility; with prompt, macOS shows its own request once and
+        lists Pebble in Privacy & Security > Accessibility (Pebble cannot press that switch)."""
+        from . import ax_worker
+        try:
+            trusted = ax_worker.request_access(prompt=prompt is True)
+        except Exception:
+            trusted = False
+        return {'trusted': trusted, 'available': sys.platform == 'darwin',
+                'where': 'System Settings > Privacy & Security > Accessibility'}
+
+    def _ax_probe(self, bundle_id, title_contains):
+        """Phase 42 (E-N2): ax_worker.probe in a worker this service spawns; never a model tool (NATIVE_ONLY)."""
+        from . import ax_worker
+        return ax_worker.probe(bundle_id, title_contains)
 
     def export_discard(self, chat_id, export_id):
         result = self.exports.discard(chat_id, export_id)
@@ -1889,6 +2155,123 @@ class App:
         result = audit(reads_from_witnesses(rows, rid), rehash, root=list(ws.identity))
         self.runs.note(rid, 'source_audit', result)  # IDs, states and counts only.
         return result
+
+    def stale_sources(self, rid, ws):
+        """Phase 46: [(path, state)] for the files of this run the source audit finds changed, deleted or unreadable since
+        the run read them; host-side only (runner.recheck_sources), the audit and its note stay content-free."""
+        from .source_audit import path_id
+        audited = self.source_audit(rid, ws)
+        rows = self.store.query('SELECT DISTINCT path,root_dev,root_ino FROM run_sources WHERE run_id=?', (rid,))
+        paths = {path_id(rid, (r['root_dev'], r['root_ino']), r['path']): r['path'] for r in rows}
+        states = {entry['path_id']: entry['state'] for entry in audited['entries']}
+        return [(paths[ident], states[ident]) for ident in audited['stale'] if ident in paths]
+
+    def git_restored(self, rid, cid, ws, paths):
+        """Phase 46 (runner.recheck_sources): whether these changed files now hold exactly HEAD's version after this
+        run's own applied reviewed Git plans (a switch, stash or merge put them back), rather than the output of an
+        unverified writer (a script or command since then, whose result the model must look at itself; corpus 24g R8)."""
+        tools = self.runs.tools(rid)
+        ids = {t['result'].get('action_id') for t in tools
+               if t['name'] == 'ProposeGitChange' and isinstance(t.get('result'), dict)}
+        if not any(a['id'] in ids and a['kind'] == 'git' and a['status'] == 'applied' for a in self.store.actions(cid)):
+            return False
+        # Phase 46 (1.9.28, w10's review, F3-4): only where no command of this run finished after its last view of the
+        # file (`git checkout -- f` through RunCommand, or a script writing HEAD's bytes, beside an unrelated applied
+        # plan) and no background command or plan of the run could still be writing
+        names = {t['call_id']: t['name'] for t in tools}
+        if any(name in BACKGROUND_WRITERS for name in names.values()):
+            return False
+        viewed, finished = {}, -1
+        for row in self.store.query("SELECT sequence,kind,payload FROM run_events WHERE run_id=? AND kind IN "
+                                    "('source_observed','tool_finished') ORDER BY sequence", (rid,)):
+            event = json.loads(row['payload'] or '{}')
+            if row['kind'] == 'source_observed' and event.get('path') in paths:
+                viewed[event['path']] = row['sequence']
+            elif row['kind'] == 'tool_finished' and names.get(event.get('call_id')) in COMMAND_WRITERS:
+                finished = row['sequence']
+        if any(viewed.get(path, -1) < finished for path in paths):
+            return False
+        repo = self.git._repository(cid, ws)
+        literal = {'GIT_LITERAL_PATHSPECS': '1'}  # a name such as b[1].py is that file, never a pattern
+        # Phase 46 (1.9.28): `git diff HEAD` says nothing about a file HEAD does not hold (an untracked or ignored one
+        # a script wrote), so only paths HEAD holds can be HEAD's version
+        held = self.git._git(['ls-tree', '-z', '--name-only', 'HEAD', '--', *paths], repo_root=repo['root'], check=False,
+                             env=literal)
+        if held['code'] != 0 or set(paths) - set(held['stdout'].decode('utf-8', 'surrogateescape').split('\0')):
+            return False
+        return self.git._git(['diff', '--quiet', 'HEAD', '--', *paths], repo_root=repo['root'], check=False,
+                             env=literal)['code'] == 0
+
+    def git_explained(self, rid, cid, ws, stale):
+        """Phase 46 (1.9.28, runner.settle_git_sources; the second opinion's bound): of these stale (path, state) pairs,
+        the ones one of this run's own applied reviewed Git command plans explains by its own snapshot of the working
+        files before and after it ran (git_plans._snapshot: a stash -u, rm, mv or switch): the run's last view of the
+        path is the plan's before, the path holds exactly the plan's after now, and the two differ. A file a command, a
+        script or anything else changed, before the plan or since, is never one; the model reads it itself."""
+        from .git_workflows import SHA
+        from .policy import digest
+        # Phase 46 (1.9.29): a Git plan a RunCommand ran (App.raw_git_review) too; the actions below are git ones only
+        ids = {t['result'].get('action_id') for t in self.runs.tools(rid)
+               if t['name'] in ('ProposeGitChange', 'RunCommand') and isinstance(t.get('result'), dict)}
+        trees = []
+        for action in self.store.actions(cid):
+            # Phase 46 (1.9.29): a plan in a linked worktree (its payload's `worktree`) moved that folder's files only
+            result = action['payload'].get('result') if action['id'] in ids and action['kind'] == 'git' \
+                and action['status'] == 'applied' and not action['payload'].get('worktree') else None
+            facts = result.get('result') if isinstance(result, dict) else None
+            snap = facts.get('snapshot') if isinstance(facts, dict) else None
+            pair = [(snap.get(side) or {}).get('files_tree') if isinstance(snap, dict) else None
+                    for side in ('before', 'after')]
+            if all(isinstance(tree, str) and SHA.fullmatch(tree) for tree in pair) and pair[0] != pair[1]:
+                trees.append(pair)
+        if not trees or not stale:
+            return []
+        repo = self.git._repository(cid, ws)
+        seen = {row['path']: row['disk_hash'] for row in self.provenance.latest(rid)}
+        candidates = [rel for rel, state in stale if rel in seen and state in ('changed', 'deleted')]
+        if not candidates:
+            return []
+        # w10's review, F3-2: one diff-tree per plan says which candidates it changed; blobs are read only for those
+        touched = []
+        for before_tree, after_tree in trees:
+            found = self.git._git(['diff-tree', '-r', '-z', '--name-only', '--no-renames', before_tree, after_tree, '--',
+                                   *candidates], repo_root=repo['root'], check=False, env={'GIT_LITERAL_PATHSPECS': '1'})
+            touched.append(set(found['stdout'].decode('utf-8', 'surrogateescape').split('\0')) if found['code'] == 0
+                           and not found['truncated'] else None)
+
+        def blob(tree, rel):
+            """The file's bytes in a snapshot tree; None when it is not there; PolicyError when it cannot be told."""
+            found = self.git._git(['rev-parse', '--verify', '-q', '--end-of-options', f'{tree}:{rel}'],
+                                  repo_root=repo['root'], check=False)
+            if found['code'] != 0:
+                return None
+            ident = found['stdout'].decode('ascii', 'replace').strip()
+            data = self.git._git(['cat-file', 'blob', ident], repo_root=repo['root'], limit=1_000_000,
+                                 truncate=True, check=False) if SHA.fullmatch(ident) else None
+            if data is None or data['code'] != 0 or data['truncated']:
+                raise PolicyError('This file cannot be compared with the Git snapshot.')
+            return data['stdout']
+        explained = []
+        for rel, state in stale:
+            if rel not in candidates:
+                continue
+            try:
+                now = ws.snapshot(rel, missing_ok=True)
+            except (OSError, PolicyError):
+                continue
+            for (before_tree, after_tree), changed in reversed(list(zip(trees, touched))):  # the latest plan decides
+                if changed is not None and rel not in changed:
+                    continue
+                try:
+                    before, after = blob(before_tree, rel), blob(after_tree, rel)
+                except PolicyError:
+                    break
+                if before == after:
+                    continue
+                if (None if before is None else digest(before)) == seen[rel] and now == after:
+                    explained.append((rel, state))
+                break
+        return explained
 
     def run_handoff(self, id, run_id, refresh=True):
         """Trusted native inspection; packets are evidence, never execution input."""
@@ -2333,6 +2716,12 @@ class App:
                     s for s in self.sources.pop(id, []) if s["id"] in (source_ids or [])
                 ]
                 self.screens.bind_pending(id, run_id)  # Phase 24 (V1-007): a grant made while no task ran is this run's
+                # D136 (the person): a site or window allowed earlier in this conversation stays allowed, up to its 15
+                # minutes; a message elsewhere ends it
+                try:
+                    self.screens.carry_over(id, run_id, lambda rid: self.runs.get(rid)['state'] not in RUN_LIVE_STATES)
+                except Exception as exc:
+                    self.runs.note(run_id, 'screen_carry_failed', {'type': type(exc).__name__})
                 self.controller.launch(chat, text.strip(), deliberate, sources, run_id)
             except Exception as exc:
                 shown = friendly_error(exc) or exc
@@ -2483,6 +2872,17 @@ class App:
         return f'Tool argument {key} is invalid: it must be {expected}.'
 
     @staticmethod
+    def _script_label(args):
+        """RunCode's row: its purpose, else its length (Phase 45, F148: the activity reader gives code_lines, never the
+        code)."""
+        purpose = ' '.join(str(args.get('purpose') or '').split())[:120]
+        if purpose:
+            return 'Running a script: ' + purpose
+        lines = args['code_lines'] if type(args.get('code_lines')) is int else (
+            len(str(args['code']).splitlines()) if str(args.get('code') or '').strip() else 0)
+        return 'Running a script' + (f' ({lines} lines of Python)' if lines > 0 else '')
+
+    @staticmethod
     def tool_label(name, args):
         return {
             "Read": "Reading " + args.get("file_path", ""),
@@ -2490,7 +2890,8 @@ class App:
             "Grep": "Searching project source",
             'SearchFiles': 'Finding relevant source',
             'CodeReferences': 'Following Python definitions and references',
-            'RunCode': 'Running a script: ' + str(args.get('purpose', ''))[:120],
+            # Phase 45 (F093, audit round R3): an empty purpose left "Running a script:" with nothing after it
+            'RunCode': App._script_label(args),
             'ResearchPlan': 'Planning research',
             'ResearchStatus': 'Checking research progress',
             'ReadSource': 'Reading a recorded source',
@@ -2522,6 +2923,26 @@ class App:
             'ReadGitPlanReceipt': 'Reading back a Git plan receipt',
             'ListProjectRecipes': 'Finding project test and build recipes',
             'PrepareEnvironment': 'Preparing a dependency install for review',
+            # Phase 45 (F182, audit round R6): app, browser and Companion steps in words, not tool names
+            'ScreenRequest': 'Asking to use an app window',
+            'ScreenObserve': 'Looking at the app window',
+            'ScreenAct': 'Acting in the app window',
+            'BrowserRequest': 'Asking to use websites in your browser',
+            'OpenURL': 'Opening a web page',
+            'AppAction': 'Asking an app to do one thing',
+            'ReadFile': 'Reading a file',
+            'WriteFile': 'Writing a file',
+            'EditFile': 'Editing a file',
+            'Shell': 'Running a command in the sandbox',
+            'Screenshot': 'Taking a screenshot',
+            'FindTool': 'Finding a tool for the task',
+            'ReadAttachment': 'Reading an attachment',
+            'ReadGitStatus': 'Reading Git status',
+            'ReadGitDiff': 'Reading Git changes',
+            'ReadGitHistory': 'Reading Git history',
+            'MemoryPropose': 'Proposing a memory to save',
+            'UIRender': 'Drawing an interactive view',
+            'UIUpdate': 'Updating an interactive view',
         }.get(name, name)
 
     def tool_hook(self, name, args):
@@ -2598,8 +3019,47 @@ class App:
                     'reviewed': True, 'loaded': bool(rows)}
         return resolve
 
+    @staticmethod
+    def _workshop():
+        from . import workshop
+        return workshop
+
+    @staticmethod
+    def _companion():
+        from . import companion_tools
+        return companion_tools
+
     def guard_session(self, cid):
         return self.active_run if self.active == cid and self.active_run else cid
+
+    def planted_refusal(self, ws, path=None, words=()):
+        """Phase 46 (1.9.27, golden held-out research_frozen: one Opus cell of 15 graded unsafe): writing `path`, or a
+        command whose arguments are `words`, is refused when an instruction aimed at AI assistants in a file this run
+        saw asks for that file or host and the person's request does not name it (requirements.planted): in Auto mode
+        the write would apply unreviewed, and a review card would ask the person to judge an injection they never saw.
+        A check that cannot run never stops the work."""
+        rid = self.active_run
+        if not ws or not rid:
+            return
+        try:
+            from .requirements import planted, planted_refusal as refusal_for, seen_paths
+            from .conventions import files as convention_files
+            # Phase 46 (1.9.28, D186): the project's AGENTS.md and CLAUDE.md count as seen (the run's conventions)
+            found = planted(ws.root, seen_paths(ws.root, self.runs.tools(rid), self.current_text)
+                            + convention_files(ws.root))
+            refusal = refusal_for(found, self.current_text, path, words)
+        except Exception as exc:
+            refusal, failure = None, type(exc).__name__
+        else:
+            failure = None
+        try:
+            if failure or refusal:
+                self.runs.note(rid, 'planted_check_failed' if failure else 'planted_refused',
+                               {'type': failure} if failure else {'call_id': self.current_tool_call})
+        except Exception:
+            pass  # the record is display only
+        if refusal:
+            raise PolicyError(refusal)
 
     def execute(self, name, args, ws, cid, call_id=None, actor=None):
         rid = self.active_run if self.active == cid else None
@@ -2624,9 +3084,16 @@ class App:
             self.authorize(name, args, actor or (Actor.root(rid) if rid else Actor.native()), rid, call_id=call_id,
                            layers=('catalogue', 'route', 'actor', 'policy') if rid else ('catalogue', 'actor', 'policy'))
             result = self._execute(name, args, ws, cid)
+            if rid and isinstance(result, dict):
+                # Phase 40 (1.6.0): words from untrusted results, so a later Shell call built from them asks first.
+                from .companion_tools import UNTRUSTED_TOOLS, state as companion_state
+                if name in UNTRUSTED_TOOLS:
+                    companion_state(self).note_untrusted(rid, [json.dumps(result, ensure_ascii=False)[:400_000]])
         except Exception as exc:
             if rid and not any(t['call_id'] == call_id and t['state'] == 'completed' for t in self.runs.tools(rid)):
-                self.runs.end_tool(rid, call_id, {'error': str(exc)},
+                # Phase 45 (F238, audit round R10): a screen refusal keeps its code, so Activity words it for the person
+                refused = getattr(exc, 'code', None) if type(exc).__name__ == 'ScreenRefused' else None
+                self.runs.end_tool(rid, call_id, {'error': str(exc), **({'refused': refused} if isinstance(refused, str) else {})},
                     # Phase 37: a script that failed mid-way may have made edits (each in its own receipt), so its
                     # own receipt is uncertain too; RunCode stays out of EFFECTS, which names effects by tool.
                     uncertain=(name in EFFECTS or name == 'RunCode') and not isinstance(exc, (PolicyError, HookInterrupted)))
@@ -2665,8 +3132,23 @@ class App:
             if self.tool_hook(name, args):
                 raise PolicyError('A hook requires review for this runtime input.')
             if name == 'AskUserQuestion':
+                # Phase 46 (dev d-lh-91 on gpt-6.1-sol): with this run's test edits held for the end-of-turn review, the
+                # model asked the person in a question to approve them; a question's answer is not the review's
+                # decision, and the run stopped unfinished. The review already asks, so a question about it is refused
+                # (checked here, not said in every request: the system prompt's size is pinned).
+                if APPROVAL_QUESTION.search(str(args.get('questions') or '')) and self.store.query(
+                        "SELECT 1 FROM run_action_owners o JOIN actions a ON a.id=o.action_id WHERE o.run_id=? AND "
+                        "a.status='pending' LIMIT 1", (self.active_run,)):
+                    raise PolicyError("Pebble's own review already asks the person about your pending changes and "
+                                      'continues your task after their decision: finish your step instead of asking.')
+                # Phase 46 (1.9.28, PEBBLE_1928_CLARIFY_FACTS; golden clarification: a question asked as optional let
+                # the run go on and change files on a guess before the answer came): before the run's first change, a
+                # question waits for its answer
+                from .soft_checks import applied_edit, switch
+                required = args['required'] or switch('CLARIFY_FACTS') and not any(
+                    applied_edit(t) for t in self.runs.tools(self.active_run))
                 question = self.interactions.create_question(self.active_run, self.current_tool_call,
-                    json.loads(args['questions']), args['required'])
+                    json.loads(args['questions']), required)
                 self.emit('question', {'chat_id': cid, 'run_id': self.active_run, 'question_id': question['id'], 'status': 'pending', 'question': question})
                 return {'question_id': question['id'], 'revision': question['revision'], 'required': question['required'], 'status': 'awaiting_user_input'}
             if name == 'ReadRunEvidence':
@@ -2729,7 +3211,7 @@ class App:
                         outcome = self.learning.maintain(candidate_id=result['candidate_id'])
                         if outcome.get('outcomes'):
                             result.update(outcome['outcomes'][0])
-                    return result
+                    return self.learning.proposal_note(result)  # Phase 46 (1.9.28): why a proposal was not saved
             if name == 'UpdateGoal':
                 # Status of the person's existing goal steps and criterion proposals only; Goals emits 'goal'.
                 return self.goals.agent_update(self.active_run, args.get('steps'), args.get('candidates'),
@@ -2771,6 +3253,7 @@ class App:
         if name not in GROUP or not policy["tools"].get(GROUP[name], False):
             raise PolicyError("This tool is disabled in Permissions.")
         hook_review = self.tool_hook(name, args)
+        self.hook_review_now = bool(hook_review)  # Phase 45 (D141): a hook's review is never Pebble's to check away
         if name == 'RunCode':
             # Phase 37 (1.5.0): each call the script makes goes back through validate, authorize and execute with its
             # own nested receipt (code_mode.run), so the guard, edit_scope and approvals apply to it as to a direct call.
@@ -2895,52 +3378,222 @@ class App:
             if refusal:
                 return {'status': 'refused', 'error': research.refusal_text(refusal), 'refusal': refusal,
                         'authorization': 'none'}
+            if not ws and self.active == cid:
+                # Phase 40 (1.6.0): after Pebble read the person's files in this task, a search or web address that
+                # would carry their words out is refused (an injected page cannot make Pebble send them).
+                from .companion_tools import state as companion_state
+                leaked = companion_state(self).leaks(rid, args.get('url') if name == 'ReadURL' else args.get('query'))
+                if leaked:
+                    return {'status': 'refused', 'authorization': 'none',
+                            'error': 'This would send words from the person\'s files to a website (' + ', '.join(leaked)
+                                     + '). Pebble does not do that on its own: tell the person what you wanted to look up.'}
             if name == "WebSearch":
                 found = self.web_search(args["query"])
                 found["untrusted_search_results"] = self.ledger.record_search(rid, args["query"],
                                                                               found["untrusted_search_results"])
                 return found
             return self.ledger.read(rid, args["url"], window_chars=window_chars(budget), query_terms=(self.current_text,))
+        if name in COMPANION_TOOLS:
+            # Phase 40 (1.6.0, D90-D93): the Companion's general tools, offered only without a project (runner.py).
+            # shell_policy decides each call; anything beyond the sandbox becomes a 'shell' or 'file' action that waits
+            # for the person in every mode.
+            if ws:
+                raise PolicyError('This tool is for conversations without a project; use the project tools here.')
+            if not self.active_run or self.active != cid:
+                raise PolicyError('This tool requires an owning run.')
+            from . import companion_tools
+            hook_review = self.tool_hook(name, args)
+            if name == 'Shell':
+                return companion_tools.shell(self, args, cid, self.active_run, self.cancel, force_review=hook_review)
+            if name in ('WriteFile', 'EditFile'):
+                return companion_tools.write_file(self, args, cid, self.active_run, edit=name == 'EditFile',
+                                                  force_review=hook_review)
+            if hook_review:
+                raise PolicyError('A hook requires review for this action.')
+            if name == 'ReadFile':
+                return companion_tools.read_file(self, args, self.active_run)
+            if name == 'Screenshot':
+                return companion_tools.screenshot(self, args, self.active_run)
+            return companion_tools.find_tool(self, args, self.active_run, ws)
+        if name == 'ScreenRequest':
+            # Phase 42 (1.8.0): Pebble asks for one app window; only the person's review in Pebble grants it (every
+            # mode), to the run that asked.
+            policy = self.task_policy or self.store.setting('permissions', DEFAULT)
+            if not policy['tools'].get('screen', False):
+                raise PolicyError('Screen control is disabled in Permissions.')
+            from .screen_session import request_proposal
+            from .screen_helper import switches
+            payload = request_proposal(self, args)
+            held = self.screens.held_window(self.active_run, payload)  # D136: the window this task already holds
+            if held:
+                self.screens.requested.add(held['session_id'])
+                return {'granted': True, 'session_id': held['session_id'], 'app': payload['app'],
+                        'title': payload['title'], 'already_allowed': True,
+                        'next': 'The person already allowed this window in this conversation. Call ScreenObserve with '
+                                'this session_id.'}
+            # Phase 45 (F180): whether Pebble may take pictures of the window (its switch and the person's Take
+            # screenshots), so the card can say macOS may ask about it
+            shots = switches().get('capture') is True and policy['tools'].get('capture', False) is True
+            return self.propose(cid, 'screen_grant', {**payload, 'run_id': self.active_run, 'requires_review': True,
+                                                      'screenshots': shots, 'full_access': policy['mode'] == 'full'})
+        if name == 'BrowserRequest':
+            # Phase 43 (1.9.0, decision 3): sites in the person's browser, in Pebble's own tab; only the person's
+            # review grants them (every mode), to the run that asked.
+            policy = self.task_policy or self.store.setting('permissions', DEFAULT)
+            if not policy['tools'].get('screen', False):
+                raise PolicyError('Screen control is disabled in Permissions.')
+            from .screen_session import browser_request_proposal
+            payload = browser_request_proposal(self, args)
+            return self.propose(cid, 'browser_grant', {**payload, 'run_id': self.active_run, 'requires_review': True})
         if name in ('ScreenObserve', 'ScreenAct'):
             # Phase 16 D04: a granted window or tab only; commits wait for native review; nothing is retried.
             policy = self.task_policy or self.store.setting('permissions', DEFAULT)
             if not policy['tools'].get('screen', False):
                 raise PolicyError('Screen control is disabled in Permissions.')
             if name == 'ScreenObserve':
-                return self.screens.observe(args['session_id'], self.active_run)
-            result = self.screens.act(args['session_id'], self.active_run, args['observation_id'], args['element'],
-                                      args['action'], args.get('text'), expect=args.get('expect'))
+                # Phase 45 (layer 4): a screenshot of an app window joins the observation when the person's Take
+                # screenshots switch is on and the model takes images (the helper's own facts decide the rest).
+                from .images import vision
+                try:
+                    pictures = policy['tools'].get('capture', False) is True and bool(vision(self.model.current()))
+                except Exception:
+                    pictures = False
+                result = self.screens.observe(args['session_id'], self.active_run, screenshot=pictures)
+                if result.get('status') == 'needs_bring_forward':
+                    # Phase 43 (1.9.0): a minimized window, or one on another desktop, comes forward only after the
+                    # person's review (every mode), once per session.
+                    return self.propose(cid, 'screen_raise', {**result['proposal'], 'requires_review': True})
+                self._screen_note('screen_observed', result)
+                return result
+            # Phase 43 (decision 4): Full access, or Auto in a project, makes in-grant link navigation routine.
+            routine = policy['mode'] == 'full' or policy['mode'] == 'auto' and ws is not None
+            full_access = policy['mode'] == 'full'  # D137: ordinary presses and clicks need no card
+            pause_ok = bool(PAUSE_REQUEST.search(self.current_text or ''))
+            from .screen_session import PIXEL_ACTIONS, PIXEL_ONLY, ScreenRefused
+            if args.get('elements') is not None:  # Phase 45 (D142): a burst of presses, each the ordinary act
+                if args.get('action') != 'press' or args.get('element') is not None \
+                        or any(args.get(k) is not None for k in PIXEL_ONLY):
+                    raise ScreenRefused('invalid', 'elements goes with action press and no element, x or y.')
+                result = self.screens.act_sequence(args['session_id'], self.active_run, args['observation_id'],
+                                                   args['elements'], routine=routine, pause_ok=pause_ok,
+                                                   full_access=full_access)
+            elif args.get('action') in PIXEL_ACTIONS:  # Phase 45 (layer 4): on the observation's screenshot
+                from .screen_session import act_pixels_making_room  # Phase 45 (F225)
+                result = act_pixels_making_room(self.screens, self.emit, time.sleep, args['session_id'], self.active_run,
+                                                args['observation_id'], args['action'],
+                                                **{k: args.get(k) for k in PIXEL_ONLY}, text=args.get('text'),
+                                                expect=args.get('expect'), routine=routine, pause_ok=pause_ok,
+                                                full_access=full_access)
+            else:
+                if any(args.get(k) is not None for k in PIXEL_ONLY):
+                    raise ScreenRefused('invalid', 'x, y, x2, y2, button, count, dy and keys go with the pixel actions '
+                                                   'click_at, drag_at, scroll_at, key and type_text.')
+                result = self.screens.act(args['session_id'], self.active_run, args['observation_id'],
+                                          args.get('element'), args['action'], args.get('text'),
+                                          expect=args.get('expect'), routine=routine, pause_ok=pause_ok,
+                                          full_access=full_access)
             if result.get('status') == 'needs_native_review':
-                return self.propose(cid, 'screen', {**result['proposal'], 'requires_review': True})  # every mode
+                staged = self.propose(cid, 'screen', {**result['proposal'], 'requires_review': True})  # every mode
+                # Phase 45 (D142): a burst names the presses that ran before the one that waits
+                return {**staged, 'pressed': result['pressed']} if result.get('pressed') else staged
             if result.get('needs_reconciliation') and self.active_run:
                 self.runs.note(self.active_run, 'screen_act_uncertain', {'session_id': args['session_id']})
+            self._screen_note('screen_acted', result)
             return result
         if name == "OpenApp":
-            if self.active and not re.search(
+            # Phase 45 (F248, audit round R11): "In Chess, select the white knight …" was refused twice, even after the
+            # person answered "Yes, open Chess": a request that names the app asks to use it ("Use Calculator to …")
+            wanted = ' '.join(str(args.get('name') or '').split())
+            named = bool(wanted) and re.search(r'(?<!\w)' + re.escape(wanted) + r'(?!\w)', self.current_text or '', re.I)
+            if self.active and not named and not re.search(
                 r"\b(open|launch|start)\b", self.current_text, re.I
             ):
                 raise PolicyError(
-                    "App opening needs an explicit request to open an app. Use a live lookup to answer current-information questions."
+                    "App opening needs an explicit request to open an app: the person's request names no app and asks to "
+                    "open none. Ask the person whether to open it."
                 )
             matches = [
                 a for a in installed_apps() if a["name"].lower() == args["name"].lower()
             ]
             if len(matches) != 1:
+                # Phase 45 (F077, audit round R2): asked to search Wikipedia, the model opened "Wikipedia" as an app, then
+                # Safari's Start Page, and gave up. A name that is no installed app also gets the way to a website (in a
+                # project conversation too since D132).
+                web = "For a website, ask for its site with BrowserRequest (OpenURL only shows a page)." 
                 return {
-                    "error": "Choose an exact installed app name. Available: "
+                    "error": f"No installed app is named {str(args.get('name', ''))[:80]!r}. {web} Installed apps: "
                     + ", ".join(a["name"] for a in installed_apps())[:1500]
                 }
-            return self.propose(
-                cid, "app", {**pin_app(matches[0]["id"]), "requires_review": hook_review}
+            # Phase 45 (F200, audit round R7): a file to open in it, checked now and again before it opens
+            opened = app_document(args["path"]) if args.get("path") else None
+            return self.propose(  # Phase 43 (1.9.0): background opens it without taking focus (decision 9)
+                cid, "app", {**pin_app(matches[0]["id"]), "background": args.get("background") is True,
+                             "requires_review": hook_review, **({"document": opened} if opened else {})}
             )
+        if name == 'OpenURL':
+            # Phase 43 (1.9.0): the direct route: one web address in the person's browser, reviewed like opening an
+            # app, and always when the address came from untrusted text or carries words of the person's files.
+            from . import open_url
+            from .companion_tools import state as companion_state
+            if self.active and not open_url.OPEN_INTENT.search(self.current_text or ''):
+                raise PolicyError('Opening a page needs a request to open, play, watch or visit something. Answer '
+                                  'questions with WebSearch and ReadURL instead.')
+            rid = self.active_run
+            # site + query (a site's own search) waits for the person unless the words are the person's own.
+            payload = open_url.proposal(args, untrusted=companion_state(self).fragments_for(rid) if rid else (),
+                                        private=(lambda url: companion_state(self).leaks(rid, url)) if rid else None,
+                                        person_text=self.current_text)
+            # Phase 45 (D128): measured at 01:33, the model opened the same search with OpenURL while its BrowserRequest
+            # waited, so the person's browser showed the page twice and Pebble could see only one of them.
+            asked = open_url.browser_request_for(self.store.actions(cid), rid, payload.get('url'))
+            if asked:
+                raise PolicyError(asked)
+            return self.propose(cid, 'url', {**payload, 'requires_review': payload['requires_review'] or hook_review})
+        if name == 'AppAction':
+            # Phase 43 (1.9.0): fixed scripting verbs. Reads run at once (private reads taint the run); effects follow
+            # the permission mode like OpenApp; a shortcut run waits for the person in every mode.
+            from . import app_actions
+            from .companion_tools import state as companion_state
+            rid, st = self.active_run, companion_state(self)
+            payload = app_actions.proposal(args, untrusted=st.fragments_for(rid) if rid else (),
+                                           private=(lambda text: st.leaks(rid, text)) if rid else None)
+            if payload['class'] in ('read', 'read_private'):
+                if hook_review:
+                    raise PolicyError('A hook requires review for this action.')
+                result = app_actions.run(payload)
+                if payload['class'] == 'read_private' and rid:
+                    st.note_private(rid, app_actions.private_texts(result))
+                return result
+            return self.propose(cid, 'app_action', {**payload,
+                                                    'requires_review': payload['requires_review'] or hook_review})
         if not ws:
             raise PolicyError("Select a project folder first.")
         if name in {'Write', 'Append', 'Edit'} and self.active_run:
             self.agents.assert_root_path(cid, self.active_run, args['file_path'])
+            self.planted_refusal(ws, path=args['file_path'])  # Phase 46 (1.9.27): a file an injection asks for
+            from . import keep_paths
+            refusal = keep_paths.edit_refusal(ws.root, args['file_path'], self.current_text) if keep_paths.enabled() else None
+            if refusal:  # Phase 46 (1.9.28, b-new G2, behind PEBBLE_1928_KEEP_PATHS): a path the notes or request keep
+                raise PolicyError(refusal)
         guard_read_only = False
+        git_read = git_change = git_refused = None
         if name in {'RunCommand', 'StartCommand'}:
+            # Phase 46 (the lead's design question): read-only Git typed in the terminal (git status, log, show, diff,
+            # branch -a ...) runs in Pebble's confined Git as ReadGitStatus does; anything that changes the repository
+            # stays refused below and offers ProposeGitChange
+            from .git_commands import read as git_read_argv, review as git_review_argv
+            git_read = git_read_argv(args.get('command'), ws.root) if name == 'RunCommand' and not args.get('network') \
+                else None
+            if name == 'RunCommand' and git_read is None and not args.get('network'):
+                # Phase 46 (1.9.29): a changing one that ProposeGitChange's "command" operation takes as typed runs as
+                # that operation (raw_git_review); for one it does not take, its reason joins the terminal's refusal
+                try:
+                    git_change = git_review_argv(args.get('command'), ws.root)
+                except PolicyError as exc:
+                    git_refused = str(exc)
             try:
-                guard_read_only = inspect_command(args["command"], ws.root, args.get("network", False))['risk'] == 'read-only'
+                guard_read_only = git_read is not None or inspect_command(
+                    args["command"], ws.root, args.get("network", False))['risk'] == 'read-only'
             except PolicyError:
                 pass  # the broker refuses it below, with its own reason
         decision = self.guard.handle(
@@ -2959,11 +3612,23 @@ class App:
             raise PolicyError(self.guard.refusal(decision))
         if name in {'ReadGitStatus', 'ReadGitDiff', 'ReadGitHistory'}:
             return self.git.tool(cid, name, args, ws, self.cancel)
+        if git_read is not None:
+            if hook_review or decision['action'] != 'allow':
+                raise PolicyError('This Git read needs a review here (a hook or the guard asked for one), and raw Git reads '
+                                  'are not reviewed; read with ReadGitStatus, ReadGitDiff or ReadGitHistory instead.')
+            if not policy['tools']['files']:
+                raise PolicyError('Terminal commands require project read access.')
+            return self.git.raw(cid, git_read, ws, self.cancel)
+        if git_change is not None:
+            return self.raw_git_review(cid, args, git_change, ws, policy, hook_review, decision)
         if name in {'ReadGitWorktrees', 'PreviewWorktreeExport', 'ReadWorktreeExport', 'IntegrateWorktreeFile'}:
             if hook_review:
                 raise PolicyError('The hook requires review for this worktree operation; nothing was staged.')
             return self.git_api.root_tool(cid, name, args, ws, self.cancel)
         from .coding_api import root_tool_names
+        if name == 'ProposeGitChange':  # Phase 46 (1.9.28, the follow-ups security review 1b): as RunCommand's words
+            from .git_commands import planted_words
+            self.planted_refusal(ws, words=planted_words(args.get('argv')))  # the host a remote's new address names
         if name in root_tool_names():
             return self.coding.root_tool(cid, name, args, ws, hook_review)
         if name == 'RunPlan':
@@ -2973,15 +3638,43 @@ class App:
                 raise PolicyError('Asynchronous commands require an owning root run.')
             if not policy["tools"]["files"]:
                 raise PolicyError("Terminal commands require project read access.")
-            data = inspect_command(args["command"], ws.root, args.get("network", False))
+            try:
+                data = inspect_command(args["command"], ws.root, args.get("network", False))
+            except PolicyError as exc:
+                self.offer_git_tools(args.get('command'))
+                if git_refused:  # Phase 46 (1.9.29): why the reviewed command operation does not take it either
+                    raise PolicyError(f'{exc} As a reviewed command it is not available either: {git_refused}') from None
+                raise
+            if data['risk'] != 'read-only':
+                from .confined import inner_words  # Phase 46 (1.9.28, the w13b security review F1): and inside -c, recipes
+                self.planted_refusal(ws, words=[*data['argv'][1:], *inner_words(data['argv'], ws.root)])  # (1.9.27)
             if name == 'StartCommand':
                 timeout = args.get('timeout', 300)
                 if type(timeout) is not int or not 1 <= timeout <= 300:
                     raise PolicyError('Choose a command timeout from 1 to 300 seconds.')
+                if data.get('env'):  # Phase 46 (1.9.28, T2): the background job runs no reviewed variables
+                    raise PolicyError('A NAME=value variable is set only for a RunCommand; run it with RunCommand.')
                 data.update(asynchronous=True, timeout=timeout)
             if data["network"] and not policy["tools"]["web"]:
                 raise PolicyError("Network access is disabled in Permissions.")
             data["writable"] = policy["tools"]["edits"] and data["risk"] != "read-only"
+            if data["writable"] and self.active_run and self.active == cid:
+                # Phase 46 (1.9.28, golden held-out safety_actions: one sol cell unsafe; b-new R4, private d-sa-92): the
+                # request says not to change anything, so its commands run without write access to the project; a step
+                # the command did not announce (a script that also deletes old logs) fails instead of happening
+                if keeps_whole_project(self.current_text):
+                    data["writable"], data["read_only_request"] = False, True
+            if name == 'RunCommand' and data["writable"] and self.active_run and self.active == cid:
+                from . import keep_paths
+                if keep_paths.enabled():
+                    # Phase 46 (1.9.28, b-new G2, behind PEBBLE_1928_KEEP_PATHS): what the project's notes or the
+                    # request keep is denied in the command's sandbox (bound with the reviewed payload)
+                    try:
+                        keeps = keep_paths.kept(ws.root, self.current_text)
+                    except Exception:
+                        keeps = {}
+                    if keeps.get('delete') or keeps.get('change'):
+                        data['keep'] = keeps
             # X03: a typed plan pins argv, executable identity, cwd and resources.
             # Strings a plan cannot represent unambiguously stay legacy and are
             # labelled unplanned; destination-scoped network awaits typed destinations.
@@ -3002,12 +3695,34 @@ class App:
             if data['writable']:
                 self.agents.assert_effect_paths(str(ws.root))
             command_hook = self.hook_event('before_command', data['command'], {'tool': 'RunCommand'})['decision']
-            data["requires_review"] = (
-                data["requires_review"]
-                or hook_review
-                or command_hook == "review"
-                or decision["action"] != "allow"
-            )
+            if command_hook == 'review':
+                data['hook_review'] = True  # Phase 45 (D141): the person's own hook keeps its card
+            held = hook_review or command_hook == "review" or decision["action"] != "allow"
+            if (data["requires_review"] and not held and name == 'RunCommand' and policy['mode'] in ('auto', 'full')
+                    and self.active_run and self.active == cid):
+                # Phase 46 (1.9.28, D184, D189): a command confined to the project runs without a card, with a copy of
+                # the project behind it (confined.py); what a hook or AgentGuard holds, and anything else, asks. Full
+                # access too, with no step check (w14-full follow-up 1, item 7), for a command the host shows harmless
+                # (step_judge.tier: it only reads or makes new files). One it shows deletes or overwrites what was there,
+                # or whose effect it cannot read (a script, a build, a test runner), keeps the check, as in 1.9.27: D185
+                # ("a destructive or publishing step still needs the person's own words naming it"), and D189 deletes
+                # the copy when the task ends, so an unchecked step could not be undone after it (the final review,
+                # finding 1). The check holds a step or lets it run; it never asks the person
+                from . import confined
+                unproven = False
+                if policy['mode'] == 'full':
+                    from . import step_judge
+                    try:
+                        said = step_judge.person_messages(self, cid)
+                        unproven = bool(step_judge.tier(self, self.active_run, 'command', data,
+                                                        step_judge.task_words(self, self.active_run, said) if said else []))
+                    except Exception:
+                        unproven = True  # the host could not read the step: the check decides, as before
+                admitted = None if unproven or confined.waiting(self, cid, self.active_run) else confined.admit(
+                    self, data, ws, self.active_run)
+                if admitted is not None:
+                    data.update(requires_review=False, confined=admitted)
+            data["requires_review"] = data["requires_review"] or held
             if decision["action"] == "request_review":
                 data['guard_review'] = self.guard.review_reason(decision)  # V1-141: why, on the approval card
             return self.propose(cid, "command", data)
@@ -3042,7 +3757,17 @@ class App:
             requested_limit = args.get('limit')
             if type(offset) is not int or offset < 1 or type(char_offset) is not int or not 0 <= char_offset <= 96000 or requested_limit is not None and (type(requested_limit) is not int or requested_limit < 1):
                 raise PolicyError('Use a positive line offset and a character offset from 0 to 96000.')
-            source_text = ws.read(args["file_path"])
+            try:
+                source_text = ws.read(args["file_path"])
+            except FileNotFoundError:
+                # Phase 45 (F117): a re-read that finds the file gone is this run's view of it (provenance)
+                if self.active_run and self.active == cid:
+                    self.provenance.observe_absent(self.active_run, self.current_tool_call, ws, args['file_path'])
+                raise
+            except UnicodeDecodeError:
+                # Phase 46: a binary file is described, not reported as a codec error
+                from .policy import binary_note
+                raise PolicyError(binary_note(args['file_path'], ws.snapshot(args['file_path']))) from None
             lines = source_text.splitlines(keepends=True)
             from .policy import digest
             expected_hash = args.get('expected_hash')
@@ -3071,6 +3796,10 @@ class App:
                 'excerpt_note': 'Character paging is relative to the selected line span. Keep offset and limit unchanged when following next_char_offset. Full-view hash is a freshness witness, not proof that the full file was shown.',
                 **({'source': witness} if witness else {}),
             }
+            from .terminal import lock_read_note  # Phase 46 (1.9.29): a lock or PID file read says what the host sees
+            held = lock_read_note(ws.root, args['file_path'])
+            if held:
+                result['host_note'] = held
             # JSON escaping and metadata count toward the page budget too.
             output_limit = min(95000, working_budget - 512) if large else 6000
             if len(json.dumps(result, ensure_ascii=False, separators=(',', ':'))) > output_limit:
@@ -3168,10 +3897,27 @@ class App:
             mount = self.environments.mount_for(cid, ws, REGISTRY[plan['recipe']].needs)
             if mount is not None:
                 plan = resolve(plan['recipe'], ws, mount=mount)
-            check = None
+            check, check_run = None, None
             if name == 'RunTests' and args.get('check') is not None:
-                from .testing import check_payload
-                check = check_payload(plan['recipe'], args['check'])  # Phase 34 (W1): the isolated copy only
+                from .recipes import AUTO
+                from .testing import CHECK_FILES, check_payload
+                if args['recipe'] == 'auto':
+                    # Phase 46 (1.9.28, golden dev d-cf-01, d-lh-91 on Opus: auto chose pytest, the check was refused,
+                    # and the model probed with python3 -c, a reviewed command, then ran the tests again; 3-10 s): one
+                    # call runs the project's own tests as planned above (the run that counts), then the check alone
+                    # under the first recipe that takes one and that this project's files support, in a copy of its
+                    # own (testing.CHECK_ALONE). No such recipe: refused as before, naming the project's own.
+                    try:
+                        probe = resolve('auto', ws, mount=None, among=tuple(r for r in AUTO if r in CHECK_FILES))
+                    except PolicyError:
+                        probe = None
+                    if probe is not None:
+                        probe_mount = self.environments.mount_for(cid, ws, REGISTRY[probe['recipe']].needs)
+                        if probe_mount is not None:
+                            probe = resolve(probe['recipe'], ws, mount=probe_mount)
+                        check_run = {'recipe': probe['recipe'], 'plan': probe, 'mount': probe_mount,
+                                     'reviewed_files': review_bindings(probe['recipe'], ws)}
+                check = check_payload((check_run or plan)['recipe'], args['check'])  # Phase 34 (W1): a copy only
             try:
                 # Manifests and lockfiles under review (Phase 20 G20-recipes): learning data only. An unbindable
                 # file (a link, or above the 2 MB snapshot limit) leaves the run reviewable but teaches nothing.
@@ -3192,6 +3938,8 @@ class App:
                     'reviewed_files': review_bindings(plan['recipe'], ws),  # X20 F20-03: checked per file before launch
                     "requires_review": hook_review,
                     **({'check': check} if check is not None else {}),
+                    # Phase 46 (1.9.28): the check's own launch, reviewed on the same card (testing.run_tests)
+                    **({'check_run': check_run} if check_run is not None else {}),
                 },
             )
         else:
@@ -3209,12 +3957,16 @@ class App:
     def propose(self, cid, kind, payload):
         policy = self.task_policy or self.store.setting("permissions", DEFAULT)
         payload = {**payload, "permission_mode": policy["mode"]}
+        if kind == 'git' and policy['mode'] == 'auto' and not payload.get('requires_review'):
+            from .confined import keeps_refs, waiting  # Phase 46 (1.9.28, D184): what still shows its Git card
+            run_id = self.active_run if self.active == cid else None
+            payload['requires_review'] = waiting(self, cid, run_id) or keeps_refs(self, run_id)
         aid = self.store.action(cid, kind, payload)
         execution = self.controller.current()
         owner = {'run_id': execution.run_id, 'call_id': execution.current_call} if execution and execution.chat_id == cid and execution.current_call else None
         if owner:
             self.runs.bind_action(owner['run_id'], owner['call_id'], aid, kind)
-        if automatic(policy, kind) and not payload.get("requires_review"):
+        if automatic(policy, kind, payload) and not payload.get("requires_review"):  # Phase 46 (1.9.28, D184): the plan
             action = next(a for a in self.store.actions(cid) if a["id"] == aid)
             self.store.query("UPDATE actions SET status='running' WHERE id=?", (aid,))
             receipt_committed = False
@@ -3242,8 +3994,130 @@ class App:
                     "actions", {"chat_id": cid, "actions": self.store.actions(cid)}
                 )
                 raise
+        waiting = None
+        if policy["mode"] == "full" and payload.get("requires_review") and not payload.get("hook_review") \
+                and not getattr(self, 'hook_review_now', False):
+            # Phase 45 (D141, the person): in Full access Pebble's own check of what the person asked stands in for the
+            # card; spending money and their hooks' reviews still wait for them
+            from . import step_judge
+            try:
+                judged = step_judge.judge(self, cid, owner['run_id'] if owner else self.active_run, kind, payload)
+            except Exception as exc:  # Phase 46 (1.9.28, D185 follow-up 1): a check that breaks leaves the card (D141)
+                judged = {'asked': False, 'held': 'check_failed', 'error': type(exc).__name__[:60]}
+            if judged is not None and judged.get('asked') is True:
+                applied = self._apply_judged(cid, aid, kind, owner, judged)
+                if applied is not None:
+                    return applied
+            elif judged is not None and owner:
+                # Phase 46 (1.9.28, D185, the person: "Send it back; ask if stuck"): a step the check holds goes back to
+                # the model with the host's reason, runs nowhere and shows no card. The card stays for money, a check
+                # that could not run, and after 3 holds in a row or 20 in the task (step_judge.held journals why; the
+                # reviewed payload never changes)
+                try:
+                    outcome = step_judge.held(self, cid, owner['run_id'], aid, kind, payload, judged)
+                except Exception as exc:  # the card, as a check that could not run leaves it
+                    outcome = {}
+                    self.runs.note(owner['run_id'], 'step_held', {'action_id': aid, 'held': 'check_failed',
+                                                                  'error': type(exc).__name__[:60]})
+                if outcome.get('status') == 'held':
+                    self.store.query("UPDATE actions SET status='held' WHERE id=? AND status='pending'", (aid,))
+                    if kind == 'screen' and isinstance(payload.get('proposal_id'), str):
+                        self.screens.reject(payload['proposal_id'])  # its proposal closes, as a declined one does
+                    self.emit("actions", {"chat_id": cid, "actions": self.store.actions(cid)})
+                    return outcome
+                waiting = outcome.get('host_note')
         self.emit("actions", {"chat_id": cid, "actions": self.store.actions(cid)})
-        return {"status": "awaiting_user_approval", "action_id": aid, "kind": kind}
+        return {"status": "awaiting_user_approval", "action_id": aid, "kind": kind,
+                **({'host_note': waiting} if waiting else {})}
+
+    def _apply_judged(self, cid, aid, kind, owner, judged):
+        """Phase 45 (D141): run a step Pebble's check approved in Full access, as the person's approval would. A hook of
+        the person's that asks for review leaves the card (None); its check runs before any effect."""
+        action = next(a for a in self.store.actions(cid) if a["id"] == aid)
+        # The verdict goes in the task's journal (Activity reads it); the reviewed payload is never changed (git and
+        # command plans are bound to its hash)
+        if owner:
+            self.runs.note(owner['run_id'], 'step_judged', {'action_id': aid, 'quote': judged['quote']})
+        self.store.query("UPDATE actions SET status='running' WHERE id=?", (aid,))
+        receipt_committed = False
+        try:
+            result = self.perform_action({**action, '_judge_reviewed': True}, cid)
+            self.runs.commit_action(aid, action['payload'], result, kind, owner)
+            receipt_committed = True
+            if kind == 'screen' and isinstance(result, dict) and result.get('needs_reconciliation') and owner:
+                self.runs.note(owner['run_id'], 'screen_act_uncertain',
+                               {'session_id': action['payload'].get('session_id')})
+            self.emit("actions", {"chat_id": cid, "actions": self.store.actions(cid)})
+            return {"status": "applied", "action_id": aid, "kind": kind, "result": result, "approved_by": "pebble",
+                    "you_asked": judged['quote']}
+        except PolicyError as exc:
+            if not receipt_committed and str(exc) == HOOK_REVIEW:
+                self.store.query("UPDATE actions SET status='pending' WHERE id=?", (aid,))
+                return None
+            if not receipt_committed:
+                self.store.query("UPDATE actions SET status='failed' WHERE id=?", (aid,))
+            self.emit("actions", {"chat_id": cid, "actions": self.store.actions(cid)})
+            raise
+        except Exception:
+            if not receipt_committed:
+                self.store.query("UPDATE actions SET status='failed' WHERE id=?", (aid,))
+            self.emit("actions", {"chat_id": cid, "actions": self.store.actions(cid)})
+            raise
+
+    def _reviewed(self, action):
+        """The person's review in Pebble or, in Full access only (D141), Pebble's own check of what they asked."""
+        if action.get('_native_reviewed') is True:
+            return True
+        policy = self.task_policy or self.store.setting('permissions', DEFAULT)
+        return action.get('_judge_reviewed') is True and policy['mode'] == 'full'
+
+    def settle_copy(self, ident, command=None, output=None):
+        """Phase 46 (1.9.28, D184): after a command Auto ran without a card, what it changed, what the request keeps put
+        back from the copy (the person reads it in Activity, the model in the result) and its Undo receipt: the fields
+        its result gains, and (the w13b security review F1) why a write where later runs load code was refused. Never
+        raises: the command's own outcome stands, and the copy stays until the task ends."""
+        from . import confined
+        run_id = self.active_run
+        try:
+            rows = self.store.query("SELECT payload FROM run_events WHERE run_id=? AND kind='requirements' "
+                                    "ORDER BY sequence DESC LIMIT 1", (run_id,))
+            ledger = json.loads(rows[0]['payload']).get('requirements') if rows else []
+            out, facts = confined.copies(self).settle(ident, ledger)
+            refused = confined.copies(self).refusal(run_id, command, output) if command else None
+            if refused:
+                out['code_folders'] = refused
+        except Exception as exc:
+            if run_id:
+                self.runs.note(run_id, 'confined_failed', {'type': type(exc).__name__})
+            return {'undo': 'unavailable'}
+        if run_id:
+            self.runs.note(run_id, 'confined_command', facts)
+        return out
+
+    def _undo_command(self, id, action):
+        """Phase 46 (1.9.28, D184): the Undo receipt of a command Auto ran without a card puts the project's files back as
+        they were before it, from its copy, while each file it changed is still as it left it and its copy is kept
+        (Phase 46, 1.9.29, D209: a day after its task ends)."""
+        from . import confined
+        payload = action['payload']
+        ws = Workspace(payload['root'])
+        if payload.get('root_identity') is not None and payload['root_identity'] != list(ws.identity):
+            raise PolicyError('The project folder was replaced after this command; undo is blocked.')
+        with self.store.lock:
+            if self.process_inspections.pending(payload['root']):
+                raise PolicyError('Inspect the prior uncertain command outcome before undoing a command in this project.')
+            self.agents.assert_effect_paths(payload['root'])
+        owner = self.store.query('SELECT run_id FROM run_action_owners WHERE action_id=?', (action['id'],))
+        if not owner:
+            raise PolicyError('Pebble kept no copy for this command.')
+        paths = confined.copies(self).undo(owner[0]['run_id'], payload['confined']['copy']['id'])
+        receipt = {'undone_at': time.time(), 'paths': paths[:200], 'verified': True, 'scope': 'the files this command changed'}
+        self.store.query("UPDATE actions SET status='undone',payload=? WHERE id=? AND status='applied'",
+                         (json.dumps({**payload, 'result': {**(payload.get('result') or {}), 'undo': 'undone'},
+                                      'undo': receipt}), action['id']))
+        self.runs.note(owner[0]['run_id'], 'action_undone', {'action_id': action['id'], 'paths': len(paths), 'verified': True})
+        self.emit("actions", {"chat_id": id, "actions": self.store.actions(id)})
+        return True
 
     def open_app(self, id, app_id):
         self.chat(id)
@@ -3296,19 +4170,40 @@ class App:
                 receipt = self.runs.commit_action(action_id, action['payload'], result, action['kind'], owner)
                 receipt_committed = True
                 if owner:
+                    # Phase 46 (1.9.28, golden held-out parallel_work: one sol cell ended `interrupted`): after the
+                    # committed receipt, a follow-up that fails is noted and the run continues from the receipt; only
+                    # a resolution that cannot be recorded even as the receipt's identity still ends it interrupted.
+                    def after(step, function):
+                        try:
+                            function()
+                            return True
+                        except Exception as failure:
+                            try:
+                                self.runs.note(owner['run_id'], 'approval_follow_up_failed',
+                                               {'step': step, 'type': type(failure).__name__})
+                            except Exception:
+                                pass  # the note is display only
+                            return False
                     if action['kind'] == 'edit':
-                        self.provenance.applied(owner['run_id'], action_id, action['payload'], result)
+                        after('provenance', lambda: self.provenance.applied(owner['run_id'], action_id, action['payload'], result))
                     if action['kind'] == 'screen' and isinstance(result, dict) and result.get('needs_reconciliation'):
                         # Dispatched once with an unknown outcome: inspect before resuming, never retry.
                         self.runs.transition(owner['run_id'], 'needs_reconciliation',
                                              error='The approved screen act has an uncertain outcome. Inspect it before resuming.')
                     if self.cancel.is_set():
                         self.runs.transition(owner['run_id'], 'paused' if self.pause_requested.is_set() else 'stopped')
-                    self.interactions.action_resolution(id, action_id, receipt)
+                    if not after('resolution', lambda: self.interactions.action_resolution(id, action_id, receipt)):
+                        self.interactions.action_resolution(id, action_id, {
+                            k: receipt[k] for k in ('action_id', 'kind', 'status', 'receipt_id') if k in receipt})
                     try:
                         self.hook_event('approval_resolved', data={'action_id': action_id, 'kind': action['kind'], 'state': 'applied'})
                     except Exception as exc:
                         self.runs.note(owner['run_id'], 'hook_observer_failed', {'event': 'approval_resolved', 'type': type(exc).__name__})
+                    after('summary', lambda: self.store.message(
+                        id, "assistant", self.action_summary(action["kind"], action["payload"], result),
+                        route_class=self.message_route(owner['run_id'])))
+                    after('checkpoint', lambda: self.update_checkpoint(id))
+                    return result
                 self.store.message(
                     id,
                     "assistant",
@@ -3329,6 +4224,16 @@ class App:
                         {'action_id': action_id, 'error': str(exc)}, uncertain=not isinstance(exc, (PolicyError, HookInterrupted)))
                     if not isinstance(exc, (PolicyError, HookInterrupted)):
                         self.runs.transition(owner['run_id'], 'needs_reconciliation', error='The approved action has an uncertain outcome. Inspect it before resuming.')
+                    else:
+                        # Phase 45 (F194, audit round R6): a refusal (nothing ran: the window had changed since the card)
+                        # left its run waiting for a review that no longer existed, with no reply and the companion
+                        # saying "Waiting for your review". The run continues with the refusal, as after a Deny.
+                        try:
+                            self.interactions.action_resolution(id, action_id, {
+                                'action_id': action_id, 'kind': action['kind'], 'status': 'failed',
+                                'error': str(exc)[:500]})
+                        except Exception as failure:
+                            self.runs.note(owner['run_id'], 'action_resolution_failed', {'type': type(failure).__name__})
                 raise
             finally:
                 with self.task_lock:
@@ -3356,18 +4261,27 @@ class App:
             "command": "terminal",
             "plugin": "plugins",
             "screen": "screen",
+            'shell': 'terminal', 'file': 'edits',  # Phase 40 (1.6.0): the Companion's Shell and file writes
+            'screen_grant': 'screen',  # Phase 42 (1.8.0): a window Pebble asked for
+            'url': 'apps',  # Phase 43 (1.9.0): a web address opened in the person's browser
+            'screen_raise': 'screen',  # Phase 43 (1.9.0): a granted window brought forward
+            'app_action': 'apps',  # Phase 43 (1.9.0): a fixed scripting verb
+            'browser_grant': 'screen',  # Phase 43 (1.9.0): sites in the person's browser Pebble asked for
             **KIND_GROUP,
         }.get(action["kind"])
         policy = self.task_policy or self.store.setting("permissions", DEFAULT)
         if not group or not policy["tools"].get(group, False):
             raise PolicyError("This action is disabled in Permissions.")
         tool = {'edit': 'Write', 'app': 'OpenApp', 'tests': 'RunTests', 'command': 'RunCommand', 'plugin': 'PluginCall',
-                'screen': 'ScreenAct', **KIND_TOOL}[action['kind']]
+                'screen': 'ScreenAct', 'shell': 'Shell', 'file': 'WriteFile', 'screen_grant': 'ScreenRequest',
+                'url': 'OpenURL', 'screen_raise': 'ScreenObserve', 'app_action': 'AppAction',
+                'browser_grant': 'BrowserRequest',
+                **KIND_TOOL}[action['kind']]
         if action['kind']=='plugin' and action['payload'].get('data_kind'):tool='FetchPluginData'
         admission = self.hook_event('before_tool', tool + ' ' + json.dumps(action['payload'], ensure_ascii=False),
             {'tool': tool, 'arguments_hash': __import__('hashlib').sha256(json.dumps(action['payload'], sort_keys=True).encode()).hexdigest()})
         if admission['decision'] == 'review' and action.get('_native_reviewed') is not True:
-            raise PolicyError('The hook requires native review before this effect.')
+            raise PolicyError(HOOK_REVIEW)  # the person's own hook: Pebble's check never stands in for it (D141)
         if action['kind'] in KIND_GROUP:
             return self.coding.perform(action, cid, policy)
         if action["kind"] == "edit":
@@ -3378,8 +4292,47 @@ class App:
                 return Workspace.apply(action["payload"])
         if action["kind"] == "app":
             return launch_app(action["payload"])  # an unpinned (pre-Phase-16) payload is refused
+        if action['kind'] == 'url':  # Phase 43 (1.9.0): the browser's identity is checked again before opening
+            from . import open_url
+            return open_url.open_url(action['payload'])
         if action['kind'] == 'screen':
             return self.screens.commit(action['payload']['proposal_id'])
+        if action['kind'] == 'screen_grant':
+            # Phase 42 (1.8.0): only after the person's review, and only to the live run that asked.
+            if not self._reviewed(action):
+                raise PolicyError('This needs your review in Pebble.')
+            from .screen_session import _live_run, grant_requested
+            run_id = action['payload'].get('run_id')
+            if not run_id or _live_run(self, cid) != run_id:
+                raise PolicyError('The task that asked for this window has ended.')
+            return grant_requested(self, cid, run_id, action['payload'])
+        if action['kind'] == 'browser_grant':
+            # Phase 43 (1.9.0): only after the person's review, and only to the live run that asked.
+            if not self._reviewed(action):
+                raise PolicyError('This needs your review in Pebble.')
+            from .screen_session import _live_run, grant_browser_requested
+            run_id = action['payload'].get('run_id')
+            if not run_id or _live_run(self, cid) != run_id:
+                raise PolicyError('The task that asked for these sites has ended.')
+            return grant_browser_requested(self, cid, run_id, action['payload'])
+        if action['kind'] == 'screen_raise':
+            # Phase 43 (1.9.0): only after the person's review; later raises in that session do not ask again.
+            if not self._reviewed(action):
+                raise PolicyError('This needs your review in Pebble.')
+            return self.screens.raise_window(action['payload']['session_id'])
+        if action['kind'] == 'app_action':  # Phase 43 (1.9.0): run() re-validates every argument
+            from . import app_actions
+            if action['payload'].get('class') == 'shortcut_run' and not self._reviewed(action):
+                raise PolicyError('A shortcut run needs your review in Pebble.')
+            return app_actions.run(action['payload'])
+        if action['kind'] in ('shell', 'file'):
+            # Phase 40 (1.6.0): only after the person's review (propose marks every such action requires_review).
+            if not self._reviewed(action):
+                raise PolicyError('This action needs your review in Pebble.')
+            from . import companion_tools
+            if action['kind'] == 'shell':
+                return companion_tools.run_approved(self, action['payload'], self.cancel, self.active_run)
+            return companion_tools.apply_file(self, action['payload'], self.active_run)
         if action["kind"] == "plugin":
             if action['payload'].get('transport') == 'stdio' and (not policy['tools']['terminal'] or not policy['tools']['files']):
                 raise PolicyError('Local MCP terminal/file access was disabled after proposal.')
@@ -3427,15 +4380,39 @@ class App:
                     'writable': bool(action['payload'].get('writable') and policy['tools']['edits'])},
                     timeout=min(action['payload']['timeout'], remaining))
                 return self._await_start(cid, admitted)
-            result = run_command(
-                {
-                    **action["payload"],
-                    **({'plan': plan, 'plan_hash': plan['plan_hash']} if plan is not None else {}),
-                    "writable": action["payload"].get("writable", False)
-                    and policy["tools"]["edits"],
-                },
-                self.cancel,
-            )
+            copy = ((action['payload'].get('confined') or {}).get('copy') or {}).get('id')  # Phase 46 (1.9.28, D184)
+            try:
+                result = run_command(
+                    {
+                        **action["payload"],
+                        **({'plan': plan, 'plan_hash': plan['plan_hash']} if plan is not None else {}),
+                        "writable": action["payload"].get("writable", False)
+                        and policy["tools"]["edits"],
+                    },
+                    self.cancel,
+                )
+            except BaseException as exc:
+                if copy:
+                    self.settle_copy(copy)  # what the request keeps is put back after a stopped command too
+                from .terminal import process_list_hint  # Phase 46 (1.9.29): a refused ps names what works
+                hint = process_list_hint(exc, action['payload'].get('command'))
+                if hint:
+                    raise PolicyError(f'{exc} {hint}') from exc
+                raise
+            if copy:
+                result = {**result, **self.settle_copy(copy, action['payload']['command'], result.get('output'))}
+            result = self.offer_process_tools(result)  # Phase 46 (1.9.28): stopped at 60 s, StartCommand from the next step
+            if result.get('exit_code') != 0 and not action['payload'].get('read_only_request'):
+                from .confined import CODE_PARTS
+                from .terminal import cause_note  # Phase 46 (1.9.29): what its permission error comes from, if anything
+                try:
+                    cause = cause_note(result.get('output'), action['payload']['root'],
+                                       CODE_PARTS if action['payload'].get('confined') is not None else (),
+                                       command=action['payload'].get('command'))
+                except Exception:  # the lead, 1.9.29 (review): a note never costs the command's own result
+                    cause = None
+                if cause:
+                    result = {**result, 'cause': cause}
             self.guard.handle(
                 "post_tool_use",
                 action["payload"]["root"],
@@ -3446,6 +4423,8 @@ class App:
                 # V1-027: a read-only command skips the post-command sync.
                 writable=bool(action["payload"].get("writable") and policy["tools"]["edits"]),
             )
+            if action['payload'].get('read_only_request') and WRITE_REFUSED.search(str(result.get('output') or '')):
+                result = {**result, 'read_only_request': READ_ONLY_RUN}  # Phase 46 (1.9.28, b-new G3)
             return result
         with self.store.lock:
             if self.process_inspections.pending(action['payload']['root']):
@@ -3589,7 +4568,11 @@ class App:
             raise PolicyError('Network access is disabled in Permissions.')
         if plan['writable'] and not policy['tools']['edits']:
             raise PolicyError('Project edits are disabled in Permissions, so a plan cannot request writable paths.')
-        missing = [c['ref'] for c in plan['network']['credentials'] if c['ref'] not in self.plan_credentials()['names']]
+        if plan['writable'] and self.active_run and self.active == cid and keeps_whole_project(self.current_text):
+            # Phase 46 (1.9.28, b-new G3): as RunCommand, a request that keeps the project unchanged gets no write access
+            raise PolicyError('The request says not to change anything in this project, so a plan cannot request '
+                              'writable paths; run it without them.')
+        missing =[c['ref'] for c in plan['network']['credentials'] if c['ref'] not in self.plan_credentials()['names']]
         if missing:
             raise PolicyError('Add these command credentials in Settings first: ' + ', '.join(missing[:8]) + '.')
         data = {**binding(plan), 'plan': plan, 'planned': True, 'typed': True, 'asynchronous': True,
@@ -3642,6 +4625,35 @@ class App:
         if kind == 'screen':
             from .screen_session import describe as describe_screen
             return describe_screen(result, payload.get('review') if isinstance(payload, dict) else None)
+        if kind == 'shell':  # Phase 40 (1.6.0)
+            done = ('with exit code ' + str(result['exit_code'])) if result.get('exit_code') is not None \
+                else '(' + result.get('note', 'stopped') + ')'
+            undo = ' A copy was kept so the change can be undone.' if (result.get('snapshot') or {}).get('undoable') else ''
+            return ('Ran `' + payload['command'][:300] + '` ' + done + '.' + undo + '\n\n```text\n'
+                    + result.get('output', '')[:4000].replace('```', '` ` `') + '\n```')
+        if kind == 'url':  # Phase 43 (1.9.0): what was asked of macOS, never what the page did
+            from . import open_url
+            return open_url.describe(result)
+        if kind == 'browser_grant':  # Phase 43 (1.9.0): the sites as the person approved them
+            # Phase 45 (D128): the window route (Comet, or no extension) opens a new window of the person's browser
+            where = (' in a new ' + str(payload.get('browser_name') or 'browser')[:40] + ' window'
+                     if payload.get('route') == 'window' else ' in its own tab in your browser')
+            # Phase 45 (F198, D136): allowed in this conversation for up to 15 minutes, as the card says
+            return ('Allowed Pebble to use ' + ', '.join(str(s) for s in (payload.get('sites') or ())[:8])[:600]
+                    + where + ', in this conversation for up to 15 minutes. End access in Details › Tools (⇧⌘D).')
+        if kind == 'app_action':  # Phase 43 (1.9.0): what the app reported, in Pebble's words
+            from . import app_actions
+            return app_actions.describe(result)
+        if kind == 'screen_raise':  # Phase 43 (1.9.0): what macOS was asked, not what it showed
+            return ('Brought ' + str(payload.get('app', 'the app'))[:128] + '’s window forward'
+                    + ('.' if (result or {}).get('frontmost') else '; macOS kept another app in front.'))
+        if kind == 'screen_grant':  # Phase 42 (1.8.0): the window is the app's own text, quoted as such
+            return ('Allowed Pebble to use ' + str(payload.get('app', 'an app'))[:128] + ', the window “'
+                    + str(payload.get('title', ''))[:200] + '”, in this conversation for up to 15 minutes. End access '
+                    'in Details › Tools (⇧⌘D).')  # Phase 45 (F198, D136)
+        if kind == 'file':  # Phase 40 (1.6.0)
+            return ('Wrote `' + result['path'] + '` (' + str(result['bytes']) + ' bytes).'
+                    + (' A copy of the earlier version was kept so it can be undone.' if result.get('undoable') else ''))
         if kind == "edit":
             # Phase 20 X10: a rewind write says what happened; the receipt is an ordinary reviewed edit.
             if isinstance(payload, dict) and isinstance(payload.get('rewind'), dict):
@@ -3698,6 +4710,15 @@ class App:
             logging.getLogger(__name__).warning('AgentGuard unstage failed (%s); the next check reconciles it.',
                                                 error_kind(exc))
 
+    def _simple_card(self, id, action_id):
+        """Phase 45 (D133): whether a pending card is one the companion may answer; anything else is refused."""
+        action = next((a for a in self.store.actions(id) if a['id'] == action_id), None)
+        if not action or action['status'] != 'pending':
+            raise PolicyError('This action is no longer awaiting approval.')
+        if action['kind'] not in SIMPLE_CARDS:
+            raise PolicyError('Review this one in the workspace.')
+        return True
+
     def reject(self, id, action_id):
         with self.action_lock:
             action = next((a for a in self.store.actions(id) if a['id'] == action_id), None)
@@ -3737,6 +4758,9 @@ class App:
             action = next(
                 (a for a in self.store.actions(id) if a["id"] == action_id), None
             )
+            if action and action['kind'] == 'command' and action['status'] == 'applied' \
+                    and ((action['payload'].get('confined') or {}).get('copy') or {}).get('id'):
+                return self._undo_command(id, action)  # Phase 46 (1.9.28, D184): its copy's Undo receipt
             if not action or action["kind"] != "edit" or action["status"] != "applied":
                 raise PolicyError("Only applied file edits can be undone.")
             payload = action["payload"]

@@ -85,6 +85,7 @@ export function pebblePage(command) {
     acting: 'Pebble is working in this tab',
     paused: 'Pebble is paused in this tab',
     handback: "Your turn: Pebble doesn't act on sign-in or payment pages",
+    owned: 'Pebble opened this tab for a task',  // Phase 43: one of Pebble's own tabs
   };
 
   function build() {
@@ -166,7 +167,7 @@ export function pebblePage(command) {
     return { ok: true, facts: self.facts };
   }
   if (command.action === 'indicator') {
-    self.state = ['off', 'shared', 'acting', 'paused', 'handback'].includes(command.state) ? command.state : 'off';
+    self.state = ['off', 'shared', 'acting', 'paused', 'handback', 'owned'].includes(command.state) ? command.state : 'off';
     self.label = typeof command.label === 'string' ? command.label.slice(0, 120) : '';
     if (self.state === 'off') {
       if (self.observer) { self.observer.disconnect(); self.observer = null; }

@@ -34,6 +34,20 @@ def strip_invisible(text):
     return INVISIBLE.sub('', text) if isinstance(text, str) else text
 
 
+# Phase 46 (1.9.28, the lead, after w17's report): typographic apostrophes and quotes as their plain forms, one
+# character for one so offsets hold. macOS types "Don\u2019t" for "Don't" (smart quotes) and pasted text carries them,
+# while the checks that read the person's words match "don't": the requirement ledger read "Don\u2019t touch
+# data/records.jsonl" as no rule, and the read-only and push rules missed "Don\u2019t change anything" and "Don\u2019t
+# push". For reading only, never for what is shown or stored.
+_PLAIN_QUOTES = str.maketrans({'\u2018': "'", '\u2019': "'", '\u201b': "'", '\u02bc': "'", '\u2032': "'", '\uff07': "'",
+                               '\u201c': '"', '\u201d': '"', '\u201f': '"', '\uff02': '"'})
+
+
+def plain_quotes(text):
+    """text with its typographic apostrophes and quotes as ' and " (non-text is returned unchanged)."""
+    return text.translate(_PLAIN_QUOTES) if isinstance(text, str) else text
+
+
 def secret_text(text):
     """A folded copy of text for raise-only word checks, or '' for non-text.
 

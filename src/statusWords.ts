@@ -32,15 +32,15 @@ const has = (t: Record<string, unknown>, key: unknown): key is string =>
 // two tables equal; keep the begin/end markers and one class per line.
 // activity-kinds:begin
 const TOOL_CLASS_TABLE: Record<string, readonly string[]> = {
-  reading: ["Read", "ReadAttachment", "ReadURL", "ReadSource", "ReadProcess", "ReadRunEvidence", "LoadSkill", "LoadPluginTool", "LoadPluginData", "ReadPluginData", "ReadPluginMedia", "ReadGitStatus", "ReadGitDiff", "ReadGitHistory", "ReadGitPlanReceipt", "ReadGitWorktrees", "ReadWorktreeExport", "ListProjectRecipes", "ScreenObserve", "ResearchStatus"],
-  searching: ["Glob", "Grep", "SearchFiles", "CodeReferences", "WebSearch", "Weather", "SearchPluginTools", "SearchPluginData", "ResearchPlan"],
-  editing: ["Write", "Append", "Edit", "ProposePatch", "IntegrateAgentPatch", "ProposeGitChange", "PreviewWorktreeExport", "IntegrateWorktreeFile"],
+  reading: ["Read", "ReadAttachment", "ReadURL", "ReadSource", "ReadProcess", "ReadRunEvidence", "LoadSkill", "LoadPluginTool", "LoadPluginData", "ReadPluginData", "ReadPluginMedia", "ReadGitStatus", "ReadGitDiff", "ReadGitHistory", "ReadGitPlanReceipt", "ReadGitWorktrees", "ReadWorktreeExport", "ListProjectRecipes", "ScreenObserve", "ResearchStatus", "ReadFile", "Screenshot"],
+  searching: ["Glob", "Grep", "SearchFiles", "CodeReferences", "WebSearch", "Weather", "SearchPluginTools", "SearchPluginData", "ResearchPlan", "FindTool"],
+  editing: ["Write", "Append", "Edit", "ProposePatch", "IntegrateAgentPatch", "ProposeGitChange", "PreviewWorktreeExport", "IntegrateWorktreeFile", "WriteFile", "EditFile"],
   testing: ["RunTests", "RunRecipe"],
-  running: ["RunCommand", "StartCommand", "WaitProcess", "StopProcess", "WriteProcessInput", "RunPlan", "StartPreview", "PrepareEnvironment", "RunCode"],
+  running: ["RunCommand", "StartCommand", "WaitProcess", "StopProcess", "WriteProcessInput", "RunPlan", "StartPreview", "PrepareEnvironment", "RunCode", "Shell"],
   delegating: ["SpawnAgent", "SpawnWorktreeAgent", "ReadAgentTree", "SendAgentMessage", "WaitForAgents", "DelegateAgentTask", "StopAgent", "RetryAgent", "AskParentQuestion", "AnswerAgentQuestion", "PromoteAgentQuestion", "ReviewAgentResult", "ReadAgentMessage", "ReadAgentPatch", "RequestAgentEffect", "ReadAgentEffect", "ReadAgentEffects", "ExecuteAgentEffect", "DismissAgentEffect"],
   viewing: ["UIRender", "UIUpdate", "RenderMod"],
   thinking: ["AskUserQuestion", "UpdatePlan", "UpdateGoal", "MemoryPropose"],
-  working: ["OpenApp", "PluginCall", "FetchPluginData", "ScreenAct"],
+  working: ["OpenApp", "PluginCall", "FetchPluginData", "ScreenAct", "ScreenRequest", "OpenURL", "AppAction", "BrowserRequest"],
 };
 // activity-kinds:end
 // Run states that carry a host key (activity_kinds.HOST).

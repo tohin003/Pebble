@@ -702,6 +702,10 @@ class AgentEffects:
             return self._update_in(db, effect, 'applied', notify, outcome=json.loads(action['payload']).get('result'))
         if status in ('rejected', 'superseded'):
             return self._update_in(db, effect, 'rejected', notify, reason='Native review rejected this action.')
+        if status == 'held':  # Phase 46 (1.9.28, D185): Full access's own check held it and nothing will run it
+            return self._update_in(db, effect, 'rejected', notify,
+                                   reason="Pebble's step check held this action: it found none of the person's words "
+                                          'asking for it, so nothing ran.')
         if status == 'failed':
             receipts = [r for r in self._receipts(db, effect) if r]
             if any(r['state'] == 'uncertain' for r in receipts):

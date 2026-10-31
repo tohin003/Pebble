@@ -38,7 +38,13 @@ from .jobs import HEX, HHMM, MAX_JOBS, ident, iso, time_zone
 SETTING, MUTES = 'notifications', 'notification_mutes'
 CATEGORIES = ('completed', 'failed', 'action_needed', 'monitor_changed')
 PREVIEWS = ('none', 'title', 'body')
-DEFAULT_SETTINGS = {'enabled': False, 'kinds': dict.fromkeys(CATEGORIES, True), 'preview': 'title', 'quiet_hours': None}
+# Phase 45 (D134): `replies` (a task in a conversation ended or waits) is optional in a stored value and reads as on.
+DEFAULT_SETTINGS = {'enabled': False, 'kinds': dict.fromkeys(CATEGORIES, True), 'preview': 'title', 'quiet_hours': None,
+                    'replies': True}
+REQUIRED_SETTINGS = frozenset({'enabled', 'kinds', 'preview', 'quiet_hours'})
+REPLY_TITLES = {'completed': 'Pebble finished', 'waiting_approval': 'Pebble needs your review',
+                'waiting_input': 'Pebble has a question', 'failed': 'Pebble hit a problem',
+                'verification_required': 'Pebble needs a check'}
 HOST_KINDS = ('wake_summary', 'late_skipped', 'dst_skipped', 'clock_changed')
 FAILURES = ('not_authorized', 'denied', 'unavailable', 'error')
 ACTIONS = ('open',)  # never approve, reject or reply
@@ -97,8 +103,10 @@ def quiet(moment, hours):
 
 
 def validate_settings(value):
-    if not isinstance(value, dict) or set(value) != set(DEFAULT_SETTINGS):
-        raise ValueError('Notification settings need exactly enabled, kinds, preview and quiet_hours.')
+    if not isinstance(value, dict) or not REQUIRED_SETTINGS <= set(value) <= REQUIRED_SETTINGS | {'replies'}:
+        raise ValueError('Notification settings need exactly enabled, kinds, preview and quiet_hours (and replies).')
+    if type(value.get('replies', True)) is not bool:
+        raise ValueError('replies must be true or false.')
     if type(value['enabled']) is not bool:
         raise ValueError('enabled must be true or false.')
     kinds = value['kinds']
@@ -117,7 +125,7 @@ def validate_settings(value):
         time_zone(hours['timezone'])
         hours = {key: hours[key] for key in ('start', 'end', 'timezone')}
     return {'enabled': value['enabled'], 'kinds': {key: kinds[key] for key in CATEGORIES},
-            'preview': value['preview'], 'quiet_hours': hours}
+            'preview': value['preview'], 'quiet_hours': hours, 'replies': value.get('replies', True)}
 
 
 def host_view(row):
@@ -180,6 +188,24 @@ class Notifications:
         self.store.set_setting(SETTING, normalized)
         self.changed()
         return normalized
+
+    def reply_banner(self, chat_id, run_id, state):
+        """Phase 45 (D134, the person): the banner for a task in a conversation that ended or waits, for the shell to
+        show while Pebble is in the background (the shell decides that), or None: notifications or replies off, quiet
+        hours, a scheduled run (its own notices cover it), or a state that needs none. The body is the conversation's
+        title (preview title or body), never the reply's text."""
+        title = REPLY_TITLES.get(state)
+        settings = self.settings()
+        if title is None or not settings['enabled'] or not settings.get('replies', True) \
+                or quiet(self._now(), settings['quiet_hours']):
+            return None
+        with self.store.lock:
+            db = self.store.db
+            if db.execute('SELECT 1 FROM job_fires WHERE run_id=? LIMIT 1', (run_id,)).fetchone():
+                return None
+            row = db.execute('SELECT title FROM chats WHERE id=?', (chat_id,)).fetchone()
+        body = plain(row[0], TITLE_LIMIT) if row and settings['preview'] != 'none' else ''
+        return {'chat_id': chat_id, 'run_id': run_id, 'title': title, 'body': body}
 
     def mutes(self):
         value = self.store.setting(MUTES, [])

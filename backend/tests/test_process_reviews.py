@@ -149,15 +149,16 @@ class Host:
             _process_guard_observed=set(),  # App's bounded set of processes already reported to Guard
             task_policy={'mode': 'ask', 'tools': dict(DEFAULT['tools'])},
             agents=Stub(effects=Stub(), busy=lambda: False,
-                        completion=lambda cid, rid: {'state': 'completed', 'issues': []}),
+                        completion=lambda cid, rid, answer=None: {'state': 'completed', 'issues': []}),
             hook_event=lambda *args, **kwargs: {'decision': 'allow', 'require_tests': False},
             controller=Stub(current=lambda: None), model=Stub(current=lambda: dict(WIDE)),
             guard=Stub(handle=self.guard_handle, guard=None),
             guard_session=lambda cid: cid, chat=lambda cid: {'id': cid}, emit=lambda *args: None,
             **{name: Stub() for name in ('git_api', 'jobs', 'memory', 'artifact_inputs', 'views', 'mods',
                                          'artifacts', 'images', 'files', 'plugin_media')})
+        # Phase 46 (1.9.28): perform_action now calls App.offer_process_tools (StartCommand after a timed-out command)
         for name in ('process_list', 'process_read', 'process_stop', 'process_dismiss', 'perform_action',
-                     '_await_start', 'tool_hook', '_execute', '_delete_chat'):
+                     '_await_start', 'tool_hook', '_execute', '_delete_chat', 'offer_process_tools'):
             setattr(host, name, types.MethodType(getattr(App, name), host))
         return host
 

@@ -20,13 +20,21 @@ import { rpc } from '../bridge';
 // - A grant made while no task can use the tab waits for the person's next message in this conversation (V1-007).
 //   With Screen control off, the service answers with an offer; one confirmation turns it on and grants.
 // - End access sits on the granted tab's own row (V1-124), and screenshots are said not to be kept (V1-059).
+// Phase 43 (1.9.0, Pebble for Chrome 2):
+// - Connect a browser (decision 8): beside Chrome, each other browser that has run on this Mac (Comet, Brave, Edge, Arc,
+//   Chromium) gets its own Connect, one confirmation that lists its two files; only that browser's file is written.
+// - An extension in another protocol is named, with the side to reload or update; Pebble's own tabs (opened under a
+//   task's site grant, in its tab group) are listed, page text shown as such.
 type Status = { running: boolean; available: boolean; reason: string; product: string; profile_exists: boolean };
 type Tab = { tab_id: string; title: string; origin: string | null; url: string };
 type Shared = { tab_id: string; origin: string; title: string; scope: 'tab' | 'site'; state: 'ready' | 'away' | 'handback'; acting: boolean;
   granted: boolean };
 type Pending = { code: string; expiresIn: number; attemptsLeft: number };
+type BrowserRow = { id: string; name: string; support: boolean; host: boolean; handshake: boolean };
+type Owned = { tab_id: string; origin: string; state: 'ready' | 'away' | 'handback'; title: string; acting: boolean };
 type Chrome = { connected: boolean; present: boolean; paired: boolean; pending: Pending | null; lockedFor: number; id: string; version: string;
-  chrome: string; error: string; host: boolean; folder: string; paused: boolean; shared: Shared[] };
+  chrome: string; error: string; host: boolean; folder: string; paused: boolean; shared: Shared[]; browser: string; browsers: BrowserRow[];
+  mismatch: string; owned: Owned[] };
 type Outcome = { revoked_sessions?: unknown; stopped?: unknown; forgotten?: unknown; shares_cleared?: unknown };
 type Target = { profile: 'pebble' | 'chrome'; tab_id: string; title: string; origin: string };
 type ConnectFile = { role: string; path: string };
@@ -51,6 +59,9 @@ const STATES: Record<string, string> = { ready: 'Ready', away: 'Paused: the tab 
 const status = shallowRef<Status | null>(null);
 const chrome = shallowRef<Chrome | null>(null);
 const connect = shallowRef<Connect | null>(null);
+// Phase 43: Connect for one browser other than Chrome, while its confirmation is open.
+const other = shallowRef<{ id: string; name: string; plan: Connect } | null>(null);
+const otherCard = shallowRef<HTMLElement | null>(null);
 const granted = shallowRef<Map<string, Granted>>(new Map());
 const tabs = ref<Tab[]>([]);
 const address = ref('');
@@ -110,16 +121,37 @@ function readPending(value: unknown): Pending | null {
   if (typeof item.code !== 'string' || !/^[0-9]{6}$/.test(item.code)) return null;
   return { code: item.code, expiresIn: count(item.expires_in), attemptsLeft: count(item.attempts_left) };
 }
+function browserRow([id, value]: [string, unknown]): BrowserRow | null {
+  const item = object(value);
+  if (!/^[a-z][a-z-]{1,23}$/.test(id) || typeof item.name !== 'string' || !item.name) return null;
+  return { id, name: clip(item.name, 40), support: item.support === true, host: item.host === true,
+    handshake: !!item.handshake && typeof item.handshake === 'object' };
+}
+function ownedTab(value: unknown): Owned | null {
+  const item = object(value);
+  if (typeof item.tab_id !== 'string' || !/^[0-9]{1,12}$/.test(item.tab_id)) return null;
+  if (item.state !== 'ready' && item.state !== 'away' && item.state !== 'handback') return null;
+  return { tab_id: item.tab_id, origin: clip(word(item.origin), 300), state: item.state, title: clip(word(item.title), 200), acting: item.acting === true };
+}
 function readChrome(value: unknown): Chrome {
   const item = object(value), extension = object(item.extension), bridge = object(item.bridge), host = object(item.host);
-  const pairing = object(item.pairing);
+  const pairing = object(item.pairing), mismatch = object(item.mismatch);
   return { connected: extension.connected === true, present: extension.present === true, paired: pairing.paired === true,
     pending: readPending(pairing.pending), lockedFor: count(pairing.locked_for), id: clip(word(extension.id), 64),
     version: clip(word(extension.version), 32),
     chrome: clip(word(extension.chrome), 64), error: clip(word(bridge.error), 300), host: host.chrome === true,
     folder: clip(word(item.extension_folder), 1000), paused: item.paused === true,
-    shared: (Array.isArray(item.shared_tabs) ? item.shared_tabs : []).map(shared).filter((entry): entry is Shared => !!entry).slice(0, 16) };
+    shared: (Array.isArray(item.shared_tabs) ? item.shared_tabs : []).map(shared).filter((entry): entry is Shared => !!entry).slice(0, 16),
+    browser: clip(word(extension.browser), 24),
+    browsers: Object.entries(object(item.browsers)).map(browserRow).filter((entry): entry is BrowserRow => !!entry).slice(0, 12),
+    mismatch: typeof mismatch.protocol === 'string' ? clip(mismatch.protocol, 32) : '',
+    owned: (Array.isArray(item.owned_tabs) ? item.owned_tabs : []).map(ownedTab).filter((entry): entry is Owned => !!entry).slice(0, 16) };
 }
+// The browsers beyond Chrome that have run on this Mac (or already have Pebble's file), for their own Connect.
+const otherBrowsers = computed(() => (chrome.value?.browsers || []).filter(row => row.id !== 'chrome' && (row.support || row.host)));
+const browserName = computed(() => (chrome.value?.browsers || []).find(row => row.id === chrome.value?.browser)?.name || '');
+const OWNED_STATES: Record<string, string> = { ready: 'Pebble is using it for a task', away: 'Paused: on a site the task may not use',
+  handback: 'Your turn: a sign-in or payment page' };
 // The Connect Chrome plan: the two files the helper needs, what stands in the way, and the digest one confirmation sends.
 function readConnect(value: unknown): Connect {
   const item = object(value);
@@ -326,6 +358,31 @@ const confirmConnect = () => act('connect', async () => {
     : "Pebble's helper for Chrome was not added.";
 });
 
+// Phase 43: Connect one other browser. The confirmation lists the plan's two files for that browser only, and installing
+// sends the digest of exactly that plan with the browser named.
+async function askBrowser(row: BrowserRow) {
+  if (busy.value) return;
+  problem.value = '';
+  try {
+    const plan = readConnect(await rpc<unknown>('browser_connect_status', { browsers: [row.id] }));
+    if (disposed) return;
+    other.value = { id: row.id, name: row.name, plan };
+    void nextTick(() => otherCard.value?.focus());
+  } catch (cause) { if (!disposed) problem.value = failure(cause); }
+}
+function cancelBrowser() {
+  other.value = null;
+  void nextTick(() => region.value?.focus());
+}
+const confirmBrowser = () => act('connect-browser', async () => {
+  const open = other.value;
+  if (!open?.plan.plan) return null;
+  const result = readConnect(await rpc<unknown>('browser_connect_install', { confirm: open.plan.plan, browsers: [open.id] }));
+  other.value = null;
+  return result.installed ? `Pebble's helper for ${open.name} is added. Next, load Pebble for Chrome in ${open.name} (the same folder), then pair.`
+    : `Pebble's helper for ${open.name} was not added.`;
+});
+
 function openGrant(target: Target) {
   if (busy.value || !props.chatId || !target.origin) return;
   grantVersion++;
@@ -386,7 +443,7 @@ async function grant(enable?: unknown) {
 watch(() => props.chatId, () => { grantVersion++; granting.value = null; offer.value = null; granted.value = new Map(); });
 watch(() => props.refreshKey, () => { void load(); });
 onMounted(load);
-onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; connectGeneration++; grantVersion++; clearTimeout(timer); timer = undefined; });
+onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; connectGeneration++; grantVersion++; other.value = null; clearTimeout(timer); timer = undefined; });
 </script>
 
 <template>
@@ -402,7 +459,8 @@ onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; conne
       </header>
       <p class="setting-note">Pebble works only in tabs you share from Chrome's toolbar, only on the site you shared, and only for a task you choose here. Sign-in and payment pages are always your turn, and anything that sends, buys, posts or deletes waits for your approval.</p>
       <template v-if="chrome">
-        <p v-if="chrome.connected && chrome.chrome" class="browser-meta">Chrome {{ chrome.chrome }} · Pebble for Chrome {{ chrome.version || 'unknown version' }}</p>
+        <p v-if="chrome.connected && chrome.chrome" class="browser-meta">{{ browserName && chrome.browser !== 'chrome' ? browserName + ' (Chromium ' + chrome.chrome + ')' : 'Chrome ' + chrome.chrome }} · Pebble for Chrome {{ chrome.version || 'unknown version' }}</p>
+        <p v-if="chrome.mismatch && !chrome.connected" class="browser-state"><strong>Pebble for Chrome needs updating.</strong> A copy speaking {{ chrome.mismatch }} tried to connect; this Pebble speaks a different version. Reload Pebble for Chrome on the browser's Extensions page, or load the folder below again.</p>
         <p v-if="chrome.paused" class="browser-state"><strong>Paused.</strong> Pebble doesn't read or act in your Chrome tabs until you resume.</p>
         <div class="browser-pairing" aria-live="polite">
           <article v-if="chrome.pending" class="browser-code-card" role="group" aria-label="Pairing code">
@@ -431,6 +489,16 @@ onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; conne
           </li>
         </ul>
         <p v-else-if="chrome.connected" class="setting-note">No tab is shared. In Chrome, click the Pebble button on a tab and choose "Let Pebble use this tab".</p>
+        <ul v-if="chrome.owned.length" class="browser-shared" aria-label="Tabs Pebble opened">
+          <li v-for="item in chrome.owned" :key="'owned-' + item.tab_id" :aria-label="'Pebble\'s tab' + (item.origin ? ' on ' + item.origin : '')">
+            <span class="browser-dot" :class="{ working: item.acting && item.state === 'ready', turn: item.state !== 'ready' }" aria-hidden="true"></span>
+            <div class="browser-words">
+              <small>Pebble opened this tab · page title, written by the page</small>
+              <p class="browser-text">{{ item.title || 'No title' }}</p>
+              <small>{{ item.origin || 'a site the task may not use' }} · {{ OWNED_STATES[item.state] }}</small>
+            </div>
+          </li>
+        </ul>
         <div v-if="chrome.connected || chrome.shared.length" class="setting-actions">
           <button v-if="!chrome.paused" type="button" class="secondary-button" :disabled="!!busy" @click="pauseChrome">Pause</button>
           <button v-else type="button" class="primary-button" :disabled="!!busy" @click="resumeChrome">Resume</button>
@@ -448,6 +516,15 @@ onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; conne
             <li>On a tab you want help with, click Pebble in Chrome and choose "Let Pebble use this tab".</li>
             <li v-if="chrome.id">Chrome should list the extension with the ID {{ chrome.id }}. If it shows another, remove it and load Pebble's folder again.</li>
           </ol>
+          <template v-if="otherBrowsers.length">
+            <p class="setting-note">Pebble for Chrome also works in the other browsers on this Mac. Each needs its own helper file, added only for the browsers you choose; then load the same folder on that browser's Extensions page (Developer mode) and pair.</p>
+            <ul class="browser-files" aria-label="Other browsers">
+              <li v-for="row in otherBrowsers" :key="row.id">
+                {{ row.name }}: {{ row.handshake ? 'connected before' : row.host ? 'helper added' : 'not set up' }}
+                <button v-if="!row.host" type="button" class="text-button" :disabled="!!busy" @click="askBrowser(row)">{{ 'Connect ' + row.name + '…' }}</button>
+              </li>
+            </ul>
+          </template>
           <button v-if="chrome.folder" type="button" class="text-button" @click="copyFolder">Copy folder path</button>
           <p v-if="chrome.error" class="setting-note">{{ chrome.error }}</p>
           <template v-if="chrome.paired">
@@ -455,6 +532,18 @@ onBeforeUnmount(() => { disposed = true; generation++; chromeGeneration++; conne
             <button type="button" class="text-button" :disabled="!!busy" @click="unpairChrome">Forget pairing</button>
           </template>
         </details>
+        <article v-if="other" ref="otherCard" tabindex="-1" class="browser-confirm" role="group" :aria-label="'Connect ' + other.name">
+          <strong>{{ 'Add Pebble\'s helper for ' + other.name + '?' }}</strong>
+          <p>Pebble writes these two files on this Mac and nothing else. It doesn't change the browser's settings or add the extension for you.</p>
+          <ul class="browser-files">
+            <li v-for="file in other.plan.files" :key="file.path"><code class="browser-text">{{ file.path }}</code></li>
+          </ul>
+          <p v-for="item in other.plan.problems" :key="item" class="browser-problem">{{ item }}</p>
+          <div class="setting-actions">
+            <button type="button" class="primary-button" :disabled="!!busy || !other.plan.ready" @click="confirmBrowser">Add the helper</button>
+            <button type="button" class="secondary-button" :disabled="busy === 'connect-browser'" @click="cancelBrowser">Cancel</button>
+          </div>
+        </article>
         <article v-if="connecting && connect" ref="connectCard" tabindex="-1" class="browser-confirm" role="group" aria-label="Connect Chrome">
           <strong>Add Pebble's helper for Chrome?</strong>
           <p>Pebble writes these two files on this Mac and nothing else. It doesn't change Chrome's settings or add the extension for you.</p>

@@ -39,6 +39,16 @@
   --selection: #d4e5c8;
   --danger: #a45141;
   --danger-line: #ebd3ca;
+  /* Phase 46 (1.9.29, the work view): status colours that carry meaning (passed, waiting), held to the text grid */
+  --ok: #3f6f45;
+  --warn: #8a5a00;
+  /* Phase 46 (1.9.29, visual answers): chart series, in order; each holds 3:1 against every surface (tokens.test.mjs) */
+  --chart-1: #506e54;
+  --chart-2: #a5622a;
+  --chart-3: #5a61a6;
+  --chart-4: #a5465d;
+  --chart-5: #2c7584;
+  --chart-6: #6f742a;
   --shadow: 0 16px 50px #13251b18;
   /* Phase 22 rhythm: a 4 px spacing scale, three radii (tighter inside, softer outside), one type
      scale and the focus colour, shared by the new chrome. */
@@ -96,6 +106,14 @@
   --selection: #425d35;
   --danger: #e3a38f;
   --danger-line: #66483d;
+  --ok: #8fcf8f;
+  --warn: #e0b25c;
+  --chart-1: #a6c795;
+  --chart-2: #e3a46c;
+  --chart-3: #a7adf0;
+  --chart-4: #e89bae;
+  --chart-5: #7cc4d1;
+  --chart-6: #c9cd7c;
   --shadow: 0 16px 50px #0005;
   --shadow-soft: 0 1px 2px #0003, 0 6px 20px #0004;
 }

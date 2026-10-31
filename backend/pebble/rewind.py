@@ -53,9 +53,11 @@ KINDS = {
     'WriteProcessInput': 'command', 'RunTests': 'command', 'RunRecipe': 'command', 'PrepareEnvironment': 'command',
     'PluginCall': 'connector', 'FetchPluginData': 'connector',
     'ProposeGitChange': 'git',
-    'OpenApp': 'app', 'ScreenAct': 'app', 'StartPreview': 'app',
+    'OpenApp': 'app', 'ScreenAct': 'app', 'StartPreview': 'app', 'OpenURL': 'app',  # Phase 43: OpenURL
+    'AppAction': 'app',  # Phase 43 (1.9.0): what an app was asked to do is not undone by a rewind
     'SpawnAgent': 'agent', 'SpawnWorktreeAgent': 'agent', 'ExecuteAgentEffect': 'agent',
     'UIRender': 'view', 'UIUpdate': 'view', 'RenderMod': 'view',
+    'Shell': 'companion', 'WriteFile': 'companion', 'EditFile': 'companion',  # Phase 40 (1.6.0)
 }
 NOTES = {
     'command': 'Not reverted. Commands are never undone or run again. A file a command changed is restored only '
@@ -65,6 +67,7 @@ NOTES = {
     'app': 'Not reverted. App, screen and preview actions are not undone.',
     'agent': 'Not reverted. Delegated work is undone only where this task wrote the files itself.',
     'view': 'Not reverted. Views keep their revisions.',
+    'companion': 'Not reverted. Use the change\'s own Undo: Pebble kept a copy of what it changed before it ran.',
 }
 OUTCOMES = {
     'occurred': 'It happened.',

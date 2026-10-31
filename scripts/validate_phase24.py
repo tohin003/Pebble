@@ -198,8 +198,8 @@ CHECKS = {
                                'reconnect; other routes never retry a 401'),
     'retry_window_survives_4s_outage': ('V1-066', 't24-auth', 'a 4 s outage is ridden out (delays about 1, 2, 4 s); a '
                                         'persistent 503 stops at 3; the ChatGPT wording never says "Check its URL"'),
-    'prompt_cache_key_chatgpt_route': ('V1-078', 't24-auth + t24-agent', 'prompt_cache_key equals the run id on the '
-                                       'ChatGPT route above 4,096 only'),
+    'prompt_cache_key_chatgpt_route': ('V1-078', 't24-auth + t24-agent', 'prompt_cache_key equals the conversation id '
+                                       '(Phase 46; the run id before) on the ChatGPT route above 4,096 only'),
     # vault
     'vault_no_stale_fallback': ('V1-009', 't24-auth', 'after migration a helper timeout never serves or writes a '
                                 'per-item copy for an account the item lists; one refresh costs <= 3 helper calls'),
@@ -2499,13 +2499,14 @@ class Campaign:
                         bodies = [json.loads(b) for b in transport.bodies]
                         assert bodies, label
                         keys = {b.get('prompt_cache_key') for b in bodies}
-                        found[label] = {'run': run['id'], 'keys': keys}
+                        found[label] = {'chat': cid, 'keys': keys}
                         assert rig.app.model.prompt_cache_key is None, 'the key outlived its run'
                     finally:
                         rig.close()
-                assert found['chatgpt_32k']['keys'] == {found['chatgpt_32k']['run']}, 'the ChatGPT route above 4K'
+                # Phase 46: the conversation's id (a follow-up turn shares its cache route and socket, as Codex's thread)
+                assert found['chatgpt_32k']['keys'] == {found['chatgpt_32k']['chat']}, 'the ChatGPT route above 4K'
                 assert found['chatgpt_4k']['keys'] == {None} and found['api_32k']['keys'] == {None}
-                return {'chatgpt_above_4k': 'run id', 'chatgpt_4k': 'absent', 'other_route': 'absent',
+                return {'chatgpt_above_4k': 'conversation id', 'chatgpt_4k': 'absent', 'other_route': 'absent',
                         'cleared_after_run': True}
             self.check('prompt_cache_key_chatgpt_route', cache_key)
         finally:
@@ -3481,7 +3482,29 @@ class Campaign:
             listed = set(re.findall(r'\b(ls|cat|rg|head|tail|wc|grep|find|sed|awk)\b',
                                     re.search(r'\(([^)]*)\)', copy_['auto'][1]).group(1)))
             assert listed and listed <= set(terminal.READ_ONLY), ('commands Auto names but asks for', sorted(listed))
-            assert 'grep' not in terminal.READ_ONLY and 'grep' in copy_['auto'][2], 'grep: copy vs behaviour'
+            # Phase 46 (1.9.28, D184, the person: "Ask only for risky steps"; restated): grep is still no read-only
+            # executable, and in Auto it now runs as a command confined to the project, with a copy behind it; network,
+            # installs and paths outside the project still ask, and so do Git pushes, deletions and history rewrites
+            # (a Git plan runs in Auto only when the plans keep its Undo)
+            import tempfile
+            from pebble import confined
+            from pebble.git_plans import undo_kept
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder).resolve()
+                shapes = {command: confined.shape(terminal.inspect_command(command, root), root) for command in (
+                    'grep -rn TODO src', 'python3 tools/build.py', 'curl -s https://example.invalid',
+                    'python3 -m pip install x', 'python3 x.py /tmp/elsewhere')}
+            assert shapes['grep -rn TODO src'] is None and shapes['python3 tools/build.py'] is None, shapes
+            assert all(shapes[c] for c in ('curl -s https://example.invalid', 'python3 -m pip install x',
+                                           'python3 x.py /tmp/elsewhere')), shapes
+            assert 'grep' not in terminal.READ_ONLY and 'grep' not in copy_['auto'][2], 'grep: copy vs behaviour'
+            assert 'without network' in copy_['auto'][1] and 'network, installs or paths outside' in copy_['auto'][2]
+            plan = {'operation': 'commit', 'destructive': False, 'publication': False, 'bindings': {}}
+            assert permissions.automatic({'mode': 'auto', 'tools': {}}, 'git', plan) and undo_kept(plan)
+            assert not any(permissions.automatic({'mode': 'auto', 'tools': {}}, 'git', {**plan, flag: True})
+                           for flag in ('destructive', 'publication'))
+            assert 'Git steps it can undo' in copy_['auto'][1] and 'Git pushes, deletions and history rewrites' in \
+                copy_['auto'][2], 'Git: copy vs behaviour'
             assert 'app launches' in copy_['auto'][2] and 'app' not in automatic['auto'], 'app launches in Auto'
             assert automatic['full'] == set(kinds) and 'app launches' in copy_['full'][1], 'Full copy vs behaviour'
             surfaces = {}
@@ -3872,6 +3895,11 @@ class Campaign:
                         'controls_removed': 0, 'raw_output_sha256': '0' * 64, 'command': payload['command'],
                         'isolation': 'fixture'}
             rig = self.gate_rig('terminal')
+            # Phase 46 (1.9.28, D184; restated by the lead): a command confined to the project runs without a card in
+            # Auto now; this scenario is the approval path every step that still asks takes, so it keeps the command's
+            # card (the gate and host-voice assertions below are unchanged)
+            auto_before = os.environ.get('PEBBLE_AUTO_RISKY_ONLY')
+            os.environ['PEBBLE_AUTO_RISKY_ONLY'] = '0'
             try:
                 app = rig.app
                 with patched(app_module, 'run_command', run_command):
@@ -3897,6 +3925,10 @@ class Campaign:
                         'quoted': quoted}
             finally:
                 rig.close()
+                if auto_before is None:
+                    os.environ.pop('PEBBLE_AUTO_RISKY_ONLY', None)
+                else:
+                    os.environ['PEBBLE_AUTO_RISKY_ONLY'] = auto_before
         try:
             terminal = terminal_run()
         except Exception as exc:

@@ -195,12 +195,10 @@ def main():
                         resolutions = list(host_resolutions(messages, "action_resolution"))
                         assert any(item["payload"].get("kind") == "edit" and item["payload"].get("status") == "applied" for item in resolutions)
                         calls = [tool("RunTests", "run-project-tests", {"recipe": "python-unittest"})]
-                    elif step == 12:
-                        requested = latest(messages, lambda item: item.get("kind") == "tests" and item.get("action_id"))
-                        assert requested["status"] == "awaiting_user_approval"
-                        calls = []
                     else:
-                        assert step == 13, "Root did not settle after actual approved test evidence."
+                        # Phase 46 (D154): the run waits at the staged RunTests (runner.STAGED_STOP), so this request
+                        # follows the native test approval; the pending request is checked from the journal in main
+                        assert step == 12, "Root did not settle after actual approved test evidence."
                         resolutions = list(host_resolutions(messages, "action_resolution"))
                         tested = next(item["payload"] for item in resolutions if item["payload"].get("kind") == "tests")
                         assert tested["status"] == "applied" and tested["result"]["exit_code"] == 0
@@ -208,7 +206,7 @@ def main():
                         record["actual_test_evidence_seen"] = True
                         calls = []
                 text = ("The scoped child proposal is ready for parent review." if role == "child" else
-                        "The broker action awaits native review; I am not claiming an applied effect." if step < 13 else
+                        "The broker action awaits native review; I am not claiming an applied effect." if step < 12 else
                         "Native review applied the source change and the recorded isolated unittest run passed one test.")
                 delta = {"tool_calls": calls} if calls else {"content": text}
                 self.send_response(200)
@@ -300,13 +298,18 @@ def main():
                 # action first, then require the owning root to yield.
                 wait_run(service, cid, rid, "waiting_approval", steps, errors)
                 until(lambda: not service.rpc("state")["active"])
+                # Phase 46 (D154): the model's view of the requested tests (a twelfth step before the stop) is the run's
+                # journal now: the RunTests result is a tests proposal awaiting native review
+                requested = [t["result"] for t in service.rpc("run_get", id=cid, run_id=rid)["tools"] if t["name"] == "RunTests"]
+                assert len(requested) == 1 and requested[0].get("kind") == "tests" and requested[0].get("action_id") \
+                    and requested[0]["status"] == "awaiting_user_approval", requested
                 tested = service.rpc("approve", id=cid, action_id=tests["id"])
                 assert tested["exit_code"] == 0 and "Ran 1 test" in tested["output"] and "\nOK" in tested["output"]
                 assert "network denied" in tested["isolation"]
                 checks.append("native test approval executes one actual unittest in a macOS-confined project snapshot with network denied")
                 finished = wait_run(service, cid, rid, "completed", steps, errors)
                 assert not errors, errors
-                assert steps == {"root": 13, "child": 4}
+                assert steps == {"root": 12, "child": 4}  # Phase 46 (D154): no held turn at the staged tests
                 assert service.rpc("state")["settings"]["permissions"] == policy
                 final_actions = service.rpc("get_chat", id=cid)["actions"]
                 assert len(final_actions) == 2 and all(action["status"] == "applied" for action in final_actions)

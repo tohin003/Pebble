@@ -236,6 +236,13 @@ class StreamJournal:
         return self._insert(db, rid, self._head(db, rid) + 1, attempt_id, 'settle', now,
                             state=state, origin=origin, digest=digest)
 
+    def attempt_text(self, attempt_id, limit=64_000):
+        """Phase 45 (F107): the visible text an attempt streamed so far, in order (its last `limit` characters); a read."""
+        _attempt_id(attempt_id)
+        rows = self.store.query("SELECT text FROM run_stream_events WHERE attempt_id=? AND kind='delta' ORDER BY sequence",
+                                (attempt_id,))
+        return ''.join(r['text'] or '' for r in rows)[-limit:]
+
     def interrupt_open(self, run_id):
         """Settle a run's open attempt as interrupted, e.g. after a failed presentation."""
         _ident(run_id, 'run')

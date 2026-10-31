@@ -327,10 +327,13 @@ def test_commands_and_connector_effects_are_listed_never_reverted_and_never_reru
     Script(app,
            [call('r1', 'Read', file_path='notes.txt'),
             call('e1', 'Edit', file_path='notes.txt', old_string='draft', new_string='final')],
-           [call('c1', 'RunCommand', command='touch build.stamp')],
+           # Phase 46 (D154): the connector's draft before the command. A command staged with nothing else awaiting
+           # review ends the turn (runner.STAGED_STOP), and this fixture's continuation thread is closed, so the run
+           # stages the draft first and both wait for the person together, as before
            [call('l1', 'LoadPluginTool', plugin_id=plugin, tool='save_draft', digest=catalogue)],
            [call('p1', 'PluginCall', plugin_id=plugin, tool='save_draft', digest=catalogue,
-                 arguments=json.dumps({'to': [ALICE], 'subject': 'Notes', 'body': 'The notes are final.'}))])
+                 arguments=json.dumps({'to': [ALICE], 'subject': 'Notes', 'body': 'The notes are final.'}))],
+           [call('c1', 'RunCommand', command='touch build.stamp')])
     app.work(host.chat, f'Finalize notes.txt, build it, and save a draft email to {ALICE} about it', False, [])
     app.model.complete = no_model
     rid = app.runs.list(host.cid)[0]['id']
@@ -355,7 +358,7 @@ def test_commands_and_connector_effects_are_listed_never_reverted_and_never_reru
     assert (connector['connector_class'], connector['connector_state']) == ('draft', 'responded')
     for effect in plan['effects']:
         assert effect['reverted'] is False and effect['note'] == NOTES[effect['kind']] and effect['note'].startswith('Not reverted')
-    assert {t['step']: t['effects'] for t in plan['timeline']}[command_step] == 1
+    assert {t['step']: t['effects'] for t in plan['timeline']}[connector_step] == 1
 
     performed = []
     original = app.perform_action
@@ -365,12 +368,12 @@ def test_commands_and_connector_effects_are_listed_never_reverted_and_never_reru
     assert text(host, 'build.stamp') == 'built\n', 'a command\'s own file effect is not reverted'
     assert len(ran) == 1 and len(tool_calls(mail, 'save_draft')) == 1, 'nothing ran again'
     assert performed == ['edit'] and result['effects_reverted'] == 0 and result['replayed'] == 0
-    assert [e['tool'] for e in result['effects']] == ['RunCommand', 'PluginCall']
+    assert [e['tool'] for e in result['effects']] == ['PluginCall', 'RunCommand']
     assert all(e['reverted'] is False for e in result['effects']) and result['counts']['effects_not_reverted'] == 2
 
     # Only effects after the chosen step are in the rewound span.
-    assert [e['tool'] for e in preview(host, rid, command_step)['effects']] == ['PluginCall']
-    assert preview(host, rid, connector_step)['effects'] == []
+    assert [e['tool'] for e in preview(host, rid, connector_step)['effects']] == ['RunCommand']
+    assert preview(host, rid, command_step)['effects'] == []
 
 
 def test_every_effect_tool_has_a_ledger_kind_and_a_not_reverted_note():

@@ -55,6 +55,7 @@ const imports = {
   "./MemoryArchive.vue": { __esModule: true, default: stub("MemoryArchive") },
   "./ConnectorRouteSettings.vue": { __esModule: true, default: stub("ConnectorRouteSettings") },
   "./StorageSettings.vue": { __esModule: true, default: stub("StorageSettings") },
+  "./RemoteSettings.vue": { __esModule: true, default: stub("RemoteSettings") }, // Phase 46: RemoteSettings.test.mjs
   "@phosphor-icons/vue": icons,
 };
 const filename = "AdvancedSettings.vue";
@@ -168,6 +169,13 @@ try {
     "Asked: Plan a trip\nResult: not recorded\nNo file, command or app actions.",
   ], "the episodic shapes (episode, observed outcome, host lesson, model lesson) read as words");
   for (const line of shown) assert.ok(!/undefined|claim_class|broker_evidence|\{|\}/.test(line), "no undefined or raw fields: " + line);
+  // Phase 45 (F228, audit round R9): a task whose steps needed no card says what it did; an uncertain result reads in words
+  const quiet = { kind: "episodic", scope: "chat:c", content: JSON.stringify({ user_request: "Draw a box", task_outcome: "needs_reconciliation", broker_evidence: [], tool_steps: { command: 3, file: 1, app_step: 5, bogus: 2 } }) };
+  assert.equal(text(quiet), "Asked: Draw a box\nResult: not completed: an app step's result was uncertain\nSteps: 3 commands, 1 file written, 5 steps in app windows.");
+  // Phase 45 (F243, F242; audit round R10): approvals keep the Steps line, and refused steps are named apart
+  const chess = { kind: "episodic", scope: "chat:c", content: JSON.stringify({ user_request: "Move the pawn", task_outcome: "completed", broker_evidence: [{ action_id: "a", kind: "app_launch", status: "applied" }], tool_steps: { app_step: 2, refused: 5 } }) };
+  assert.ok(text(chess).endsWith("\nSteps: 2 steps in app windows, 5 steps refused."), text(chess));
+  assert.equal(text(chess).split("\n").length, 4, "asked, result, the approvals, the steps");
   assert.equal(text({ kind: "working", content: JSON.stringify({ current_goal: "Ship it", phase: "waiting_approval", actions: [{ kind: "edit", status: "pending" }] }) }), "Current task: Ship it\nState: waiting approval\nActions: File edit · waiting for you");
   assert.equal(text({ kind: "working", content: JSON.stringify({}) }), "A task in progress");
   assert.equal(text({ kind: "semantic", content: JSON.stringify({ claim_class: "source_report", path: "docs/a.md", quote: "The port is 8080.", file_hash: "h" }) }), "“The port is 8080.”\nFrom docs/a.md");
@@ -277,12 +285,25 @@ try {
   assert.equal(timers.size, 0, "cancelling stops the wait");
   assert.equal(status().length, 0);
 
+  // ---- Phase 46 (D166): Fast replies, one radio group on the Models tab when a ChatGPT connection exists ----
+  const fastRadios = () => all(root).filter((element) => element.props.role === "radio" && String(element.props.id).startsWith("fast-replies-"));
+  assert.deepEqual(fastRadios().map((element) => element.props.id), ["fast-replies-off", "fast-replies-follow_ups", "fast-replies-long_tasks", "fast-replies-always"]);
+  assert.deepEqual(fastRadios().map((element) => element.props["aria-checked"]), [false, false, true, false], "long_tasks is the default");
+  await fastRadios()[3].props.onClick({}); await settle();
+  assert.deepEqual(paramsFor("setting"), { key: "fast_replies", value: "always" });
+  assert.deepEqual(fastRadios().map((element) => element.props.tabindex), [-1, -1, -1, 0], "one tab stop, on the choice");
+  await fastRadios()[3].props.onKeydown({ key: "ArrowLeft", preventDefault() {} }); await settle();
+  assert.equal(state.settings.fast_replies, "long_tasks", "arrow keys move the choice");
+  assert.ok(textOf(all(root).find((element) => element.props.id === "fast-replies-note")).includes("twice the standard rate"));
+
   // ---- V1-041: tabs, the mode radio group and the tool switches expose their state ----
   const tablist = all(root).find((element) => element.props.role === "tablist" && element.props["aria-label"] === "Settings sections");
   const tabButtons = () => all(tablist).filter((element) => element.props.role === "tab");
-  assert.deepEqual(tabButtons().map((element) => textOf(element).trim()), ["Models", "Permissions", "Memory", "Skills & connectors", "Data & storage"], "Views is hidden without Developer features (V1-107)");
-  assert.deepEqual(tabButtons().map((element) => element.props["aria-selected"]), [true, false, false, false, false]);
-  assert.deepEqual(tabButtons().map((element) => element.props.tabindex), [0, -1, -1, -1, -1], "one tab stop");
+  // Phase 45 (D129): Privacy & Stealth, Appearance and General have their own tabs (they trailed under every tab).
+  // Phase 46 (1.9.29, D214): the iPhone tab (Pebble Remote) follows Privacy & Stealth.
+  assert.deepEqual(tabButtons().map((element) => textOf(element).trim()), ["Models", "Permissions", "Memory", "Skills & connectors", "Data & storage", "Privacy & Stealth", "iPhone", "Appearance", "General"], "Views is hidden without Developer features (V1-107)");
+  assert.deepEqual(tabButtons().map((element) => element.props["aria-selected"]), [true, false, false, false, false, false, false, false, false]);
+  assert.deepEqual(tabButtons().map((element) => element.props.tabindex), [0, -1, -1, -1, -1, -1, -1, -1, -1], "one tab stop");
   const panel = all(root).find((element) => element.props.role === "tabpanel" && element.props.id === "settings-panel");
   assert.equal(panel.props["aria-labelledby"], "settings-tab-models");
   await tabButtons()[0].props.onKeydown({ key: "ArrowRight", preventDefault() {} }); await settle();
@@ -386,11 +407,19 @@ try {
   assert.equal(developer.props["aria-checked"], false);
   await developer.props.onClick({}); await settle();
   assert.equal(store.get("pebble.settings.developer"), "on");
-  assert.deepEqual(tabButtons().map((element) => textOf(element).trim()), ["Models", "Permissions", "Memory", "Skills & connectors", "Views", "Data & storage"]);
+  assert.deepEqual(tabButtons().map((element) => textOf(element).trim()), ["Models", "Permissions", "Memory", "Skills & connectors", "Views", "Data & storage", "Privacy & Stealth", "iPhone", "Appearance", "General"]);  // Phase 46: iPhone
   await bindings.changeTab("mods"); await settle();
   await bindings.toggleDeveloper(); await settle();
   assert.equal(bindings.tab.value, "extensions", "turning it off leaves the Views tab");
   assert.ok(!store.has("pebble.settings.developer"));
+
+  // Phase 45 (F063): Privacy & Stealth, Appearance and General show nothing of Skills & connectors (App.vue fills them).
+  for (const t of ["privacy", "appearance", "general"]) {
+    await bindings.changeTab(t); await settle();
+    assert.ok(!textOf(root).includes("SKILLS AND CONNECTORS") && !textOf(root).includes("PEBBLE'S TOOLBOX"), t + " is its own page");
+  }
+  await bindings.changeTab("extensions"); await settle();
+  assert.ok(textOf(root).includes("SKILLS AND CONNECTORS"), "and Skills & connectors still has its own");
 
   app.unmount(); mounted = false;
   assert.equal(timers.size, 0, "no timer survives Settings");

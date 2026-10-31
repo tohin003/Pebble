@@ -226,7 +226,12 @@ def test_diff_scopes_paths_and_private_filtering(host):
     assert '-print("base")' in commit_view['diff'] and '+print("second")' in commit_view['diff']
     root_view = host.git.diff(host.chat, scope='commit', commit=root_commit)
     assert set(root_view['files']) == {'README.md', 'app.py', 'tool.sh'} and '+print("base")' in root_view['diff']
-    for kwargs in ({'path': '../outside'}, {'path': '.env'}, {'path': '/etc/passwd'}, {'scope': 'commit', 'commit': 'HEAD'},
+    # Phase 46 (golden held-out git_workflow): a named revision resolves read-only (it was refused, and nothing listed
+    # the refs); an unknown name, a range or an option still never runs
+    assert host.git.diff(host.chat, scope='commit', commit='HEAD')['files'] == commit_view['files']
+    for kwargs in ({'path': '../outside'}, {'path': '.env'}, {'path': '/etc/passwd'},
+                   {'scope': 'commit', 'commit': 'no-such-branch'}, {'scope': 'commit', 'commit': 'HEAD~1..HEAD'},
+                   {'scope': 'commit', 'commit': '--output=/tmp/pebble-forged'},
                    {'scope': 'bogus'}, {'commit': second}, {'scope': 'commit', 'commit': '0' * 40}, {'limit': 0},
                    {'expected_hash': 'abc'}):
         with pytest.raises(PolicyError):
@@ -250,7 +255,9 @@ def test_history_pages_exact_commits_and_paths(host):
     assert [c['commit'] for c in host.git.history(host.chat, path='README.md')['commits']] == [commits[0]]
     exact = host.git.history(host.chat, commit=commits[1], limit=5)
     assert [c['commit'] for c in exact['commits']] == [commits[1], commits[0]]
-    for kwargs in ({'commit': 'HEAD~1'}, {'commit': '--output=/tmp/pebble-forged'}, {'limit': 0}, {'limit': 51},
+    # Phase 46: a named revision (HEAD~1, a branch, a tag) resolves read-only; an unknown name or an option never runs
+    assert [c['commit'] for c in host.git.history(host.chat, commit='HEAD~1', limit=5)['commits']] == commits[2::-1]
+    for kwargs in ({'commit': 'no-such-branch'}, {'commit': '--output=/tmp/pebble-forged'}, {'limit': 0}, {'limit': 51},
                    {'path': '.git/config'}, {'offset': -1}):
         with pytest.raises(PolicyError):
             host.git.history(host.chat, **kwargs)
@@ -795,7 +802,7 @@ def test_root_tool_adapter_permissions_and_closed_routes(host):
     assert host.git.tool(host.chat, 'ReadGitDiff', {'scope': 'head'})['files'] == []
     history = host.git.tool(host.chat, 'ReadGitHistory', {'limit': 1}, workspace=Workspace(host.repo))
     assert len(history['commits']) == 1
-    for name, args in (('ReadGitStatus', {'unexpected': 1}), ('ReadGitDiff', {'limit': 0}), ('ReadGitHistory', {'commit': 'main'}),
+    for name, args in (('ReadGitStatus', {'unexpected': 1}), ('ReadGitDiff', {'limit': 0}), ('ReadGitHistory', {'commit': '--all'}),
                        ('ReadGitStatus', 'not-a-dict'), ('Bash', {})):
         with pytest.raises(PolicyError):
             host.git.tool(host.chat, name, args)

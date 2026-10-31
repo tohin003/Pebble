@@ -44,14 +44,53 @@ const conversations = computed(() =>
       .includes(query.value.toLowerCase()),
   ),
 );
-const events = computed(() =>
-  props.activity
-    .filter((e) => e.chat_id === props.chat?.id)
-    .slice(-40)
-    .reverse(),
-);
+// Phase 45 (F078, audit round R2): each tool step was listed twice, its start and its end with the same words; a
+// step's end completes its start's row (the latest unfinished one with the same words and tool)
+const events = computed(() => {
+  const rows: ((typeof props.activity)[number] & { finished?: boolean })[] = [];
+  for (const e of props.activity) {
+    if (e.chat_id !== props.chat?.id) continue;
+    if (e.kind === "done") {
+      let open: (typeof rows)[number] | null = null;
+      for (let i = rows.length - 1; i >= 0 && !open; i--)
+        if (rows[i].kind === "working" && !rows[i].finished && rows[i].label === e.label && rows[i].tool === e.tool) open = rows[i];
+      if (open) {
+        open.finished = true;
+        continue;
+      }
+    }
+    rows.push({ ...e });
+  }
+  return rows.slice(-40).reverse();
+});
 const time = (at: number) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// Phase 45 (F047): each conversation says when it was last used (and its project), so look-alike rows differ.
+function when(updated?: number) {
+  if (!updated) return "";
+  const at = new Date(updated * 1000), now = new Date();
+  const days = Math.floor((new Date(now.toDateString()).getTime() - new Date(at.toDateString()).getTime()) / 86400000);
+  if (days <= 0) return "Today " + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (days === 1) return "Yesterday";
+  if (days < 7) return at.toLocaleDateString([], { weekday: "long" });
+  return at.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+// Phase 45 (F049): the three sections are tabs (one selected), moved with the arrow keys.
+const SECTIONS = ["chats", "activity", "views"] as const;
+function tabKey(event: KeyboardEvent) {
+  if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+  event.preventDefault();
+  const at = SECTIONS.indexOf(props.tab);
+  emit("tab", SECTIONS[(at + (event.key === "ArrowRight" ? 1 : SECTIONS.length - 1)) % SECTIONS.length]);
+}
+// Phase 45 (F048): Escape clears the search first; a second Escape reaches the sidebar as before.
+function searchKey(event: KeyboardEvent) {
+  if (event.key === "Escape" && query.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    query.value = "";
+  }
+}
 const actionName = (kind: string) =>
   ({
     edit: "File change",
@@ -67,7 +106,9 @@ function viewKind(view: Artifact) {
       view.data.questions.every((q: any) => q && typeof q === "object" && "id" in q && !("answer" in q))
       ? "Graded quiz"
       : "Self-check quiz";
-  const labels: Record<string, string> = { diagram: "Diagram", dashboard: "Dashboard", prototype: "App demo" };
+  // Phase 46 (1.9.29, D195): the visual catalog's kinds by their plain names
+  const labels: Record<string, string> = { diagram: "Diagram", dashboard: "Dashboard", prototype: "App demo", chart: "Chart",
+    compare: "Comparison", metrics: "Numbers", timeline: "Timeline", record: "Card" };
   return Object.hasOwn(labels, view.kind) ? labels[view.kind] : "Interactive view";
 }
 </script>
@@ -83,17 +124,20 @@ function viewKind(view: Artifact) {
         <PhX :size="16" />
       </button>
     </header>
-    <nav class="companion-tabs" aria-label="Companion sections">
-      <button :aria-pressed="tab === 'chats'" @click="emit('tab', 'chats')">
+    <nav class="companion-tabs" role="tablist" aria-label="Companion sections" @keydown="tabKey">
+      <button role="tab" :aria-selected="tab === 'chats'" :aria-pressed="tab === 'chats'" :tabindex="tab === 'chats' ? 0 : -1" @click="emit('tab', 'chats')">
         <PhChatCircle :size="15" />Chats
       </button>
       <button
+        role="tab"
+        :aria-selected="tab === 'activity'"
         :aria-pressed="tab === 'activity'"
+        :tabindex="tab === 'activity' ? 0 : -1"
         @click="emit('tab', 'activity')"
       >
         <PhPulse :size="15" />Activity
       </button>
-      <button :aria-pressed="tab === 'views'" @click="emit('tab', 'views')">
+      <button role="tab" :aria-selected="tab === 'views'" :aria-pressed="tab === 'views'" :tabindex="tab === 'views' ? 0 : -1" @click="emit('tab', 'views')">
         <PhSquaresFour :size="15" />Views<span
           v-if="chat?.artifacts?.length"
           class="companion-count"
@@ -105,9 +149,18 @@ function viewKind(view: Artifact) {
       <div class="companion-search">
         <input
           v-model="query"
+          type="search"
           aria-label="Search companion chats"
           placeholder="Find a conversation…"
+          @keydown="searchKey"
         /><button
+          v-if="query"
+          class="icon-button"
+          aria-label="Clear the search"
+          @click="query = ''"
+        >
+          <PhX :size="14" /></button
+        ><button
           class="icon-button"
           aria-label="New sidebar conversation"
           :disabled="!!active"
@@ -128,7 +181,7 @@ function viewKind(view: Artifact) {
         <PhChatCircle :size="16" /><span
           ><strong>{{ c.title || "New conversation" }}</strong
           ><small>{{
-            c.workspace?.split(/[\\/]/).at(-1) || "Companion"
+            [c.workspace?.split(/[\\/]/).at(-1), when(c.updated)].filter(Boolean).join(" · ") || "Companion"
           }}</small></span
         >
       </button>
@@ -156,7 +209,7 @@ function viewKind(view: Artifact) {
         <li
           v-for="(event, i) in events"
           :key="event.at + ':' + i"
-          :class="event.kind"
+          :class="event.finished ? 'done' : event.kind"
         >
           <i />
           <div>
@@ -280,6 +333,11 @@ function viewKind(view: Artifact) {
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
+}
+/* Phase 45 (F114, audit round R3): the field showed WebKit's own clear button beside the × (Clear the search) */
+.companion-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
 }
 .companion-search input {
   min-width: 0;

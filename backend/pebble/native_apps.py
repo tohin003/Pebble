@@ -27,9 +27,20 @@ launch. Unsigned and ad-hoc bundles have team_id None, and a pinned None must
 stay None. The running-state readback uses libproc (proc_listallpids,
 proc_pidpath, proc_pidinfo): it reads process paths and start times only,
 never windows, and needs no Accessibility or Screen Recording grant.
+
+Phase 43 (1.9.0, decision 9): a launch may ask to stay in the background
+(`background` in the reviewed payload): `open -g -a <pinned path>`. Some apps
+take the front anyway, so the app in front (`lsappinfo`, LaunchServices: no
+Apple Events, no Accessibility) and the seconds since the person's last input
+(CoreGraphics) are read before the launch. Within FOCUS_SECONDS of it, when
+the launched app took the front and the person gave no input since, the
+previous front app is put back with `open -a <its path>`: the jump is
+attributable to Pebble's launch. When the person did something, or another
+app came forward, the front is left alone and the receipt says what changed.
 """
 
 import ctypes
+import math
 import os
 import plistlib
 import re
@@ -323,17 +334,174 @@ def _opener(argv):
     return done.returncode
 
 
-def launch_argv(entry):
-    return [OPEN, '-a', entry['id']]
+def launch_argv(entry, background=False):
+    # Phase 45 (F200): a reviewed file opens in the app (its path last, after the app)
+    document = [entry['document']] if isinstance(entry.get('document'), str) else []
+    return ([OPEN, '-g', '-a', entry['id']] if background else [OPEN, '-a', entry['id']]) + document
+
+
+def document(path, *, protected=None):
+    """Phase 45 (F200, audit round R7): a file to open in an app: an existing regular file named by an absolute or ~
+    path, outside the protected places (companion_shell.protected_paths). Its resolved path, or PolicyError."""
+    if not isinstance(path, str) or not path.strip() or len(path) > 1024 or '\x00' in path:
+        raise PolicyError('Name the file to open by its full path.')
+    given = Path(path.strip()).expanduser()
+    if not given.is_absolute():
+        raise PolicyError('Name the file to open by its full path (from / or ~).')
+    try:
+        real = given.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise PolicyError('That file does not exist, so nothing was opened.') from None
+    if not real.is_file():
+        raise PolicyError('Only a file can be opened in an app this way.')
+    if protected is None:
+        from .companion_shell import protected_paths
+        protected = protected_paths()
+    for root in protected:
+        root = Path(root)
+        if real == root or root in real.parents:
+            raise PolicyError("That file is in a protected place (keys and passwords, browser data, Messages, Mail or "
+                              "Pebble's own data), so Pebble does not open it.")
+    return str(real)
+
+
+# ---- the front app around a background launch (Phase 43) ------------------------------------------------------------
+
+LSAPPINFO = '/usr/bin/lsappinfo'
+FOCUS_SECONDS = 5.0
+FOCUS_INTERVAL = 0.25
+ASN = re.compile(r'ASN:0x[0-9a-fA-F]{1,16}-0x[0-9a-fA-F]{1,16}:')
+_idle_fn = None
+
+
+def _capture(argv):
+    try:
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=3, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.decode('utf-8', 'replace')[:65_536] if done.returncode == 0 else None
+
+
+# ---- Phase 44 (1.9.1, D119): what is playing, from macOS's power assertions (names and ages only) ---------------------
+
+PMSET = '/usr/bin/pmset'
+ASSERTION = re.compile(r'^\s*pid (\d+)\(([^)]{1,128})\): \[0x[0-9a-fA-F]+\] (\d{1,4}):(\d{2}):(\d{2}) (\w{1,64}) '
+                       r'named: "([^"]{0,300})"')
+# Browsers hold "Playing audio" and "Video Wake Lock" while media plays (measured in Comet and Chrome, 2026-10-25);
+# coreaudiod holds one per output device in use. Voice processing (dictation, calls) is not playback.
+PLAYBACK = re.compile(r'playing audio|video wake lock|playback|\.context\.preventuseridlesleep', re.I)
+NOT_PLAYBACK = re.compile(r'AVVC|voice|microphone|input', re.I)
+
+
+def playing(*, capture=None):
+    """[{pid, app, age, name}] of the power assertions that mean sound or video is playing now, or None when macOS's
+    list cannot be read. Only process names, assertion names and their ages are read (`pmset -g assertions`)."""
+    text = (capture or _capture)([PMSET, '-g', 'assertions'])
+    if text is None:
+        return None
+    found = []
+    for line in text.splitlines():
+        match = ASSERTION.match(line)
+        if not match:
+            continue
+        pid, app, hours, minutes, seconds, _, name = match.groups()
+        if PLAYBACK.search(name) and not NOT_PLAYBACK.search(name):
+            found.append({'pid': int(pid), 'app': app, 'age': int(hours) * 3600 + int(minutes) * 60 + int(seconds),
+                          'name': name})
+    return found
+
+
+def playing_since(seconds, *, capture=None):
+    """True when sound or video started playing within the last `seconds` (an assertion younger than that), False
+    when nothing did, None when macOS's list cannot be read."""
+    rows = playing(capture=capture)
+    if rows is None:
+        return None
+    return any(row['age'] <= seconds + 1 for row in rows)
+
+
+def front_app(*, capture=None):
+    """{'bundle_id', 'path'} of the app in front (lsappinfo), or None when it cannot be read."""
+    capture = capture or _capture
+    match = ASN.search(capture([LSAPPINFO, 'front']) or '')
+    if not match:
+        return None
+    info = capture([LSAPPINFO, 'info', '-only', 'bundleid', '-only', 'bundlepath', match.group(0)]) or ''
+    bundle = re.search(r'bundleID="([^"\n]{1,255})"', info)
+    path = re.search(r'bundle path="([^"\n]{1,1024})"', info)
+    if not path or not path.group(1).endswith('.app'):
+        return None
+    return {'bundle_id': bundle.group(1) if bundle else None, 'path': path.group(1)}
+
+
+def idle_seconds():
+    """Seconds since the person's last keyboard, mouse or trackpad input (CoreGraphics, the combined session state),
+    or None when it cannot be read."""
+    global _idle_fn
+    try:
+        if _idle_fn is None:
+            lib = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
+            fn = lib.CGEventSourceSecondsSinceLastEventType
+            fn.restype, fn.argtypes = ctypes.c_double, [ctypes.c_int32, ctypes.c_uint32]
+            _idle_fn = fn
+        value = _idle_fn(0, 0xFFFFFFFF)  # kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType
+    except (OSError, AttributeError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def _same_app(one, other):
+    try:
+        return os.path.realpath(one) == os.path.realpath(other)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def watch_focus(path, before, launched_at, *, opener, front=None, idle=None, clock=time.monotonic,
+                sleep=time.sleep, seconds=FOCUS_SECONDS):
+    """What happened to the front app after a background launch of the bundle at path, with Pebble's one restore
+    when the jump is attributable: {'state', 'front_before', 'front_after'} (bundle IDs) and, when the front was left
+    alone, 'reason'. state: kept (the front never moved), restored (put back and read back in front),
+    restore_unconfirmed (put back but not read back), left (the person gave input, or another app came forward) or
+    unknown (the front could not be read)."""
+    front, idle = front or front_app, idle or idle_seconds
+    was = before['bundle_id'] if before else None
+    if before is None:
+        return {'state': 'unknown', 'front_before': None, 'front_after': None}
+    if _same_app(before['path'], path):
+        return {'state': 'kept', 'front_before': was, 'front_after': was}
+    deadline = launched_at + seconds
+    while True:
+        now = front()
+        if now is None:
+            return {'state': 'unknown', 'front_before': was, 'front_after': None}
+        if _same_app(now['path'], path):
+            quiet = idle()
+            if quiet is None or quiet < clock() - launched_at:
+                return {'state': 'left', 'front_before': was, 'front_after': now['bundle_id'],
+                        'reason': 'person_input' if quiet is not None else 'input_unreadable'}
+            code = opener([OPEN, '-a', before['path']])
+            after = front()
+            back = code == 0 and after is not None and _same_app(after['path'], before['path'])
+            return {'state': 'restored' if back else 'restore_unconfirmed', 'front_before': was,
+                    'front_after': after['bundle_id'] if after else None}
+        if not _same_app(now['path'], before['path']):
+            return {'state': 'left', 'front_before': was, 'front_after': now['bundle_id'], 'reason': 'other_app'}
+        if clock() >= deadline:
+            return {'state': 'kept', 'front_before': was, 'front_after': was}
+        sleep(FOCUS_INTERVAL)
 
 
 def launch(entry, *, roots=None, signer=None, opener=None, lister=None, clock=time.monotonic, wall=time.time,
-           sleep=time.sleep, readback_seconds=LAUNCH_READBACK_SECONDS):
+           sleep=time.sleep, readback_seconds=LAUNCH_READBACK_SECONDS, background=None, front=None, idle=None):
     """Re-check the pinned identity, ask macOS to open the app, read the running state back.
 
     Returns {'requested','bundle_id','team_id','version','path','launch_observed','observed_at',
     'already_running','readback','proves','authorization'}. Raises PolicyError, with
-    nothing opened, when the pin is missing or the bundle changed after review.
+    nothing opened, when the pin is missing or the bundle changed after review. Phase 43: background (default: the
+    reviewed payload's `background`) opens with -g and adds 'background' and 'focus' (watch_focus) to the receipt;
+    without it the receipt is 1.8.0's.
     """
     if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
         raise PolicyError('Select an installed app.')
@@ -348,11 +516,16 @@ def launch(entry, *, roots=None, signer=None, opener=None, lister=None, clock=ti
         raise PolicyError('The app at the reviewed path changed after review (its bundle or signing team '
                           'differs), so it was not opened.')
     name = entry.get('name') if isinstance(entry.get('name'), str) else current['name']
+    background = entry.get('background') is True if background is None else background is True
+    if isinstance(entry.get('document'), str) and document(entry['document']) != entry['document']:
+        raise PolicyError('The file to open changed after review, so nothing was opened.')  # Phase 45 (F200)
     try:
         before = running(entry['id'], lister=lister)
     except Unavailable:
         before = None
-    code = (opener or _opener)(launch_argv(entry))
+    if background:
+        front_before, launched_at = (front or front_app)(), clock()
+    code = (opener or _opener)(launch_argv(entry, background))
     if code is None:
         raise PolicyError(f'The request to open {name} did not finish; the app may or may not be opening.')
     if code != 0:
@@ -370,12 +543,19 @@ def launch(entry, *, roots=None, signer=None, opener=None, lister=None, clock=ti
         if clock() >= deadline:
             break
         sleep(READBACK_INTERVAL)
-    return {'requested': name, 'bundle_id': current['bundle_id'], 'team_id': current['team_id'],
-            'version': current['version'], 'version_changed': current['version'] != entry.get('version'),
-            'path': entry['id'], 'launch_observed': observed,
-            'observed_at': observed_at, 'already_running': None if before is None else bool(before),
-            'readback': {True: 'running', False: 'not_running', None: 'unavailable'}[observed],
-            'proves': PROVES, 'authorization': 'none'}
+    receipt = {'requested': name, 'bundle_id': current['bundle_id'], 'team_id': current['team_id'],
+               'version': current['version'], 'version_changed': current['version'] != entry.get('version'),
+               'path': entry['id'], 'launch_observed': observed,
+               'observed_at': observed_at, 'already_running': None if before is None else bool(before),
+               'readback': {True: 'running', False: 'not_running', None: 'unavailable'}[observed],
+               'proves': PROVES, 'authorization': 'none'}
+    if isinstance(entry.get('document'), str):
+        receipt['document'] = Path(entry['document']).name  # Phase 45 (F200): the file's name only
+    if background:
+        receipt['background'] = True
+        receipt['focus'] = watch_focus(entry['id'], front_before, launched_at, opener=opener or _opener, front=front,
+                                       idle=idle, clock=clock, sleep=sleep)
+    return receipt
 
 
 def describe(result):
@@ -385,7 +565,23 @@ def describe(result):
     if 'requested' not in result and isinstance(result.get('opened'), str):  # receipts from before Phase 16
         return f"macOS accepted the request to open {result['opened']} (running: unknown)."
     state = {True: 'observed', False: 'not observed'}.get(result.get('launch_observed'), 'unknown')
-    return f"macOS accepted the request to open {result.get('requested') or 'the app'} (running: {state})."
+    name = result.get('requested') or 'the app'
+    if isinstance(result.get('document'), str):  # Phase 45 (F200)
+        name = result['document'][:120] + ' in ' + name
+    focus = result.get('focus') if result.get('background') is True and isinstance(result.get('focus'), dict) else None
+    if not focus:
+        return f"macOS accepted the request to open {name} (running: {state})."
+    return (f"macOS accepted the request to open {name} in the background (running: {state}). "
+            + FOCUS_NOTES.get(focus.get('state'), '')).rstrip()
+
+
+FOCUS_NOTES = {
+    'kept': 'Your front app stayed in front.',
+    'restored': 'It came to the front by itself, so Pebble put your previous app back.',
+    'restore_unconfirmed': 'It came to the front by itself; Pebble asked macOS to put your previous app back but could '
+                           'not confirm it.',
+    'left': 'The front app changed while you were using the Mac, or another app came forward, so Pebble left it.',
+    'unknown': 'Pebble could not read which app is in front.'}
 
 
 OPERATE = re.compile(

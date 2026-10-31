@@ -77,7 +77,8 @@ const moveNote = computed(() => {
   if (state === 'refused' || state === 'failed' || state === 'conflict')
     return { alert: true, text: 'Pebble is still using its old folder. ' + text(m.message) + ' Nothing was deleted.' };
   if (m.warning === 'data_missing_after_move')
-    return { alert: true, text: "Pebble's data folder was missing, so Pebble started fresh. Your earlier data is still in the old folder." };
+    return { alert: true, text: "Pebble's data folder was missing, so Pebble started fresh. Your earlier data is still in "
+      + (text(m.moved_from) || '~/Library/Application Support/com.pebble.local') + '; nothing there was deleted.' };  // Phase 45 (F009)
   if (state === 'migrated' || text(m.moved_at))
     return { alert: false, text: 'Your data moved here' + (text(m.moved_at) ? ' on ' + new Date(text(m.moved_at)).toLocaleDateString() : '')
       + '. The old folder' + (text(m.moved_from) ? ' (' + text(m.moved_from) + ')' : '') + ' is untouched, with a MOVED.md; delete it yourself when you are happy.'

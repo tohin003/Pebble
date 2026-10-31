@@ -22,7 +22,8 @@ test("a held test-file edit leads with the host's reason, as text", () => {
 });
 
 test("the Auto mode copy names the hold it now makes", () => {
-  assert.ok(modes.includes('"Changes to test files your request didn\'t ask for, other terminal commands (including grep and builds)'));
+  // Phase 46 (1.9.28, D184; restated): what follows the hold changed (a confined command runs, permissionModes.test.mjs)
+  assert.ok(modes.includes('"Changes to test files your request didn\'t ask for, '));
 });
 
 test("the Keyboard caption refers to the table's own column", () => {
