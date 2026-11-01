@@ -196,11 +196,15 @@ class Campaign:
         self.check('fixture_scratch_created_outside_the_checkout', created)
 
         def version():
+            # Restated for 2.0.1 (Phase 49, D226): the checkout carries 2.0.0 or a later release, every declaration
+            # the same one, as D75, D80 and D88 restated earlier version pins. The 2.0.0 entry checked below is
+            # unchanged.
             current = checkout_version()
-            assert current == RELEASE, current
+            assert tuple(int(part) for part in current.split('.')) >= (2, 0, 0), current
             declared = declared_versions()
-            assert declared and set(declared.values()) == {RELEASE}, declared
-            return {'version': current, 'declarations': len(declared)}
+            assert declared and set(declared.values()) == {current}, declared
+            assert re.search(r'^## \[' + re.escape(current) + r'\]', read('CHANGELOG.md'), re.M), current
+            return {'version': current, 'declarations': len(declared), 'entry_checked': RELEASE}
         self.check('release_version_is_2_0_0_everywhere', version)
 
         entry = changelog_entry(RELEASE)

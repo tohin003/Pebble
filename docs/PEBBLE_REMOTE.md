@@ -7,8 +7,8 @@ own private network when you are away. No server of Pebble's or anyone else's si
 ## What you need
 
 - Pebble 2.0 or later on a Mac.
-- An iPhone with Pebble Remote installed. Pebble Remote won't be on the App Store: it will be offered only as source
-  code, which you build and install with Xcode, and that code is not published yet.
+- An iPhone with Pebble Remote installed. Pebble Remote won't be on the App Store: it is offered only as source code,
+  which you build and install with Xcode, at https://github.com/tohin003/pebble-remote.
 - For use away from home: [Tailscale](https://tailscale.com) on the Mac and on the iPhone. Its personal plan is free.
   Other options are listed under "Away from home without Tailscale" below.
 

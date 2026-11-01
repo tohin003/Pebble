@@ -270,16 +270,16 @@ Browser panel, or **Stop** in Chrome, ends all of Pebble's Chrome sessions; a ta
 
 ## Stealth Lockdown
 
-One switch for presenting, calls and screen shares: **Settings › Privacy and focus › Stealth Lockdown**, **Stealth
+One switch for presenting, calls and screen shares: **Settings › Privacy & Stealth › Stealth Lockdown**, **Stealth
 Lockdown** in the menu-bar icon's menu, or ⌃⌥⌘S from any app. It stays on, across restarts, until you turn it off.
 
 - **Stealth.** Pebble's windows are left out of screen capture and screen sharing: a recording or a shared screen
   shows what is behind them. Pebble leaves the Dock, ⌘Tab and Mission Control, and its workspace drops its shadow and
   opens as a window, not in full screen. ⌃⌥⌘H (or **Hide Pebble now** in the menu-bar menu) hides every Pebble window
   at once. The menu-bar icon, or ⌘⇧Space, brings Pebble back.
-- **Lockdown.** Pebble never takes keyboard focus from the app in front. Its windows take your typing without making
-  Pebble the active app, so your slides, call or full-screen app stay in front, and Pebble never brings itself
-  forward.
+- **Lockdown.** The app you are in stays the active one, with its menu bar. Pebble's windows take your clicks and typing
+  without making Pebble the active app, so your slides, call or full-screen app stay in front, and Pebble never brings
+  itself forward.
 - **How you can tell.** The pebble wears the Veil, a dusk-blue glass with a light rim, and the menu-bar icon becomes a
   filled pebble in a ring. With **Reduce motion** on, the change is a short fade.
 - **What it does not hide.** Hidden from screen capture and screen sharing, not from a camera, a capture card or a

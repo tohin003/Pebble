@@ -13,7 +13,7 @@ keep memory you control and build interactive views, with the model you choose. 
 [![Release](https://img.shields.io/github/v/release/tohin003/Pebble?label=release&color=506e54)](https://github.com/tohin003/Pebble/releases/latest)
 [![macOS 12+ on Apple silicon](https://img.shields.io/badge/macOS-12%2B%20%C2%B7%20Apple%20silicon-191e1b?logo=apple&logoColor=white)](#install)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-a6c795)](LICENSE)
-[![13,269 tests at v2.0.0](https://img.shields.io/badge/tests-13%2C269%20at%20v2.0.0-506e54)](#built-like-infrastructure)
+[![13,442 tests at v2.0.1](https://img.shields.io/badge/tests-13%2C442%20at%20v2.0.1-506e54)](#built-like-infrastructure)
 [![AgentGuard built in](https://img.shields.io/badge/AgentGuard-built%20in-23351f)](#agentguard-evidence-before-done)
 
 [**Download for macOS**](https://github.com/tohin003/Pebble/releases/latest/download/Pebble-macos-arm64.zip) ·
@@ -95,7 +95,7 @@ Keychain. A local conversation reaches a cloud model only after you review it.
 
 ### 🧪 Built like infrastructure
 
-2.0.0 passed 13,269 tests and 2,112 service checks, on source and on the frozen app. Its backend build is reproducible,
+2.0.1 passed 13,442 tests and 2,128 service checks, on source and on the frozen app. Its backend build is reproducible,
 and the release passed a full licence inventory and a secret scan.
 
 </td>
@@ -144,7 +144,7 @@ own interface.</sub>
 
 </div>
 
-One switch for presenting, calls and screen shares. Turn it on in Settings → Privacy and focus, from the menu-bar
+One switch for presenting, calls and screen shares. Turn it on in Settings → Privacy & Stealth, from the menu-bar
 icon, or with ⌃⌥⌘S.
 
 - **Stealth.** Pebble's windows are left out of screen capture and screen sharing. Pebble leaves the Dock, ⌘Tab and
@@ -379,8 +379,8 @@ Pebble is built to the standard of software that people trust with their project
 
 | | |
 |---|---|
-| **Tests** | 13,269 automated tests at v2.0.0, none skipped. They never call a model or the network. |
-| **Service checks** | 2,112 checks across 59 validator suites, each run against the source *and* the frozen, signed app |
+| **Tests** | 13,442 automated tests at v2.0.1, none skipped. They never call a model or the network. |
+| **Service checks** | 2,128 checks across 60 validator suites, each run against the source *and* the frozen, signed app |
 | **Reproducible build** | The shipped backend is byte-identical to the tested one, apart from its signature |
 | **Release gates** | Secret scan, licence inventory (366 components, every notice present), a scan for personal paths, and every published test run in a fresh clone |
 | **Safe updates** | The installer keeps the previous app. Database upgrades back up first. Every release is rehearsed on a copy of real data and drilled with a rollback before it ships. |

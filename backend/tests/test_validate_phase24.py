@@ -160,7 +160,7 @@ def test_the_campaign_registers_phase24_and_keeps_phase22_retired():
     verify = load('verify_harness_candidate', 'verify_for_phase24_test')
     # Phase 25 (the release build) follows phase24 in the campaign; phase24 stays registered and runs in it. Phase 47
     # (2.0.0): phase43 and phase47 join the tail; Phase 48 (2.0.0's About credit and iPhone wording, D222) follows.
-    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-22:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37', 'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48')
+    assert verify.SUITES['phase24'] == 'validate_phase24.py' and verify.PHASES[-24:] == ('phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29', 'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37', 'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48', 'phase49', 'phase50')
     suites = verify.default_suites('phase24')
     assert {'phase23', 'phase24'} <= set(suites) and 'phase22' not in suites
     assert 'phase24' not in verify.default_suites('phase23')

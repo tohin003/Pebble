@@ -4,6 +4,30 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [2.0.1]
+
+A patch release for Stealth Lockdown, with two packaging and guide fixes. Nothing else changes from 2.0.0: the same
+model routes, tools and AgentGuard, and the same data.
+
+### Fixed
+
+- **Stealth Lockdown, hardened.** Its screen-capture protection is stronger, and while it holds Pebble out of view the
+  menu-bar icon's tooltip says why. Hidden from screen capture and screen sharing, not from a camera, a capture card or
+  a process list. Exams and interviews that forbid assistants still forbid it.
+- **A change to Stealth Lockdown made from Pebble Remote now applies on the Mac at once.** Before, the pebble could
+  wear the Veil while the Mac had not applied the switch, until the next restart or toggle.
+- **Banners wait while Stealth Lockdown is on.** Banners for scheduled tasks and approvals now appear once it is off,
+  as replies already did not show a banner then.
+- **Pebble for Chrome from another macOS user.** The extension Pebble ships, and three licence files, are now
+  readable by every user of the Mac, so another user can load the extension from the app.
+- **The guide names Stealth Lockdown's place in Settings,** Privacy & Stealth, and describes Lockdown as it works: the
+  app you are in stays active while you type to Pebble.
+
+### Upgrading
+
+Install 2.0.1 over 2.0.0 with the one-line installer or the download; your data, settings and sign-ins carry over. The
+iPhone app's source is published at https://github.com/tohin003/pebble-remote.
+
 ## [2.0.0]
 
 Pebble 2.0.0 is the first public release since 1.5.0. The versions in between were local test builds that were never

@@ -79,11 +79,12 @@ SUITES = {
     'phase43': 'validate_phase43.py',  # 1.9.0: browser control and computer use, M1 routes and contracts (Phase 43)
     'phase47': 'validate_phase47.py',  # 2.0.0: the version and the notes' registered results (Phase 47)
     'phase48': 'validate_phase48.py',  # 2.0.0: About's credit and the iPhone app's wording (Phase 48, D222)
+    'phase49': 'validate_phase49.py',  # 2.0.1: Stealth Lockdown's capture guard (Phase 49, D225-D227)
 }
 PHASES = ('phase10', 'phase11', 'phase12', 'phase13', 'phase14', 'phase15', 'phase16', 'phase17', 'phase18', 'phase19',
           'phase20', 'phase21', 'phase22', 'phase23', 'phase24', 'phase25', 'phase26', 'phase27', 'phase28', 'phase29',
           'phase30', 'phase31', 'phase32', 'phase33', 'phase34', 'phase35', 'phase36', 'phase37',
-          'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48')
+          'phase38', 'phase39', 'phase40', 'phase41', 'phase42', 'phase43', 'phase47', 'phase48', 'phase49', 'phase50')
 # Historical suites that can no longer pass, kept unchanged as historical evidence, with the phase from
 # which they leave the default campaign and the reason. Each stays runnable with --suite.
 # Phase 32 (T4): suites that measure time or the machine, run alone after the pooled ones under --jobs N.

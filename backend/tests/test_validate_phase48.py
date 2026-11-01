@@ -130,4 +130,7 @@ def test_the_guide_says_the_app_is_offered_only_as_source_code():
     guide = re.sub(r'\s+', ' ', (ROOT / 'docs/PEBBLE_REMOTE.md').read_text(encoding='utf-8'))
     need = guide[guide.index('## What you need'):guide.index('## ', guide.index('## What you need') + 3)]
     assert "Pebble Remote won't be on the App Store" in need and 'offered only as source code' in need, need
-    assert 'not published yet' in need and 'TestFlight' not in guide
+    # Restated for 2.0.1 (Phase 49, D227): the code was published on 2026-10-31 (pebble-remote v1.0.0), so the guide
+    # links it instead of saying it is not published yet; still no App Store or TestFlight offer.
+    assert 'https://github.com/tohin003/pebble-remote' in need and 'not published yet' not in need, need
+    assert 'TestFlight' not in guide
