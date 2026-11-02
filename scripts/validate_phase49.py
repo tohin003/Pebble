@@ -21,6 +21,20 @@ the release text to the person's rules, the same in source and frozen modes:
   - every version declaration says 2.0.1, whose notes have no Highlights (About's What's new stays 2.0.0's) and carry
     Stealth Lockdown's honest line, with none of the words its public text never uses;
   - the guide and the README name Stealth Lockdown's Settings tab and promise no keyboard focus.
+
+Restated for 2.0.2 (Phase 51, D234), in D226's pattern. 2.0.2 replaces the guard, which took Pebble out of the person's
+own view (D229 rejects that), with a capture mask held on every Pebble window while Stealth Lockdown is on
+(validate_phase51 pins it). The guard checks pass for 2.0.1 with its guard, or for a later release in which the mask
+stands in its place (set on every window, applied in apply_stealth and kept while Stealth is on) and no window-server
+alpha write or app hide remains; in such a release nothing is held, since Pebble never leaves the person's view. The
+version check passes for 2.0.1 or a later release, every declaration the same one, with an entry in CHANGELOG.md, and
+the README's badge and counts name that release; the 2.0.1 entry's checks are unchanged. Each check keeps its name.
+
+Restated again for 2.0.3 (Phase 52, D240). 2.0.2's mask hid Pebble from the person's own display too (D237) and was
+never released; the person chose 2.0.0's capture behaviour for 2.0.3 (D238). So the guard check also passes for a
+release of 2.0.3 or later in which that behaviour stands in the guard's place: no capture guard and no capture mask
+anywhere, no window-server alpha write or app hide, and Stealth Lockdown setting the sharing type on every window. 2.0.1
+(the guard) and 2.0.2 (the mask) are checked as before. Each check keeps its name; validate_phase52 pins 2.0.3.
 Usage: --report NEW_PATH [--backend FROZEN_EXECUTABLE] [--keep-scratch].
 """
 import argparse
@@ -102,7 +116,67 @@ def before(text, first, second):
     assert text.index(first) < text.index(second), (first, 'must come before', second)
 
 
+def later_release():
+    """Restated for 2.0.2 (D234): a tree without 2.0.1's guard must be a later release."""
+    current = checkout_version()
+    assert tuple(int(part) for part in current.split('.')) > (2, 0, 1), ('the guard is gone, but the checkout is', current)
+    return current
+
+
+def check_mask(shell):
+    """Restated for 2.0.2 (D234): the capture mask stands in the guard's place, and nothing takes Pebble out of view."""
+    current = later_release()
+    stealth = module(shell, 'stealth_mac')
+    assert 'pub const CAPTURE_MASK: u32 = 0x9;' in stealth, 'the capture mask is not the measured one'
+    mask = inner(stealth, 'set_capture_mask_all')
+    assert 'msg_send![app, windows]' in mask and 'msg_send![frame, layer]' in mask, 'the mask is not set on every window'
+    assert 'let wanted: u32 = if on { CAPTURE_MASK } else { 0 };' in mask, 'the mask is not the measured one while on'
+    assert 'msg_send![layer, setDisableUpdateMask: wanted]' in mask, 'the mask is never set'
+    apply = function(shell, 'apply_stealth')
+    before(apply, '        stealth_mac::set_sharing_all(on);\n', 'stealth_mac::set_capture_mask_all(on);')
+    keeper = module(shell, 'capture_keeper')
+    before(keeper, 'if !super::stealth_on() { return; }', 'super::stealth_mac::set_capture_mask_all(true)')
+    assert 'CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes)' in keeper, 'the mask is not kept in every mode'
+    assert 'capture_keeper::start();' in shell, 'the keeper is never started'
+    for gone in ('mod capture_guard', 'CGSSetWindowAlpha', 'SLSSetWindowAlpha', 'msg_send![ns_app, hide:', 'hide: std::ptr::null'):
+        assert gone not in shell, ('Stealth code can still take Pebble out of view:', gone)
+    return {'release': current, 'in_place_of_the_guard': 'the capture mask', 'mask': '0x9'}
+
+
+def check_sharing_type(shell):
+    """Restated for 2.0.3 (D240): D238's 2.0.0 capture behaviour stands in the guard's place; nothing takes Pebble out
+    of view or masks it."""
+    current = later_release()
+    for gone in ('mod capture_guard', 'capture_guard::', 'CGSSetWindowAlpha', 'SLSSetWindowAlpha', 'msg_send![ns_app, hide:',
+                 'hide: std::ptr::null', 'unhideWithoutActivation', 'setDisableUpdateMask', 'CAPTURE_MASK',
+                 'set_capture_mask_all'):
+        assert gone not in shell, ('Stealth code can still take Pebble out of view or mask it:', gone)
+    sharing = inner(module(shell, 'stealth_mac'), 'set_sharing_all')
+    assert 'msg_send![app, windows]' in sharing, 'the sharing type is not set on every window'
+    assert 'msg_send![window, setSharingType: if on { 0usize } else { 1usize }]' in sharing, 'not none while on'
+    apply = function(shell, 'apply_stealth')
+    assert apply.count('stealth_mac::set_sharing_all(on);') == 1, 'Stealth does not set the sharing type once'
+    return {'release': current, 'in_place_of_the_guard': "each window's sharing type (D238)"}
+
+
+def check_unheld(shell):
+    """Restated for 2.0.2 (D234): nothing is held, since Pebble never leaves the person's view."""
+    current = later_release()
+    reveal = function(shell, 'reveal')
+    assert 'capture_guard' not in reveal and 'reveal_held' not in reveal, 'reveal still holds for a capture'
+    passthrough = function(shell, 'pet_passthrough')
+    assert 'setAlphaValue: if on {0.0f64} else {1.0f64}' in passthrough, "the companion's click-through alpha is gone"
+    assert 'keep_out(' not in passthrough, 'the companion is still kept out of view'
+    assert TOOLTIP not in shell and 'out of view' not in function(shell, 'tray_tooltip'), 'the tooltip says Pebble is out of view'
+    assert 'tray.set_tooltip(Some(tray_tooltip()))' in function(shell, 'remote_mark')
+    return {'release': current, 'held': 'nothing: Pebble stays in view'}
+
+
 def check_guard(shell):
+    if 'mod capture_guard {' not in shell:
+        if tuple(int(part) for part in checkout_version().split('.')) >= (2, 0, 3):
+            return check_sharing_type(shell)
+        return check_mask(shell)
     guard = module(shell, 'capture_guard')
     for name in ('CGSIsScreenWatcherPresent', 'SLSIsScreenWatcherPresent', 'CGSSetWindowAlpha', 'CGSRegisterNotifyProc',
                  'CGSMainConnectionID'):
@@ -132,6 +206,8 @@ def check_guard(shell):
 
 
 def check_held(shell):
+    if 'mod capture_guard {' not in shell:
+        return check_unheld(shell)
     reveal = function(shell, 'reveal')
     before(reveal, 'if capture_guard::engaged() {', 'WORKSPACE_WANTED.store(true, Ordering::SeqCst);')
     assert 'if capture_guard::engaged() { diag::log("reveal_held", json!({})); return; }' in reveal, 'reveal goes on while the guard holds'
@@ -169,10 +245,13 @@ def check_banners(shell):
 
 
 def check_release(entry, app, readme):
+    # Restated for 2.0.2 (Phase 51, D234), as D226 restated validate_phase47's: the checkout carries 2.0.1 or a later
+    # release, every declaration the same one, with an entry in CHANGELOG.md. The 2.0.1 entry's checks are unchanged.
     current = checkout_version()
-    assert current == RELEASE, current
+    assert tuple(int(part) for part in current.split('.')) >= (2, 0, 1), current
     declared = declared_versions()
-    assert declared and set(declared.values()) == {RELEASE}, declared
+    assert declared and set(declared.values()) == {current}, declared
+    assert re.search(r'^## \[' + re.escape(current) + r'\]', read('CHANGELOG.md'), re.M), current
     assert '### Highlights' not in entry, "2.0.1 has Highlights, so About's What's new would change"
     assert re.search(r'const WHATS_NEW_VERSION = "2\.0\.0";', app), "About's What's new is not 2.0.0's"
     text = flat(entry)
@@ -184,9 +263,10 @@ def check_release(entry, app, readme):
                   'Banners wait while Stealth Lockdown is on.', 'Pebble for Chrome from another macOS user.',
                   'https://github.com/tohin003/pebble-remote'):
         assert fixed in text, ('the 2.0.1 notes do not say', fixed)
-    assert 'at%20v2.0.1' in readme and 'at v2.0.1' in readme, 'the README badge is not 2.0.1'
-    assert re.search(r'^2\.0\.1 passed [\d,]+ tests and [\d,]+ service checks', readme, re.M), 'the README counts are not 2.0.1'
-    return {'version': current, 'declarations': len(declared)}
+    assert ('at%20v' + current) in readme and ('at v' + current) in readme, 'the README badge is not ' + current
+    assert re.search(r'^' + re.escape(current) + r' passed [\d,]+ tests and [\d,]+ service checks', readme, re.M), \
+        'the README counts are not ' + current
+    return {'version': current, 'declarations': len(declared), 'entry_checked': RELEASE}
 
 
 def check_text(shell, readme, guide, app):

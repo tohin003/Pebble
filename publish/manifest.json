@@ -101,6 +101,8 @@
     {"glob": "backend/tests/test_finalize_harness_phase48.py", "reason": "Loads scripts/finalize_harness_phase48.py, which is not published (D11)."},
     {"glob": "backend/tests/test_finalize_harness_phase49.py", "reason": "Loads scripts/finalize_harness_phase49.py, which is not published (D11)."},
     {"glob": "backend/tests/test_finalize_harness_phase50.py", "reason": "Loads scripts/finalize_harness_phase50.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase51.py", "reason": "Loads scripts/finalize_harness_phase51.py, which is not published (D11)."},
+    {"glob": "backend/tests/test_finalize_harness_phase52.py", "reason": "Loads scripts/finalize_harness_phase52.py, which is not published (D11)."},
     {"glob": "**/__pycache__/**", "reason": "Build output."},
     {"glob": "**/*.pyc", "reason": "Build output."},
     {"glob": "**/.DS_Store", "reason": "Finder metadata."},

@@ -169,6 +169,15 @@ const activityStore = createActivityStore();
 const workRecord = computed(() => (state.value?.settings.work_view !== false && chat.value ? activityStore.liveFor(chat.value.id) : null));
 // Phase 33: the pebble wears the Veil while Stealth Lockdown is on (the shell does the hiding).
 const stealthOn = computed(() => !!state.value?.settings.stealth);
+// 2.0.3 (Phase 52, D242, F13): no autocorrect bubble while Stealth Lockdown is on. macOS's correction panel, left over a
+// box by earlier typing, takes the next click while another app is in front, so the box never got the keyboard and the
+// keys went to that app (and a click on the panel itself activated Pebble). With Stealth off the object is empty and the
+// boxes keep WebKit's own spelling and correction.
+const stealthTyping = computed(() =>
+  stealthOn.value
+    ? { spellcheck: false, autocorrect: "off", autocapitalize: "off", autocomplete: "off", writingsuggestions: "false" }
+    : {},
+);
 const companion = useCompanion({
   approvals: () => pending.value,
   questions: () => chat.value?.questions?.filter((q) => q.status === "pending").length || 0,
@@ -1119,6 +1128,7 @@ onUnmounted(() => {
             </div>
             <textarea
               v-model="command"
+              v-bind="stealthTyping"
               aria-label="Terminal command"
               placeholder="git status --short"
               rows="2"
@@ -1162,6 +1172,7 @@ onUnmounted(() => {
         <textarea
           ref="composer"
           v-model="input"
+          v-bind="stealthTyping"
           aria-label="Message Pebble"
           placeholder="What's on your mind?"
           rows="2"

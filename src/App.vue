@@ -311,6 +311,15 @@ const availableEfforts = computed(
   () => state.value.model.efforts || ["default"],
 );
 const effort = computed(() => state.value.model.effort || "default");
+// 2.0.3 (Phase 52, D242, F13): no autocorrect bubble while Stealth Lockdown is on. macOS's correction panel, left over a
+// box by earlier typing, takes the next click while another app is in front, so the box never got the keyboard and the
+// keys went to that app (and a click on the panel itself activated Pebble). With Stealth off the object is empty and the
+// boxes keep WebKit's own spelling and correction.
+const stealthTyping = computed(() =>
+  state.value?.settings?.stealth
+    ? { spellcheck: false, autocorrect: "off", autocapitalize: "off", autocomplete: "off", writingsuggestions: "false" }
+    : {},
+);
 const effortLabel = (level: string) =>
   ({
     default: "Default",
@@ -2643,6 +2652,7 @@ onUnmounted(() => {
                     <textarea
                       :ref="keepEditor"
                       v-model="editText"
+                      v-bind="stealthTyping"
                       aria-label="Edited message"
                       rows="3"
                       @keydown.enter.exact.prevent="sendEdited(message)"
@@ -2940,6 +2950,7 @@ onUnmounted(() => {
               <textarea
                 ref="composer"
                 v-model="input"
+                v-bind="stealthTyping"
                 :disabled="booting"
                 :placeholder="
                   projectName
@@ -3734,6 +3745,7 @@ onUnmounted(() => {
           <form @submit.prevent="proposeCommand">
             <textarea
               v-model="terminalCommand"
+              v-bind="stealthTyping"
               class="terminal-input"
               rows="4"
               aria-label="Terminal command"

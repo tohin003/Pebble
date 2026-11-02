@@ -196,9 +196,6 @@ static WORKSPACE_FULL: AtomicBool = AtomicBool::new(true);
 static DOUBLE_KEY_FIXED: AtomicBool = AtomicBool::new(false); // F125: the Dock round trip, at most once per opening
 
 fn reveal(app:&tauri::AppHandle) {
-    // 2.0.1 (Phase 49): while the capture guard holds Pebble out of view, nothing brings the workspace forward
-    #[cfg(target_os="macos")]
-    if capture_guard::engaged() { diag::log("reveal_held", json!({})); return; }
     WORKSPACE_WANTED.store(true, Ordering::SeqCst);
     DOUBLE_KEY_FIXED.store(false, Ordering::SeqCst);
     // Phase 45 (F058): already active as an accessory app (another app's menu bar) before becoming an ordinary one.
@@ -390,11 +387,15 @@ fn hide_dock_in_fullscreen() -> bool {
 
 // Phase 33 (1.1.0; D45-D47, D57): Stealth Lockdown. One switch turns on both halves, for privacy and so Pebble never
 // interrupts the app you are in:
-//   - Stealth: every Pebble window is left out of screen capture and screen sharing (NSWindowSharingNone), the
-//     workspace drops its shadow, Pebble stays out of the Dock and ⌘Tab (Accessory) and its windows leave Mission
-//     Control (transient). ⌃⌥⌘H hides Pebble at once; the menu-bar icon brings it back.
+//   - Stealth: every Pebble window is left out of screen capture and screen sharing by its sharing type
+//     (NSWindowSharingNone; from 2.0.3 capture_keeper also gives it to windows AppKit adds while Stealth is on, such as
+//     menus, pop-ups and tooltips) while it stays on the person's screen, the workspace drops its shadow, Pebble stays
+//     out of the Dock and ⌘Tab (Accessory) and its windows leave Mission Control (transient). ⌃⌥⌘H hides Pebble at
+//     once; the menu-bar icon brings it back.
 //   - Lockdown: Pebble never takes keyboard focus from the app in front. Its windows become non-activating panels, so
 //     typing reaches Pebble while the other app stays the active one, and nothing calls set_focus (which activates).
+//     From 2.0.3 (D239) the panels also hold after an accessibility client has read Pebble's windows, which makes
+//     AppKit observe their keys (stealth_mac::carry_setter).
 // Hidden from screen capture and screen sharing, not from a camera, a capture card or a process list. Exams and
 // interviews that forbid assistants still forbid it.
 static STEALTH: AtomicBool = AtomicBool::new(false);
@@ -524,6 +525,7 @@ mod stealth_mac {
     use std::collections::HashMap;
     use std::ffi::c_void;
     use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
 
     const NONACTIVATING_PANEL: usize = 1 << 7; // NSWindowStyleMaskNonactivatingPanel: honoured only by an NSPanel
     const MANAGED: usize = 1 << 2; // NSWindowCollectionBehaviorManaged: shown in Mission Control
@@ -540,7 +542,18 @@ mod stealth_mac {
     // setters (their KVO subclasses override setContentView:, and setOpaque: on one), which kept every swap refused.
     // The panel carries them itself and posts the same will/did change notifications around NSWindow's own setter, so
     // the observers (registered on the object, not its class) hear every change while the window is a panel.
-    const NOTIFIED: [(&str, &str); 2] = [("setContentView:", "contentView"), ("setOpaque:", "opaque")];
+    // 2.0.3 (Phase 52, D239): after an outside accessibility client reads the titled workspace, AppKit observes the
+    // window's `level` too (measured on the real app, `.runtime/phase51-dev/native/panel-kvo-ab-2.0.2-walk.shell.jsonl`,
+    // and on a stand-in, `.runtime/phase52-dev/feasibility-findings.md` A1-A2), and KVO's subclass, shared by both
+    // windows, then overrides setLevel:; refused, it took Lockdown's panel away until relaunch.
+    const NOTIFIED: [(&str, &str); 3] = [("setContentView:", "contentView"), ("setOpaque:", "opaque"), ("setLevel:", "level")];
+    // 2.0.3 (Phase 52, D239, D240): any other set<Key>: a KVO subclass overrides gets the same notifying setter on the
+    // panel at swap time (carry_setter), selector → key, added once and kept for the app's life.
+    static CARRIED: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    // Argument shapes the carried setters pass on unchanged (C layout, as AppKit's NSSize, NSPoint and NSRect).
+    #[repr(C)] #[derive(Clone, Copy)] #[allow(dead_code)] struct Size { width: f64, height: f64 }
+    #[repr(C)] #[derive(Clone, Copy)] #[allow(dead_code)] struct Point { x: f64, y: f64 }
+    #[repr(C)] #[derive(Clone, Copy)] #[allow(dead_code)] struct Rect { origin: Point, size: Size }
 
     /// NSPanel carrying TaoWindow's own ivar and methods (tao 0.37.1: `focusable`, canBecomeMainWindow,
     /// canBecomeKeyWindow, sendEvent:), so a swapped window keeps tao's behaviour. None when the runtime layout does
@@ -561,12 +574,14 @@ mod stealth_mac {
                 let imp = ffi::method_getImplementation(method)?;
                 if !ffi::class_addMethod(cls, name, imp, ffi::method_getTypeEncoding(method)).as_bool() { return None; }
             }
-            // D86 (Phase 45): the observed setters, with their notifications (NOTIFIED).
+            // D86 (Phase 45): the observed setters, with their notifications (NOTIFIED; setLevel: from 2.0.3).
             type SetObject = extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject);
             type SetFlag = extern "C-unwind" fn(*mut AnyObject, Sel, Bool);
-            let setters: [(Sel, Imp); 2] = [
+            type SetLevel = extern "C-unwind" fn(*mut AnyObject, Sel, isize);
+            let setters: [(Sel, Imp); 3] = [
                 (sel!(setContentView:), std::mem::transmute(set_content_view as SetObject)),
-                (sel!(setOpaque:), std::mem::transmute(set_opaque as SetFlag))];
+                (sel!(setOpaque:), std::mem::transmute(set_opaque as SetFlag)),
+                (sel!(setLevel:), std::mem::transmute(set_level as SetLevel))];
             for (name, imp) in setters {
                 let method = ffi::class_getInstanceMethod(panel, name);
                 if method.is_null() || !ffi::class_addMethod(cls, name, imp, ffi::method_getTypeEncoding(method)).as_bool() {
@@ -601,9 +616,10 @@ mod stealth_mac {
     /// the old exact-TaoWindow check never swapped one: Stealth Lockdown kept no window from taking focus. That subclass
     /// may be swapped too when it overrides nothing but KVO's own bookkeeping (KVO_OWN): then no automatically notified
     /// setter is lost while the window is a panel, AppKit's own will/didChange notifications still reach the observers
-    /// (they belong to the object, not to its class), and set_panel restores that same subclass afterwards. Err names
-    /// what stands in the way, for the shell diagnostic.
-    fn swappable(class: *const AnyClass, tao: &AnyClass) -> Result<(), Vec<String>> {
+    /// (they belong to the object, not to its class), and set_panel restores that same subclass afterwards. 2.0.3
+    /// (D239): a setter override beyond NOTIFIED is carried onto the panel (carry_setter) when it can be; only what
+    /// cannot be carried stands in the way. Err names it, for the shell diagnostic.
+    fn swappable(class: *const AnyClass, tao: &AnyClass, panel: &AnyClass) -> Result<(), Vec<String>> {
         if class == tao as *const AnyClass {
             return Ok(());
         }
@@ -616,9 +632,81 @@ mod stealth_mac {
         if !name.starts_with("NSKVONotifying_") || !class.superclass().is_some_and(|s| std::ptr::eq(s, tao)) {
             return Err(vec![name]);
         }
-        let extra: Vec<String> = class.instance_methods().iter().map(|m| m.name().name().to_string_lossy().into_owned())
-            .filter(|n| !KVO_OWN.contains(&n.as_str()) && !NOTIFIED.iter().any(|(setter, _)| setter == n)).collect();
+        let extra: Vec<String> = class.instance_methods().iter().map(|m| m.name())
+            .filter(|sel| {
+                let n = sel.name().to_string_lossy();
+                !KVO_OWN.contains(&n.as_ref()) && !NOTIFIED.iter().any(|(setter, _)| *setter == n) && carried_key(&n).is_none()
+            })
+            .filter(|sel| !carry_setter(panel, *sel))
+            .map(|sel| sel.name().to_string_lossy().into_owned()).collect();
         if extra.is_empty() { Ok(()) } else { Err(extra) }
+    }
+
+    /// 2.0.3 (Phase 52, D240): key-value observing's key for a setter, `set<Key>:` with no other colon and Key starting
+    /// with an upper-case letter; the key is Key with its first letter lowered unless the second is upper case too
+    /// (setURL: → URL), as KVO derives it.
+    fn key_for_setter(name: &str) -> Option<String> {
+        let body = name.strip_prefix("set")?.strip_suffix(':')?;
+        let mut chars = body.chars();
+        let first = chars.next()?;
+        if !first.is_ascii_uppercase() || body.contains(':') { return None; }
+        if chars.next().is_some_and(|second| second.is_ascii_uppercase()) { return Some(body.to_string()); }
+        Some(first.to_ascii_lowercase().to_string() + &body[first.len_utf8()..])
+    }
+
+    /// The key of a setter carried onto the panel at run time, if it is one (the lock is never held while AppKit runs).
+    fn carried_key(selector: &str) -> Option<String> {
+        CARRIED.lock().unwrap().as_ref().and_then(|carried| carried.get(selector).cloned())
+    }
+
+    /// 2.0.3 (Phase 52, D239, D240; measured on stand-ins, `.runtime/phase52-dev/feasibility-findings.md` A3-A4): gives
+    /// the panel class a notifying setter for `sel` (NSPanel's own implementation between willChangeValueForKey: and
+    /// didChangeValueForKey:, as KVO's override does), so a window whose KVO subclass overrides that setter can still
+    /// become the panel without its observers missing a change. Only for -(void)set<Key>:(one argument) that NSPanel
+    /// implements, with an object, BOOL, integer, double, NSSize, NSPoint or NSRect argument; anything else is refused
+    /// as before (fail-safe). Each setter is added once and kept; the window's own class is never modified. Main thread
+    /// (set_panel, as_original). PEBBLE_STEALTH_CARRY=0 turns it off for one launch (an A/B in the shell diagnostic).
+    fn carry_setter(panel: &AnyClass, sel: Sel) -> bool {
+        if std::env::var("PEBBLE_STEALTH_CARRY").is_ok_and(|v| v == "0") { return false; }
+        let selector = sel.name().to_string_lossy().into_owned();
+        let Some(key) = key_for_setter(&selector) else { return false };
+        let Some(ns_panel) = AnyClass::get(c"NSPanel") else { return false };
+        type SetObject = extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject);
+        type SetFlag = extern "C-unwind" fn(*mut AnyObject, Sel, Bool);
+        type SetSigned = extern "C-unwind" fn(*mut AnyObject, Sel, isize);
+        type SetUnsigned = extern "C-unwind" fn(*mut AnyObject, Sel, usize);
+        type SetDouble = extern "C-unwind" fn(*mut AnyObject, Sel, f64);
+        type SetSize = extern "C-unwind" fn(*mut AnyObject, Sel, Size);
+        type SetPoint = extern "C-unwind" fn(*mut AnyObject, Sel, Point);
+        type SetRect = extern "C-unwind" fn(*mut AnyObject, Sel, Rect);
+        unsafe {
+            let method = ffi::class_getInstanceMethod(ns_panel, sel);
+            if method.is_null() || ffi::method_getNumberOfArguments(method) != 3 { return false; }
+            let mut returns = [0 as std::ffi::c_char; 8];
+            ffi::method_getReturnType(method, returns.as_mut_ptr(), returns.len());
+            if returns[0] as u8 != b'v' { return false; }
+            let mut argument = [0 as std::ffi::c_char; 64];
+            ffi::method_getArgumentType(method, 2, argument.as_mut_ptr(), argument.len());
+            let kind = std::ffi::CStr::from_ptr(argument.as_ptr()).to_string_lossy().into_owned();
+            let imp: Imp = match kind.as_bytes().first() {
+                Some(b'@') => std::mem::transmute(notify_object as SetObject),
+                Some(b'B' | b'c') => std::mem::transmute(notify_bool as SetFlag),
+                Some(b'q' | b'l') => std::mem::transmute(notify_isize as SetSigned),
+                Some(b'Q' | b'L') => std::mem::transmute(notify_usize as SetUnsigned),
+                Some(b'd') => std::mem::transmute(notify_f64 as SetDouble),
+                _ if kind.starts_with("{CGSize=") => std::mem::transmute(notify_size as SetSize),
+                _ if kind.starts_with("{CGPoint=") => std::mem::transmute(notify_point as SetPoint),
+                _ if kind.starts_with("{CGRect=") => std::mem::transmute(notify_rect as SetRect),
+                _ => return false,
+            };
+            // The key is recorded first, so the setter never runs without it; false from class_addMethod means the
+            // panel already has this setter, which is just as good.
+            CARRIED.lock().unwrap().get_or_insert_with(HashMap::new).insert(selector.clone(), key.clone());
+            let added = ffi::class_addMethod(panel as *const AnyClass as *mut AnyClass, sel, imp, ffi::method_getTypeEncoding(method));
+            super::diag::log("stealth_panel_setter", serde_json::json!({"selector": selector, "key": key,
+                "argument": kind, "added": added.as_bool()}));
+        }
+        true
     }
 
     fn class_name(class: *const AnyClass) -> String {
@@ -626,17 +714,96 @@ mod stealth_mac {
     }
 
     /// D86 (Phase 45): NSWindow's own implementation of an observed setter, between the change notifications its KVO
-    /// subclass would have posted (NOTIFIED).
+    /// subclass would have posted (NOTIFIED, and from 2.0.3 the setters carry_setter added). 2.0.3 (D240): a set is
+    /// never dropped; without a key (which no registered setter lacks) it still runs, only without the notifications,
+    /// and the shell diagnostic says so.
     fn notified(this: *mut AnyObject, sel: Sel, call: impl FnOnce(Imp)) {
-        let Some(key) = NOTIFIED.iter().find(|(setter, _)| sel.name().to_bytes() == setter.as_bytes()).map(|(_, k)| *k) else { return };
-        let Some(panel) = AnyClass::get(c"NSPanel") else { return };
-        let key = objc2_foundation::NSString::from_str(key);
+        let selector = sel.name().to_string_lossy();
+        let key = NOTIFIED.iter().find(|(setter, _)| *setter == selector).map(|(_, k)| k.to_string())
+            .or_else(|| carried_key(&selector));
+        let panel = objc2::class!(NSPanel);
         unsafe {
-            let Some(imp) = ffi::method_getImplementation(ffi::class_getInstanceMethod(panel, sel)) else { return };
-            let _: () = msg_send![this, willChangeValueForKey: &*key];
-            call(imp);
-            let _: () = msg_send![this, didChangeValueForKey: &*key];
+            let Some(imp) = ffi::method_getImplementation(ffi::class_getInstanceMethod(panel, sel)) else {
+                super::diag::log("stealth_panel_setter_missing", serde_json::json!({"selector": selector}));
+                return;
+            };
+            match key {
+                Some(key) => {
+                    let key = objc2_foundation::NSString::from_str(&key);
+                    let _: () = msg_send![this, willChangeValueForKey: &*key];
+                    call(imp);
+                    let _: () = msg_send![this, didChangeValueForKey: &*key];
+                }
+                None => {
+                    call(imp);
+                    super::diag::log("stealth_panel_setter_unkeyed", serde_json::json!({"selector": selector}));
+                }
+            }
         }
+    }
+
+    extern "C-unwind" fn set_level(this: *mut AnyObject, sel: Sel, level: isize) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, isize) = std::mem::transmute(imp);
+            call(this, sel, level)
+        });
+    }
+
+    // 2.0.3 (D240): the setters carry_setter adds, one per argument type, each NSPanel's own between the notifications.
+    extern "C-unwind" fn notify_object(this: *mut AnyObject, sel: Sel, value: *mut AnyObject) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_bool(this: *mut AnyObject, sel: Sel, value: Bool) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, Bool) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_isize(this: *mut AnyObject, sel: Sel, value: isize) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, isize) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_usize(this: *mut AnyObject, sel: Sel, value: usize) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, usize) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_f64(this: *mut AnyObject, sel: Sel, value: f64) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, f64) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_size(this: *mut AnyObject, sel: Sel, value: Size) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, Size) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_point(this: *mut AnyObject, sel: Sel, value: Point) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, Point) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
+    }
+
+    extern "C-unwind" fn notify_rect(this: *mut AnyObject, sel: Sel, value: Rect) {
+        notified(this, sel, |imp| unsafe {
+            let call: extern "C-unwind" fn(*mut AnyObject, Sel, Rect) = std::mem::transmute(imp);
+            call(this, sel, value)
+        });
     }
 
     extern "C-unwind" fn set_content_view(this: *mut AnyObject, sel: Sel, view: *mut AnyObject) {
@@ -682,7 +849,7 @@ mod stealth_mac {
 
     /// Runs `call` with the window's original class in place, given that class's own implementation of `sel`.
     fn as_original(ns: *mut AnyObject, sel: Sel, call: impl FnOnce(Imp)) {
-        let Some(tao) = AnyClass::get(c"TaoWindow") else { return };
+        let (Some(tao), Some(stealth_panel)) = (AnyClass::get(c"TaoWindow"), panel_class()) else { return };
         let saved = ORIGINAL.lock().unwrap().as_ref().and_then(|m| m.get(&(ns as usize)).copied());
         let original = saved.map_or(tao as *const AnyClass, |c| c as *const AnyClass);
         unsafe {
@@ -694,7 +861,7 @@ mod stealth_mac {
             };
             call(imp);
             let now = ffi::object_getClass(ns);
-            let keep = swappable(now, tao).is_ok();
+            let keep = swappable(now, tao, stealth_panel).is_ok();
             {
                 let mut saved = ORIGINAL.lock().unwrap();  // never held while AppKit runs (observers may call back)
                 let saved = saved.get_or_insert_with(HashMap::new);
@@ -738,7 +905,7 @@ mod stealth_mac {
                 !c.is_null()
             };
             if on && !descends(class) {
-                match swappable(class, tao) {
+                match swappable(class, tao, panel) {
                     Ok(()) => {
                         ORIGINAL.lock().unwrap().get_or_insert_with(HashMap::new).insert(ns as usize, class as usize);
                         ffi::object_setClass(ns, panel);
@@ -783,6 +950,25 @@ mod stealth_mac {
         }
     }
 
+    // 2.0.2 (Phase 51; measured on the dev build), kept in 2.0.3 (D241): a window whose sharing type does not take
+    // (AppKit's menu-bar icon windows keep theirs) would be set again before every commit by the capture keeper; each
+    // refusal, by window number, is tried again at most once a second. Entries past their second are dropped at the
+    // next refusal, so nothing accumulates.
+    static REFUSED: Mutex<Option<HashMap<usize, Instant>>> = Mutex::new(None);
+    const RETRY: Duration = Duration::from_secs(1);
+
+    fn held_back(window: usize) -> bool {
+        REFUSED.lock().unwrap().get_or_insert_with(HashMap::new).get(&window).is_some_and(|until| Instant::now() < *until)
+    }
+
+    fn refuse(window: usize) {
+        let now = Instant::now();
+        let mut refused = REFUSED.lock().unwrap();
+        let refused = refused.get_or_insert_with(HashMap::new);
+        refused.retain(|_, until| *until > now);
+        refused.insert(window, now + RETRY);
+    }
+
     /// Every window the app owns, including AppKit's and plugins' own hidden ones (a probe found an unnamed 500 pt one
     /// still shareable), so no Pebble window is left capturable; the named windows also get Tauri's own call.
     pub fn set_sharing_all(on: bool) {
@@ -795,6 +981,33 @@ mod stealth_mac {
                 let _: () = msg_send![window, setSharingType: if on { 0usize } else { 1usize }]; // None, ReadOnly
             }
         }
+    }
+
+    /// 2.0.2 (Phase 51), kept in 2.0.3 (D241): the capture keeper's sharing pass while Stealth is on, before every
+    /// CoreAnimation commit, so a window AppKit adds while Stealth is on (a menu, a pop-up, a tooltip) is left out of
+    /// screen capture too. Each window's sharing type is read first and set to none only when it differs, or on every
+    /// window when `force` (the keeper forces it at most once a second, as apply_stealth does at each switch); it is
+    /// read back, and a window that refuses (AppKit's menu-bar icon windows) is retried at most once a second. It never
+    /// touches what the window draws on the person's screen. Returns how many windows changed.
+    pub fn keep_sharing(force: bool) -> usize {
+        let mut changed = 0;
+        unsafe {
+            let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+            let windows: *mut AnyObject = msg_send![app, windows];
+            let count: usize = msg_send![windows, count];
+            for index in 0..count {
+                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+                let current: usize = msg_send![window, sharingType];
+                if current != 0 || force {
+                    let number: isize = msg_send![window, windowNumber];
+                    if held_back(number as usize) { continue; }
+                    let _: () = msg_send![window, setSharingType: 0usize]; // NSWindowSharingNone
+                    let now: usize = msg_send![window, sharingType];
+                    if now != 0 { refuse(number as usize); } else if current != 0 { changed += 1; }
+                }
+            }
+        }
+        changed
     }
 
     /// Phase 39 (the person's report): the first time a full-screen workspace became a stealth window, its red, yellow
@@ -825,191 +1038,72 @@ mod stealth_mac {
     }
 }
 
-// 2.0.1 (Phase 49): Stealth Lockdown's capture guard. A window's sharing type (None, set by apply_stealth) keeps it out
-// of what macOS composes for a capture: ScreenCaptureKit's recordings and screenshots, and the one-shot capture calls.
-// A display stream (CGDisplayStream and the capture inputs built on it) is given the screen as it is drawn, and no
-// window setting leaves a window out of it (measured on macOS 27.0 with stand-in windows, Phase 49). So while Stealth
-// Lockdown is on and the window server reports a screen watcher that macOS did not announce as a ScreenCaptureKit
-// session, Pebble steps out of view until that capture ends:
-//   - at once, from the guard's own thread: every Pebble window's alpha in the window server goes to 0. The watcher flag
-//     rises before a stream's first frame; polled every 2 ms, the stand-in window stayed out of every frame of the
-//     measured recordings, but for the first frame of 1 in 30 bare display streams;
-//   - then on the main thread Pebble is hidden as an app, so it keeps no keyboard focus or clicks and nothing brings a
-//     window back while the guard holds; the menu-bar icon stays (the menu bar is the system's), and its tooltip says
-//     why Pebble is out of view;
-//   - when the watcher goes, or Stealth Lockdown is turned off, Pebble comes back as it was, without activating.
-// The window server announces a ScreenCaptureKit session with notice 1327 (1328 when it ends, with the same id) about
-// 0.4 s before the watcher flag rises. Such a capture already leaves Pebble out, so the companion stays with the person.
-// Should those notices stop arriving, every capture counts as unannounced and Pebble steps out of all of them.
+// 2.0.2 (Phase 51), sharing only from 2.0.3 (D238, D241): while Stealth Lockdown is on, every Pebble window keeps its
+// sharing type (stealth_mac::keep_sharing). A main-run-loop observer re-applies it just before each CoreAnimation commit,
+// in every run-loop mode (menu tracking and modal panels included), so a window AppKit adds while Stealth is on (a menu,
+// a pop-up, a tooltip, an alert) is left out of screen capture from its first frame, as the windows open at the switch
+// are. It never changes what the person sees: Pebble stays on their screen (2.0.2's capture mask, which hid it from
+// their own display, is gone, D237). Values are read first and set only when they differ, so an idle Pebble pays
+// nothing; with Stealth off the observer returns at once.
 #[cfg(target_os="macos")]
-mod capture_guard {
-    use objc2::{msg_send, runtime::{AnyClass, AnyObject, Bool}};
+mod capture_keeper {
     use serde_json::json;
-    use std::{ffi::{c_char, c_void, CStr}, sync::{Mutex, OnceLock, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
+    use std::{ffi::c_void, sync::{Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant}};
 
-    type WatcherFn = unsafe extern "C" fn() -> bool;
-    type ConnectionFn = unsafe extern "C" fn() -> i32;
-    type AlphaFn = unsafe extern "C" fn(i32, u32, f32) -> i32;
-    type NoticeFn = unsafe extern "C" fn(u32, *mut c_void, u32, *mut c_void);
-    type RegisterFn = unsafe extern "C" fn(NoticeFn, u32, *mut c_void) -> i32;
-    extern "C" {
-        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-        fn pthread_set_qos_class_self_np(class: u32, relative_priority: i32) -> i32;
-    }
-    // QOS_CLASS_USER_INTERACTIVE: the least timer leeway macOS gives, so the 2 ms poll stays 2 ms while Pebble is not
-    // the active app (a default-QoS thread there showed the companion in the first frame of 6 of 20 display streams).
-    const QOS_USER_INTERACTIVE: u32 = 0x21;
-
-    struct Api { watcher: WatcherFn, connection: ConnectionFn, alpha: AlphaFn, register: RegisterFn }
-    static API: OnceLock<Option<Api>> = OnceLock::new();
-
-    /// CoreGraphics' names first (the ones Apple's own frameworks call), SkyLight's otherwise; none found, no guard.
-    fn api() -> Option<&'static Api> {
-        API.get_or_init(|| unsafe {
-            let find = |names: [&CStr; 2]| names.iter().map(|name| dlsym(-2isize as *mut c_void, name.as_ptr())).find(|p| !p.is_null());
-            Some(Api {
-                watcher: std::mem::transmute::<*mut c_void, WatcherFn>(find([c"CGSIsScreenWatcherPresent", c"SLSIsScreenWatcherPresent"])?),
-                connection: std::mem::transmute::<*mut c_void, ConnectionFn>(find([c"CGSMainConnectionID", c"SLSMainConnectionID"])?),
-                alpha: std::mem::transmute::<*mut c_void, AlphaFn>(find([c"CGSSetWindowAlpha", c"SLSSetWindowAlpha"])?),
-                register: std::mem::transmute::<*mut c_void, RegisterFn>(find([c"CGSRegisterNotifyProc", c"SLSRegisterNotifyProc"])?),
-            })
-        }).as_ref()
-    }
-
-    const SESSION_BEGAN: u32 = 1327;
-    const SESSION_ENDED: u32 = 1328;
-    static SESSIONS: Mutex<Vec<(u32, Instant)>> = Mutex::new(Vec::new()); // announced ScreenCaptureKit sessions
-    static ENGAGED: AtomicBool = AtomicBool::new(false);
-    static HIDDEN_BY_GUARD: AtomicBool = AtomicBool::new(false);
+    const BEFORE_WAITING: usize = 1 << 5; // kCFRunLoopBeforeWaiting
+    const EXIT: usize = 1 << 7;           // kCFRunLoopExit: a nested run loop (a menu's, a modal panel's) ending
+    // CoreAnimation commits from its own main-run-loop observer at order 2000000 (measured on macOS 27.0); this runs
+    // just before it, on the same activities.
+    const ORDER: isize = 1_999_000;
+    // The sharing type is forced on every window at most this often (stealth_mac::keep_sharing), so the window
+    // server's state follows AppKit's within a second, at a few calls a second.
+    const FORCE_EVERY: Duration = Duration::from_secs(1);
     static STARTED: AtomicBool = AtomicBool::new(false);
-    static WINDOWS: Mutex<Vec<u32>> = Mutex::new(Vec::new()); // the window server's numbers of Pebble's windows
+    static LAST_FORCE: Mutex<Option<Instant>> = Mutex::new(None);
+    // How often the observer ran and how often it forced the sharing type, for the shell diagnostic's snapshots.
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    static FORCED: AtomicU64 = AtomicU64::new(0);
 
-    /// The window server's notices, delivered on the main run loop. Never panics (it is called from C).
-    unsafe extern "C" fn notice(kind: u32, data: *mut c_void, length: u32, _: *mut c_void) {
-        if data.is_null() || length < 4 { return; }
-        let id = std::ptr::read_unaligned(data as *const u32);
-        let Ok(mut sessions) = SESSIONS.lock() else { return };
-        match kind {
-            SESSION_BEGAN => { if !sessions.iter().any(|(known, _)| *known == id) { sessions.push((id, Instant::now())); } }
-            SESSION_ENDED => sessions.retain(|(known, _)| *known != id),
-            _ => {}
-        }
+    /// (observer calls, forced sharing pushes) since launch.
+    pub fn counts() -> (u64, u64) { (CALLS.load(Ordering::Relaxed), FORCED.load(Ordering::Relaxed)) }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopCommonModes: *const c_void;
+        fn CFRunLoopGetMain() -> *mut c_void;
+        fn CFRunLoopObserverCreate(allocator: *const c_void, activities: usize, repeats: u8, order: isize,
+                                   callout: extern "C" fn(*mut c_void, usize, *mut c_void), context: *mut c_void) -> *mut c_void;
+        fn CFRunLoopAddObserver(run_loop: *mut c_void, observer: *mut c_void, mode: *const c_void);
     }
 
-    fn announced() -> bool { SESSIONS.lock().map(|sessions| !sessions.is_empty()).unwrap_or(false) }
-
-    /// Whether Pebble is out of view for a capture right now.
-    pub fn engaged() -> bool { ENGAGED.load(Ordering::SeqCst) }
-
-    /// Main thread: the window-server numbers of every window Pebble owns (the menu-bar icon is drawn by the system).
-    pub fn refresh() {
-        let Some(class) = AnyClass::get(c"NSApplication") else { return };
-        let mut numbers = Vec::new();
-        unsafe {
-            let app: *mut AnyObject = msg_send![class, sharedApplication];
-            let windows: *mut AnyObject = msg_send![app, windows];
-            let count: usize = msg_send![windows, count];
-            for index in 0..count {
-                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
-                let number: isize = msg_send![window, windowNumber];
-                if number > 0 && number < u32::MAX as isize { numbers.push(number as u32); }
+    /// On the main thread, before each CoreAnimation commit. Never unwinds into CoreFoundation.
+    extern "C" fn before_commit(_observer: *mut c_void, _activity: usize, _info: *mut c_void) {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        if !super::stealth_on() { return; }
+        let _ = std::panic::catch_unwind(|| {
+            let force = LAST_FORCE.lock().map(|mut last| {
+                let due = last.is_none_or(|at| at.elapsed() >= FORCE_EVERY);
+                if due { *last = Some(Instant::now()); }
+                due
+            }).unwrap_or(false);
+            if force { FORCED.fetch_add(1, Ordering::Relaxed); }
+            let sharing = super::stealth_mac::keep_sharing(force);
+            if sharing > 0 {
+                super::diag::log("stealth_sharing_kept", json!({"from": "keeper", "sharing_set": sharing,
+                    "all_windows": super::diag::window_inventory()}));
             }
-        }
-        if let Ok(mut list) = WINDOWS.lock() { *list = numbers; }
+        });
     }
 
-    /// While the guard holds, a window whose alpha Pebble just changed stays out of view in the window server.
-    pub fn keep_out(ns: *mut AnyObject) {
-        if !engaged() || ns.is_null() { return; }
-        let Some(api) = api() else { return };
-        unsafe {
-            let number: isize = msg_send![ns, windowNumber];
-            if number > 0 && number < u32::MAX as isize { (api.alpha)((api.connection)(), number as u32, 0.0); }
-        }
-    }
-
-    /// Main thread, once at launch: the notices, then the guard's thread (2 ms while Stealth Lockdown is on).
-    pub fn start(app: &tauri::AppHandle) {
+    /// Main thread, once at launch; the run loop keeps the observer for the app's lifetime.
+    pub fn start() {
         if STARTED.swap(true, Ordering::SeqCst) { return; }
-        let Some(api) = api() else { super::diag::log("capture_guard", json!({"available": false})); return };
-        let registered = unsafe { [(api.register)(notice, SESSION_BEGAN, std::ptr::null_mut()), (api.register)(notice, SESSION_ENDED, std::ptr::null_mut())] };
-        super::diag::log("capture_guard", json!({"available": true, "notices": registered}));
-        refresh();
-        let handle = app.clone();
-        let _ = std::thread::Builder::new().name("pebble-capture-guard".into()).spawn(move || {
-            let qos = unsafe { pthread_set_qos_class_self_np(QOS_USER_INTERACTIVE, 0) };
-            super::diag::log("capture_guard", json!({"thread_qos": qos}));
-            let connection = unsafe { (api.connection)() };
-            let mut listed = Instant::now();
-            loop {
-                let stealth = super::stealth_on();
-                let watched = unsafe { (api.watcher)() };
-                if ENGAGED.load(Ordering::SeqCst) {
-                    if !stealth || !watched { ENGAGED.store(false, Ordering::SeqCst); come_back(&handle, connection, api); }
-                } else if stealth && watched && !announced() {
-                    ENGAGED.store(true, Ordering::SeqCst);
-                    let began = Instant::now();
-                    let windows = WINDOWS.lock().map(|list| list.clone()).unwrap_or_default();
-                    for number in &windows { unsafe { (api.alpha)(connection, *number, 0.0); } }
-                    step_out(&handle, windows.len(), began.elapsed().as_micros() as u64);
-                }
-                // A lost end notice never keeps a later capture counted as announced: with no watcher, notices older
-                // than 3 s are dropped (a recording raises the flag within about 0.4 s of its notice).
-                if !watched { if let Ok(mut sessions) = SESSIONS.lock() { sessions.retain(|(_, began)| began.elapsed() < Duration::from_secs(3)); } }
-                if stealth && listed.elapsed() >= Duration::from_millis(500) {
-                    listed = Instant::now();
-                    let _ = handle.run_on_main_thread(refresh);
-                }
-                std::thread::sleep(Duration::from_millis(if stealth { 2 } else { 100 }));
-            }
-        });
-    }
-
-    /// Main thread, after the windows went out of view: Pebble hidden as an app (never handing the person to another
-    /// Space when it was the active app), and the menu-bar icon's tooltip says why.
-    fn step_out(app: &tauri::AppHandle, windows: usize, alpha_us: u64) {
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if !ENGAGED.load(Ordering::SeqCst) { return; } // the capture ended meanwhile
-            unsafe {
-                let ns_app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
-                let hidden: Bool = msg_send![ns_app, isHidden];
-                if !hidden.as_bool() {
-                    if super::app_active() { super::yield_on_this_space(); }
-                    let _: () = msg_send![ns_app, hide: std::ptr::null::<AnyObject>()];
-                    HIDDEN_BY_GUARD.store(true, Ordering::SeqCst);
-                }
-            }
-            if let Some(tray) = handle.tray_by_id("pebble") { let _ = tray.set_tooltip(Some(super::tray_tooltip())); }
-            super::diag::log("capture_guard", json!({"held": true, "windows": windows, "alpha_us": alpha_us, "announced": announced()}));
-            super::diag::snapshot(&handle, "capture_guard held");
-        });
-    }
-
-    /// Main thread: Pebble back as it was, without activating, each window's alpha in the window server its own again
-    /// (the companion's is 0 while clicks pass through it to the workspace).
-    fn come_back(app: &tauri::AppHandle, connection: i32, api: &'static Api) {
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if ENGAGED.load(Ordering::SeqCst) { return; } // held again meanwhile
-            unsafe {
-                let ns_app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
-                if HIDDEN_BY_GUARD.swap(false, Ordering::SeqCst) { let _: () = msg_send![ns_app, unhideWithoutActivation]; }
-                let windows: *mut AnyObject = msg_send![ns_app, windows];
-                let count: usize = msg_send![windows, count];
-                for index in 0..count {
-                    let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
-                    let number: isize = msg_send![window, windowNumber];
-                    if number <= 0 || number >= u32::MAX as isize { continue; }
-                    let alpha: f64 = msg_send![window, alphaValue];
-                    (api.alpha)(connection, number as u32, alpha as f32);
-                }
-            }
-            super::companion_over_full_screen(&handle);
-            if let Some(tray) = handle.tray_by_id("pebble") { let _ = tray.set_tooltip(Some(super::tray_tooltip())); }
-            super::diag::log("capture_guard", json!({"held": false}));
-            super::diag::snapshot(&handle, "capture_guard lifted");
-        });
+        let started = unsafe {
+            let observer = CFRunLoopObserverCreate(std::ptr::null(), BEFORE_WAITING | EXIT, 1, ORDER, before_commit, std::ptr::null_mut());
+            if !observer.is_null() { CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes); }
+            !observer.is_null()
+        };
+        super::diag::log("capture_keeper", json!({"started": started}));
     }
 }
 
@@ -1050,7 +1144,21 @@ fn apply_stealth(app:&tauri::AppHandle, on:bool) {
     #[cfg(target_os="macos")]
     {
         stealth_mac::set_sharing_all(on);
-        capture_guard::refresh(); // 2.0.1: the windows the capture guard takes out of view (its thread reads STEALTH)
+        // 2.0.3 (Phase 52, D242, F13): under Stealth the text boxes turn macOS's correction off, so no correction bubble
+        // appears; one already up from typing just before Stealth went on is dismissed here, since a click while it is
+        // up only closes it (the box never gets the keyboard, so the keys go to the app in front) and a click on it
+        // activates Pebble. AppKit's own call, for each window's web view (WebKit shows the bubble for that view).
+        if on {
+            for label in ["pet", "main"] {
+                let Some(window)=app.get_webview_window(label) else { continue };
+                let _=window.with_webview(|webview| unsafe {
+                    let view=webview.inner() as *mut objc2::runtime::AnyObject;
+                    if view.is_null() { return; }
+                    let checker: *mut objc2::runtime::AnyObject = objc2::msg_send![objc2::class!(NSSpellChecker), sharedSpellChecker];
+                    if !checker.is_null() { let _: () = objc2::msg_send![checker, dismissCorrectionIndicatorForView: view]; }
+                });
+            }
+        }
         let workspace_open=app.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
         // Phase 39 (D83): measured on the person's Mac (diagnostic session 1), switching to Accessory while the
         // workspace leaves full screen deactivated Pebble and macOS held the exit until it was active again (still in
@@ -1349,10 +1457,8 @@ fn wake_outbox(app:&tauri::AppHandle) {
     if let Some(wake)=app.state::<Arc<Backend>>().outbox.lock().unwrap().as_ref() { let _=wake.send(()); }
 }
 
-/// The menu-bar icon's tooltip: why Pebble is out of view while a capture holds it out, then a connected phone.
+/// The menu-bar icon's tooltip: a connected phone.
 fn tray_tooltip() -> &'static str {
-    #[cfg(target_os="macos")]
-    if capture_guard::engaged() { return "Pebble · out of view while the screen is being captured"; }
     if REMOTE_CONNECTED.load(Ordering::SeqCst) {"Pebble · an iPhone is connected"} else {"Pebble"}
 }
 
@@ -2083,7 +2189,6 @@ fn pet_passthrough(app:&tauri::AppHandle, wanted:bool) {
         // F122 (audit round R4): dimmed to 0.4, its "Waiting for your review" pill still lay across the card's words;
         // over the focused workspace (which shows the same status) the pebble is not drawn at all
         unsafe { let _: () = objc2::msg_send![ns as *mut objc2::runtime::AnyObject, setAlphaValue: if on {0.0f64} else {1.0f64}]; }
-        capture_guard::keep_out(ns as *mut objc2::runtime::AnyObject); // 2.0.1: still out of view while a capture holds it out
     }
     diag::log("pet_passthrough", json!({"on": on}));
 }
@@ -2481,6 +2586,50 @@ mod diag {
         });
     }
 
+    /// Phase 51, read-only from 2.0.3: every window the app owns (AppKit's own included), with its sharing type, its
+    /// alpha, whether it is on the active Space, and the update mask its frame view's and content view's layers carry
+    /// (only read, so the shell diagnostic can show it stays 0: 2.0.3 never sets it, D237, D238), for snapshots and the
+    /// keeper's change lines. Main thread; Null when the diagnostic is off.
+    #[cfg(target_os = "macos")]
+    pub fn window_inventory() -> Value {
+        use objc2::{msg_send, runtime::{AnyObject, Bool}, sel};
+        if !on() { return Value::Null; }
+        let mut out = Vec::new();
+        unsafe {
+            let mask_of = |layer: *mut AnyObject| -> Value {
+                if layer.is_null() { return Value::Null; }
+                let responds: Bool = msg_send![layer, respondsToSelector: sel!(disableUpdateMask)];
+                if !responds.as_bool() { return Value::Null; }
+                let value: u32 = msg_send![layer, disableUpdateMask];
+                json!(value)
+            };
+            let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+            let windows: *mut AnyObject = msg_send![app, windows];
+            let count: usize = msg_send![windows, count];
+            for index in 0..count {
+                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+                let class: *mut AnyObject = msg_send![window, className];
+                let name: *const std::ffi::c_char = if class.is_null() { std::ptr::null() } else { msg_send![class, UTF8String] };
+                let name = if name.is_null() { String::new() } else { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() };
+                let content: *mut AnyObject = msg_send![window, contentView];
+                let frame: *mut AnyObject = if content.is_null() { std::ptr::null_mut() } else { msg_send![content, superview] };
+                let root: *mut AnyObject = if frame.is_null() { std::ptr::null_mut() } else { msg_send![frame, layer] };
+                let own: *mut AnyObject = if content.is_null() { std::ptr::null_mut() } else { msg_send![content, layer] };
+                let visible: Bool = msg_send![window, isVisible];
+                let active_space: Bool = msg_send![window, isOnActiveSpace];
+                let alpha: f64 = msg_send![window, alphaValue];
+                let sharing: usize = msg_send![window, sharingType];
+                let number: isize = msg_send![window, windowNumber];
+                out.push(json!({"number": number, "class": name, "visible": visible.as_bool(),
+                    "on_active_space": active_space.as_bool(), "alpha": alpha, "sharing": sharing,
+                    "root_mask": mask_of(root), "content_mask": mask_of(own)}));
+            }
+        }
+        Value::Array(out)
+    }
+    #[cfg(not(target_os = "macos"))]
+    pub fn window_inventory() -> Value { Value::Null }
+
     /// The state of both windows and the app, logged from the main thread.
     #[cfg(target_os = "macos")]
     pub fn snapshot(app: &tauri::AppHandle, why: &str) {
@@ -2542,7 +2691,9 @@ mod diag {
             let active: Bool = msg_send![ns_app, isActive];
             (policy, active.as_bool())
         };
-        log("snapshot", json!({"why": why, "policy": policy, "app_active": active, "windows": windows}));
+        let (calls, forced) = super::capture_keeper::counts(); // Phase 51, kept in 2.0.3: the capture keeper's runs since launch
+        log("snapshot", json!({"why": why, "policy": policy, "app_active": active, "windows": windows,
+            "all_windows": window_inventory(), "keeper": {"calls": calls, "forced": forced}}));
     }
     #[cfg(not(target_os = "macos"))]
     pub fn snapshot(_app: &tauri::AppHandle, _why: &str) {}
@@ -2675,7 +2826,7 @@ fn main() {
             #[cfg(target_os="macos")]
             companion_rejoin_after_launch(app.handle()); // Phase 40: and the Space Pebble started on
             #[cfg(target_os="macos")]
-            capture_guard::start(app.handle()); // 2.0.1 (Phase 49): Stealth Lockdown's capture guard
+            capture_keeper::start(); // 2.0.3 (D241): the sharing type held on every window while Stealth Lockdown is on
             diag::commands(app.handle(), diag_run); // Phase 39 (D81): only with PEBBLE_SHELL_DIAG
             diag::log("launch", json!({"version": env!("CARGO_PKG_VERSION")}));
             diag::snapshots_after(app.handle(), "launch", &[1500]);

@@ -6,6 +6,18 @@ keeping a lost notice; the workspace or the companion's alpha coming back while 
 change from Pebble Remote that never reaches the shell, or any path applying it twice; banners pulled while Stealth is
 on, or never asked for again; a version left behind, Highlights in 2.0.1, notes without the honest line or with a
 word the public text never uses; the guide naming the old tab or promising focus), so no check passes vacuously.
+
+Restated for 2.0.2 (Phase 51, D234): the guard's checks hold a later release to the capture mask in the guard's place
+(the measured value, set on every window and its frame view's layer, applied in apply_stealth after the sharing type,
+kept in every run-loop mode while Stealth is on, the keeper started) with no window-server alpha write or app hide left,
+and to nothing held, since Pebble never leaves the person's view; a tree without the guard that still says 2.0.1 fails.
+The release check follows the checkout's release; the 2.0.1 entry's checks are unchanged.
+
+Restated again for 2.0.3 (Phase 52, D240): 2.0.2's mask hid Pebble from the person's own display too (D237) and was
+never released, and 2.0.3 has 2.0.0's capture behaviour (D238). The guard check now holds a 2.0.3-or-later tree to each
+window's sharing type in the guard's place, with no capture guard or mask, no window-server alpha write and no app hide
+anywhere; the sharing type lost on any window, or set twice by Stealth, fails it; a tree that still says 2.0.2 without its
+mask fails, and so does one that says 2.0.1 without its guard.
 """
 import importlib.util
 import json
@@ -19,6 +31,7 @@ spec = importlib.util.spec_from_file_location('validate_phase49_under_test', ROO
 v49 = importlib.util.module_from_spec(spec)
 sys.modules['validate_phase49_under_test'] = v49
 spec.loader.exec_module(v49)
+CURRENT = v49.checkout_version()
 
 
 def campaign(tmp_path, only=None):
@@ -52,7 +65,10 @@ def test_the_checkout_passes_every_check(tmp_path):
     assert set(results) == set(v49.PLANNED) - {'backend_inputs_stable_during_campaign'}
     assert all(r['passed'] for r in results.values()), {n: r.get('error') for n, r in results.items()
                                                         if not r['passed']}
-    assert results['the_guard_steps_pebble_out_of_unannounced_captures']['evidence']['poll_ms'] == 2
+    guard = results['the_guard_steps_pebble_out_of_unannounced_captures']['evidence']
+    assert guard == {'release': CURRENT, 'in_place_of_the_guard': "each window's sharing type (D238)"}, guard
+    held = results['nothing_brings_pebble_back_while_the_guard_holds']['evidence']
+    assert held == {'release': CURRENT, 'held': 'nothing: Pebble stays in view'}, held
 
 
 def test_the_report_names_the_same_checks_in_both_modes(tmp_path):
@@ -83,30 +99,41 @@ def test_every_read_is_bound_by_the_campaign():
 SHELL = 'src-tauri/src/main.rs'
 
 
+STEALTH_ON = 'fn stealth_on() -> bool {'
+SET = 'let _: () = msg_send![window, setSharingType: if on { 0usize } else { 1usize }]; // None, ReadOnly'
+SWITCH = ('pub fn set_sharing_all(on: bool) {\n        unsafe {\n'
+          '            let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];\n'
+          '            let windows: *mut AnyObject = msg_send![app, windows];')
+APPLY = '        stealth_mac::set_sharing_all(on);\n        // 2.0.3 (Phase 52, D242, F13)'
+
+
 @pytest.mark.parametrize('old, new', [
-    ('Duration::from_millis(if stealth { 2 } else { 100 })', 'Duration::from_millis(if stealth { 16 } else { 100 })'),
-    ('let qos = unsafe { pthread_set_qos_class_self_np(QOS_USER_INTERACTIVE, 0) };', 'let qos = 0;'),
-    ('const QOS_USER_INTERACTIVE: u32 = 0x21;', 'const QOS_USER_INTERACTIVE: u32 = 0x15;'),
-    ('} else if stealth && watched && !announced() {', '} else if stealth && watched {'),
-    ('if !stealth || !watched {', 'if !watched {'),
-    ('for number in &windows { unsafe { (api.alpha)(connection, *number, 0.0); } }\n', ''),
-    ('const SESSION_BEGAN: u32 = 1327;', 'const SESSION_BEGAN: u32 = 1502;'),
-    ('msg_send![ns_app, unhideWithoutActivation]', 'msg_send![ns_app, unhide: std::ptr::null::<AnyObject>()]'),
-    ('if super::app_active() { super::yield_on_this_space(); }\n', ''),
-    ('sessions.retain(|(_, began)| began.elapsed() < Duration::from_secs(3));', ''),
-    ('(api.alpha)(connection, number as u32, alpha as f32);', '(api.alpha)(connection, number as u32, 1.0);'),
-    ('capture_guard::refresh(); //', '//'),
-    ('capture_guard::start(app.handle());', 'capture_guard::refresh();'),
+    (STEALTH_ON, 'fn mask(l: *mut AnyObject) { unsafe { let _: () = objc2::msg_send![l, setDisableUpdateMask: 9u32]; } }\n' + STEALTH_ON),
+    (STEALTH_ON, 'pub const CAPTURE_MASK: u32 = 0x9;\n' + STEALTH_ON),
+    (STEALTH_ON, 'fn set_capture_mask_all(on: bool) {}\n' + STEALTH_ON),
+    (STEALTH_ON, 'fn refresh() { capture_guard::refresh(); }\n' + STEALTH_ON),
+    (SWITCH, SWITCH.replace('msg_send![app, windows]', 'msg_send![app, orderedWindows]')),
+    (SET, SET.replace('if on { 0usize } else { 1usize }', 'if on { 1usize } else { 1usize }')),
+    (APPLY, '        // 2.0.3 (Phase 52, D242, F13)'),
+    (APPLY, '        stealth_mac::set_sharing_all(on);\n' + APPLY),
+    (STEALTH_ON, '// CGSSetWindowAlpha(connection, number, 0.0)\n' + STEALTH_ON),
+    (STEALTH_ON, '// SLSSetWindowAlpha(connection, number, 0.0)\n' + STEALTH_ON),
+    (STEALTH_ON, 'fn step_out() { unsafe { let _: () = objc2::msg_send![app(), hide: std::ptr::null::<AnyObject>()]; } }\n' + STEALTH_ON),
+    (STEALTH_ON, 'fn come_back() { unsafe { let _: () = objc2::msg_send![app(), unhideWithoutActivation]; } }\n' + STEALTH_ON),
+    (SET, 'let _ = on;'),
 ])
-def test_a_guard_unlike_the_measured_one_fails(tmp_path, monkeypatch, old, new):
+def test_anything_but_the_sharing_type_in_the_guards_place_fails(tmp_path, monkeypatch, old, new):
     edited(monkeypatch, SHELL, old, new)
     fails(tmp_path, 'the_guard_steps_pebble_out_of_unannounced_captures')
 
 
 @pytest.mark.parametrize('old, new', [
-    ('    if capture_guard::engaged() { diag::log("reveal_held", json!({})); return; }\n', ''),
-    ('        capture_guard::keep_out(ns as *mut objc2::runtime::AnyObject);', ''),
-    ('if capture_guard::engaged() { return "Pebble · out of view while the screen is being captured"; }', ''),
+    ('fn reveal(app:&tauri::AppHandle) {\n    WORKSPACE_WANTED',
+     'fn reveal(app:&tauri::AppHandle) {\n    if capture_guard::engaged() { diag::log("reveal_held", json!({})); return; }\n    WORKSPACE_WANTED'),
+    ('setAlphaValue: if on {0.0f64} else {1.0f64}', 'setAlphaValue: 1.0f64'),
+    ('setAlphaValue: if on {0.0f64} else {1.0f64}]; }\n', 'setAlphaValue: if on {0.0f64} else {1.0f64}]; }\n        keep_out(ns);\n'),
+    ("fn tray_tooltip() -> &'static str {\n",
+     "fn tray_tooltip() -> &'static str {\n    if stealth_on() { return \"Pebble · out of view while the screen is being captured\"; }\n"),
     ('let _=tray.set_tooltip(Some(tray_tooltip()));', 'let _=tray.set_tooltip(Some("Pebble"));'),
 ])
 def test_pebble_coming_back_while_held_fails(tmp_path, monkeypatch, old, new):
@@ -141,13 +168,25 @@ def test_a_version_left_behind_fails(tmp_path, monkeypatch):
     fails(tmp_path, 'release_version_is_2_0_1_with_its_notes')
 
 
+@pytest.mark.parametrize('check', ['the_guard_steps_pebble_out_of_unannounced_captures',
+                                   'nothing_brings_pebble_back_while_the_guard_holds'])
+def test_the_guard_gone_in_a_tree_that_still_says_2_0_1_fails(tmp_path, monkeypatch, check):
+    monkeypatch.setattr(v49, 'checkout_version', lambda: '2.0.1')
+    fails(tmp_path, check)
+
+
+def test_a_tree_that_says_2_0_2_without_its_mask_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(v49, 'checkout_version', lambda: '2.0.2')
+    fails(tmp_path, 'the_guard_steps_pebble_out_of_unannounced_captures')
+
+
 @pytest.mark.parametrize('rel, old, new', [
     ('CHANGELOG.md', '### Fixed\n\n- **Stealth Lockdown, hardened.**', '### Highlights\n\n- Stronger.\n\n### Fixed\n\n- **Stealth Lockdown, hardened.**'),
     ('CHANGELOG.md', 'Hidden from screen capture and screen sharing, not from a camera, a capture card or\n  a process list.',
      'Hidden from screen capture and screen sharing.'),
     ('CHANGELOG.md', 'Its screen-capture protection is stronger,', 'It is now undetectable,'),
     ('CHANGELOG.md', 'Its screen-capture protection is stronger,', 'It is now invisible to every recorder,'),
-    ('README.md', 'at%20v2.0.1', 'at%20v2.0.0'),
+    ('README.md', 'at%20v' + CURRENT, 'at%20v2.0.0'),
 ])
 def test_release_text_unlike_the_rules_fails(tmp_path, monkeypatch, rel, old, new):
     edited(monkeypatch, rel, old, new)

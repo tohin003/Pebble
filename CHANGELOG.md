@@ -4,6 +4,30 @@ Notable changes to Pebble, newest first. Versions follow [Semantic Versioning](h
 [Keep a Changelog](https://keepachangelog.com). Pebble 1.0.1 is the first public release; 1.0.0 and earlier versions
 were built and installed only on the maintainer's Mac.
 
+## [2.0.3]
+
+A patch release for Stealth Lockdown. Nothing else changes from 2.0.1: the same model routes, tools and AgentGuard,
+and the same data. 2.0.2 was not released.
+
+### Fixed
+
+- **Stealth Lockdown keeps Pebble on your screen.** In 2.0.1 Pebble could step out of your own view while a screen
+  recording ran, and what you typed could reach the app behind it. Pebble now stays in view the whole time Stealth
+  Lockdown is on, and your typing stays with Pebble. Menus, pop-ups and tooltips that open while it is on are left out
+  of screen capture too. Hidden from screen capture and screen sharing, not from a camera, a capture card or a process
+  list. Exams and interviews that forbid assistants still forbid it.
+- **A click in Pebble no longer makes it the active app while Stealth Lockdown is on,** also after an accessibility
+  tool, such as a screen reader, a window manager or a launcher, has read Pebble's windows. The app you are in stays
+  in front with its menu bar, and what you type goes to Pebble.
+- **While Stealth Lockdown is on, Pebble's text boxes do not check spelling or suggest corrections.** macOS's
+  correction bubble, left over a box by earlier typing, took the next click meant for the box, so the keys you typed
+  next went to the app in front. With Stealth Lockdown off, spelling and corrections work as before.
+
+### Upgrading
+
+Install 2.0.3 over 2.0.1 or 2.0.0 with the one-line installer or the download; your data, settings and sign-ins
+carry over.
+
 ## [2.0.1]
 
 A patch release for Stealth Lockdown, with two packaging and guide fixes. Nothing else changes from 2.0.0: the same

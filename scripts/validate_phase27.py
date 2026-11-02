@@ -29,6 +29,7 @@ Usage: --report NEW_PATH [--backend FROZEN_EXECUTABLE] [--keep-scratch].
 import argparse
 import contextlib
 import copy
+import itertools
 import json
 import os
 import shutil
@@ -281,7 +282,9 @@ class Campaign:
             assert personal == {'morning', 'reviewer'}, personal
             assert sorted((str(p.relative_to(config)), p.stat().st_mtime_ns) for p in config.rglob('*')) == before
             fake = cc.scratch_home(scratch / 'cell-home')
-            assert sorted(str(p.relative_to(fake)) for p in fake.rglob('*')) == ['Library', 'Library/Keychains']
+            # Phase 51: at most three entries are listed (a scratch home holds exactly these two), so a scratch home that
+            # links a whole home fails at once instead of walking that home, which macOS can hold on a privacy prompt.
+            assert sorted(str(p.relative_to(fake)) for p in itertools.islice(fake.rglob('*'), 3)) == ['Library', 'Library/Keychains']
             assert os.readlink(fake / 'Library/Keychains') == str(cc.keychains())
             profile = cc.sandbox_profile(config)
             assert profile.count('(allow file-write*') == 2 and '(deny file-write* (subpath "/Users"))' in profile
